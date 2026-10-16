@@ -114,10 +114,24 @@ final class ScreenShareQualityTests: XCTestCase {
         XCTAssertNil(controller.observe(roomy), "10.5 Mbps is above 4K's step-down threshold, so it stays")
     }
 
-    func testAdaptiveQualityHonorsLowerMaximumAndNeverExceedsFourK30() {
+    func testAdaptiveQualityNeverFallsBelow1080p30AndNeverExceedsFourK30() {
         let balanced = AdaptiveShareController(maximum: .balanced)
         XCTAssertEqual(balanced.current, .q1440)
         XCTAssertFalse(AdaptiveShareTier.tiers(maximum: .fast).contains(.fourK))
+        XCTAssertEqual(AdaptiveShareTier.tiers(maximum: .fast), [.q1080])
+        XCTAssertFalse(AdaptiveShareTier.allCases.contains { $0.dimensions.height < 1_080 || $0.fps < 30 })
         XCTAssertTrue(AdaptiveShareTier.allCases.allSatisfy { $0.fps <= 30 && $0.dimensions.width <= 3_840 })
+
+        var constrained = AdaptiveShareController(maximum: .sharp)
+        let poor = AdaptiveShareSignal(availableOutgoingBitrate: 500_000,
+                                      bandwidthLimited: true,
+                                      cpuLimited: true,
+                                      receiverLimited: true)
+        for _ in 0..<3 { _ = constrained.observe(poor) }
+        XCTAssertEqual(constrained.current, .q1440)
+        for _ in 0..<3 { _ = constrained.observe(poor) }
+        XCTAssertEqual(constrained.current, .q1080)
+        for _ in 0..<9 { _ = constrained.observe(poor) }
+        XCTAssertEqual(constrained.current, .q1080, "congestion must not silently reduce the stream below 1080p30")
     }
 }

@@ -42,6 +42,7 @@ final class AppStore: ObservableObject {
     private var callMessageExpiry: Task<Void, Never>?
     private var observedCallStatuses: [String: String] = [:]
     private var attentionRequest: Int?
+    private var joinAttentionRequest: Int?
     private var autoVoiceCallID: String?
     private var invitationPollSequence = 0
     private let callAudio: CallAudioFeedback
@@ -186,6 +187,7 @@ final class AppStore: ObservableObject {
         observedCallStatuses = [:]
         autoVoiceCallID = nil
         if let attentionRequest { NSApp.cancelUserAttentionRequest(attentionRequest); self.attentionRequest = nil }
+        if let joinAttentionRequest { NSApp.cancelUserAttentionRequest(joinAttentionRequest); self.joinAttentionRequest = nil }
         busy = false
     }
 
@@ -255,7 +257,26 @@ final class AppStore: ObservableObject {
             // Direct calls remain available with an older deployed server;
             // team-call discovery appears as soon as its API is upgraded.
             let requestResponseValue: JoinRequestsResponse? = try? await api.request("v1/join-requests")
-            if let requestResponseValue { joinRequests = requestResponseValue.requests }
+            if let requestResponseValue {
+                joinRequests = requestResponseValue.requests
+                let newIncoming = requestResponseValue.requests.filter { request in
+                    request.status == "pending" && oldJoinStatuses[request.id] != "pending" &&
+                    request.room.participants.contains { $0.id == currentUser.id }
+                }
+                if !newIncoming.isEmpty {
+                    if let joinAttentionRequest {
+                        NSApp.cancelUserAttentionRequest(joinAttentionRequest)
+                    }
+                    joinAttentionRequest = NSApp.requestUserAttention(.criticalRequest)
+                    // The in-app prompt contains call-specific Accept and
+                    // Decline actions and needs no notification permission.
+                    StatusBarController.shared?.showPopover()
+                }
+                if incomingJoinRequests.isEmpty, let joinAttentionRequest {
+                    NSApp.cancelUserAttentionRequest(joinAttentionRequest)
+                    self.joinAttentionRequest = nil
+                }
+            }
             let activeCallsValue: ActiveCallsResponse? = try? await api.request("v1/active-calls")
             if let activeCallsValue { activeTeamCalls = activeCallsValue.calls }
             observedCallStatuses = Dictionary(uniqueKeysWithValues: response.calls.map { ($0.id, $0.status) })

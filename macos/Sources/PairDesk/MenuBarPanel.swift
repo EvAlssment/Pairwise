@@ -72,7 +72,7 @@ struct MenuBarPanel: View {
                             else { Text(quality.title) }
                         }
                     }
-                    Text("Maximum resolution; adaptive quality may step down")
+                    Text("Maximum resolution · adaptive floor 1080p at 30 fps")
                 }
                 if loginItem.needsApproval { Button("Approve automatic startup…") { loginItem.openSettings() } }
                 Divider()

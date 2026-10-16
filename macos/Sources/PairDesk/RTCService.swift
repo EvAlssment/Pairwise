@@ -485,6 +485,11 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
         )
         guard let next = controller.observe(signal) else {
             adaptiveShareController = controller
+            let constrained = signal.bandwidthLimited || signal.cpuLimited || signal.receiverLimited ||
+                (signal.availableOutgoingBitrate.map { $0 < controller.current.bitrateBudget * 1.15 } ?? false)
+            if controller.current == .q1080, constrained {
+                adaptiveShareStatus = "Auto · 1080p30 floor · constrained"
+            }
             return
         }
         adaptiveShareController = controller
