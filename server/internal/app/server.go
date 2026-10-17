@@ -756,7 +756,7 @@ func (s *Server) join(w http.ResponseWriter, r *http.Request, u User, id string)
 }
 func (s *Server) mediaToken(rm Room, u User) (string, error) {
 	now := time.Now()
-	claims := map[string]any{"iss": s.liveKey, "sub": u.ID, "nbf": now.Unix() - 5, "iat": now.Unix(), "exp": now.Add(mediaTTL).Unix(), "name": u.Name, "roomConfig": map[string]any{"maxParticipants": maxRoom}, "video": map[string]any{"roomJoin": true, "room": rm.ID, "canPublish": true, "canSubscribe": true, "canPublishData": true, "canPublishSources": []string{"microphone"}}}
+	claims := map[string]any{"iss": s.liveKey, "sub": u.ID, "nbf": now.Unix() - 5, "iat": now.Unix(), "exp": now.Add(mediaTTL).Unix(), "name": u.Name, "roomConfig": map[string]any{"maxParticipants": maxRoom}, "video": map[string]any{"roomJoin": true, "room": rm.ID, "canPublish": true, "canSubscribe": true, "canPublishData": true, "canPublishSources": []string{"camera", "microphone"}}}
 	b, e := json.Marshal(claims)
 	if e != nil {
 		return "", e

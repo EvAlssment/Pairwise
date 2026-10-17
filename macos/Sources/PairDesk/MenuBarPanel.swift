@@ -158,6 +158,7 @@ struct MenuBarPanel: View {
                     }
                 }
             }
+            CameraStrip(feeds: rtc.cameraFeeds)
             if !store.incomingJoinRequests.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
                     sectionHeader("JOIN REQUESTS")
@@ -184,6 +185,12 @@ struct MenuBarPanel: View {
                          level: rtc.isMicrophoneEnabled ? rtc.localMicrophoneLevel : nil,
                          action: { Task { do { try await store.setMicrophoneEnabled(!rtc.isMicrophoneEnabled) } catch { store.error = error.localizedDescription } } }) {
                     audioDeviceMenu
+                }
+                CallTile(title: rtc.isCameraEnabled ? "Camera on" : "Camera off",
+                         systemImage: rtc.isCameraEnabled ? "video.fill" : "video.slash.fill",
+                         highlight: rtc.isCameraEnabled ? Theme.accent : nil,
+                         action: { Task { do { try await rtc.setCameraEnabled(!rtc.isCameraEnabled) } catch { store.error = error.localizedDescription } } }) {
+                    Button("Camera privacy settings…") { PermissionManager.shared.open("Privacy_Camera") }
                 }
                 CallTile(title: rtc.isSharing ? "Stop sharing" : "Share screen",
                          systemImage: rtc.isSharing ? "rectangle.on.rectangle.slash" : "rectangle.on.rectangle",

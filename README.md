@@ -4,7 +4,7 @@
 
 # Pairwise
 
-Pairwise is an open-source macOS pairing app for small teams. It combines direct teammate calls, voice, full-display sharing, and optional remote mouse and keyboard control. Calls use LiveKit; the account and presence service is a small Go API. Optional transcripts run locally with Whisper Tiny. There is no camera feature, cloud transcription, public signup, or external account integration.
+Pairwise is an open-source macOS pairing app for small teams. It combines direct teammate calls, voice, optional camera video, full-display sharing, and optional remote mouse and keyboard control. Calls use LiveKit; the account and presence service is a small Go API. Optional transcripts run locally with Whisper Tiny. There is no cloud transcription, public signup, or external account integration.
 
 The current client supports macOS 14 and later. It is an early-stage project; test it with non-sensitive accounts and machines before relying on it.
 
@@ -20,7 +20,7 @@ The ZIP contains the tracked source code and documentation. It is not an install
 
 Pairwise uses Apple's native ScreenCaptureKit content-sharing picker. A person chooses a display in the macOS picker, and the app receives a capture filter for that selected display and session. Pairwise does not enumerate the desktop or ask for the broad Screen Recording permission. The picker still requires the person to choose what to share each time.
 
-Remote mouse and keyboard input is optional. macOS requires the person at the shared Mac to grant Pairwise Accessibility access before input can be injected. Voice uses the microphone only after the person enables it. The app never starts capture, microphone, or transcription just by launching.
+Remote mouse and keyboard input is optional. macOS requires the person at the shared Mac to grant Pairwise Accessibility access before input can be injected. Voice uses the microphone and camera video uses the camera only after the person enables each during a call. The app never starts capture, microphone, camera, or transcription just by launching.
 
 The microphone menu lists **System default** separately from individual microphones and speakers, so the default-route alias does not repeat a hardware name. Devices are identified by their stable IDs. The screen-share menu offers **Entire display**, **Region**, and **Window**; each opens the matching macOS picker, and Region then opens the crop selector.
 

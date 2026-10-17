@@ -16,6 +16,14 @@ struct CallParticipant: Identifiable, Equatable {
     var id: String { identity }
 }
 
+struct CameraFeed: Identifiable {
+    let identity: String
+    let name: String
+    let track: VideoTrack
+    let isLocal: Bool
+    var id: String { identity }
+}
+
 private enum LocalControlIntent {
     case pointer(Double, Double)
     case key(UInt16, Bool, UInt64)
@@ -35,6 +43,7 @@ private struct ViewerQualityFeedback {
 final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerDelegate {
     @Published private(set) var connected = false
     @Published private(set) var isMicrophoneEnabled = false
+    @Published private(set) var isCameraEnabled = false
     @Published private(set) var isSharing = false {
         didSet {
             if !isSharing { sharingIndicator.hide(); hostCursorOverlay.hide() }
@@ -43,6 +52,7 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
     }
     @Published private(set) var participants: [CallParticipant] = [] { didSet { updateHostCursors() } }
     @Published private(set) var screenTrack: VideoTrack?
+    @Published private(set) var cameraTracks: [String: VideoTrack] = [:]
     @Published private(set) var status = "Disconnected"
     @Published private(set) var error: String?
     @Published private(set) var controlState: RemoteControlState = .unavailable
@@ -148,6 +158,12 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
 
     var activeControllerIdentity: String? { isSharing ? controlArbiter.driverIdentity : nil }
     var isSharingWindow: Bool { isSharing && shareIsWindow }
+    var cameraFeeds: [CameraFeed] {
+        participants.compactMap { person in
+            guard let track = cameraTracks[person.identity] else { return nil }
+            return CameraFeed(identity: person.identity, name: person.name, track: track, isLocal: person.isLocal)
+        }
+    }
 
     func participantName(for identity: String) -> String {
         participants.first(where: { $0.identity == identity })?.name ?? identity
@@ -220,7 +236,7 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
             refreshParticipants()
             refreshSharer()
             controlState = .viewer
-            // No media is enabled on connect. In particular, there is no camera path.
+            // Capture stays off until the person enables microphone, camera or screen sharing.
         } catch {
             self.error = error.localizedDescription
             status = "Connection failed"
@@ -258,6 +274,8 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
         shareTrack = nil
         isSharing = false
         isMicrophoneEnabled = false
+        isCameraEnabled = false
+        cameraTracks.removeAll()
         connected = false
         participants = []
         activeSharerIdentity = nil
@@ -287,6 +305,48 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
             refreshParticipants()
         } catch {
             self.error = "Microphone could not be \(enabled ? "enabled" : "disabled"): \(error.localizedDescription)"
+            throw error
+        }
+    }
+
+    func setCameraEnabled(_ enabled: Bool) async throws {
+        guard let room, connected else { throw LiveKitError(.invalidState, message: "Not connected") }
+        if enabled {
+            switch AVCaptureDevice.authorizationStatus(for: .video) {
+            case .notDetermined:
+                guard await AVCaptureDevice.requestAccess(for: .video) else {
+                    throw LiveKitError(.invalidState, message: "Camera access was not granted. Enable it in System Settings > Privacy & Security > Camera to share video.")
+                }
+            case .authorized:
+                break
+            default:
+                PermissionManager.shared.open("Privacy_Camera")
+                throw LiveKitError(.invalidState, message: "Camera access is off. Enable PairDesk in System Settings > Privacy & Security > Camera, then try again.")
+            }
+            let deadline = ProcessInfo.processInfo.systemUptime + 3
+            while !room.localParticipant.permissions.canPublishSources.contains(Track.Source.camera.rawValue) {
+                guard connected, self.room === room, ProcessInfo.processInfo.systemUptime < deadline else {
+                    throw LiveKitError(.invalidState, message: "Camera permission was not received from the call server. Try again.")
+                }
+                try await Task.sleep(for: .milliseconds(50))
+            }
+        }
+        do {
+            _ = try await room.localParticipant.setCamera(
+                enabled: enabled,
+                captureOptions: CameraCaptureOptions(),
+                publishOptions: VideoPublishOptions(name: "pairdesk.camera", simulcast: false)
+            )
+            isCameraEnabled = enabled
+            if enabled, let identity = room.localParticipant.identity?.stringValue,
+               let track = room.localParticipant.firstCameraVideoTrack {
+                cameraTracks[identity] = track
+            } else if let identity = room.localParticipant.identity?.stringValue {
+                cameraTracks.removeValue(forKey: identity)
+            }
+            refreshParticipants()
+        } catch {
+            self.error = "Camera could not be \(enabled ? "enabled" : "disabled"): \(error.localizedDescription)"
             throw error
         }
     }
@@ -686,6 +746,11 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
     nonisolated func room(_ room: Room, participant: LocalParticipant, didUnpublishTrack publication: LocalTrackPublication) {
         Task { @MainActor [weak self] in
             guard let self, self.room === room else { return }
+            if publication.source == .camera {
+                self.isCameraEnabled = false
+                if let identity = self.localIdentity { self.cameraTracks.removeValue(forKey: identity) }
+                self.refreshParticipants()
+            }
             if publication.source == .microphone {
                 self.isMicrophoneEnabled = false
                 self.detachLocalAudioRenderer()
@@ -1045,6 +1110,8 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
             self.status = "Disconnected"
             self.isSharing = false
             self.isMicrophoneEnabled = false
+            self.isCameraEnabled = false
+            self.cameraTracks.removeAll()
             self.shareTrack = nil
             self.shareBounds = nil
             self.shareIsWindow = false
@@ -1088,6 +1155,7 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
                 attachment.track.remove(audioRenderer: attachment.renderer)
                 self.remoteAudioRenderers.removeValue(forKey: sid)
             }
+            self.cameraTracks.removeValue(forKey: identity)
             self.refreshParticipants()
             self.refreshSharer()
             self.removeRemotePointer(identity)
@@ -1112,6 +1180,12 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
                 self.refreshSharer()
             }
         }
+        if let video = publication.track as? VideoTrack, video.source == .camera {
+            Task { @MainActor [weak self] in
+                guard let self, self.room === room else { return }
+                self.cameraTracks[identity] = video
+            }
+        }
         if let audio = publication.track as? RemoteAudioTrack {
             Task { @MainActor [weak self] in
                 guard let self, self.room === room else { return }
@@ -1123,12 +1197,18 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
     }
 
     nonisolated func room(_ room: Room, participant: RemoteParticipant, didUnsubscribeTrack publication: RemoteTrackPublication) {
+        let identity = participant.identity?.stringValue ?? ""
         if publication.kind == .video {
             Task { @MainActor [weak self] in
                 guard let self, self.room === room else { return }
                 if let video = publication.track as? VideoTrack, self.screenTrack === video {
                     self.screenTrack = nil
                     if self.localControllerEpoch != nil { self.emergencyStop() }
+                }
+                if let video = publication.track as? VideoTrack,
+                   video.source == .camera,
+                   self.cameraTracks[identity] === video {
+                    self.cameraTracks.removeValue(forKey: identity)
                 }
                 self.refreshSharer()
             }
@@ -1155,6 +1235,10 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
         Task { @MainActor [weak self] in
             guard let self, self.room === room else { return }
             self.refreshParticipants()
+            if publication.source == .camera,
+               let identity = participant.identity?.stringValue {
+                self.cameraTracks.removeValue(forKey: identity)
+            }
             guard publication.source == .screenShareVideo else { return }
             self.screenTrack = nil
             if self.localControllerEpoch != nil { self.emergencyStop() }

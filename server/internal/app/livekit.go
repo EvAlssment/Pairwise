@@ -80,9 +80,9 @@ func (s *Server) ensureMediaRoom(id string) error {
 	return s.createMediaRoom(id)
 }
 func (s *Server) updateSharePermission(room string, user User, enabled bool) error {
-	sources := []int{2} // livekit.TrackSource_MICROPHONE
+	sources := []int{1, 2} // camera and microphone remain available while screen sharing changes.
 	if enabled {
-		sources = []int{2, 3} // microphone and screen share, never camera or screen-share audio
+		sources = []int{1, 2, 3} // camera, microphone and screen share; never screen-share audio
 	}
 	status, err := s.livekitCall("UpdateParticipant", map[string]any{"room": room, "identity": user.ID, "permission": map[string]any{"canPublish": true, "canSubscribe": true, "canPublishData": true, "canPublishSources": sources}})
 	if err != nil {

@@ -6,7 +6,7 @@ import CoreVideo
 
 final class CallIntegrationTests: XCTestCase {
     @MainActor
-    func testFourNativeClientsAndExclusiveScreenPermission() async throws {
+    func testFourNativeClientsCameraPublicationAndExclusiveScreenPermission() async throws {
         guard let address = ProcessInfo.processInfo.environment["PAIRDESK_TEST_API"],
               let password = ProcessInfo.processInfo.environment["PAIRDESK_TEST_PASSWORD"] else {
             throw XCTSkip("Run scripts/test-call.sh for isolated LiveKit integration")
@@ -36,6 +36,9 @@ final class CallIntegrationTests: XCTestCase {
                 try await room.connect(url: join.url, token: join.token, connectOptions: ConnectOptions(iceTransportPolicy: relayOnly ? .relay : .all))
                 XCTAssertEqual(room.connectionState, .connected)
                 XCTAssertEqual(room.localParticipant.identity?.stringValue, join.participantIdentity)
+                XCTAssertFalse(room.localParticipant.isCameraEnabled(), "Joining a call must not activate the camera")
+                XCTAssertTrue(room.localParticipant.permissions.canPublishSources.contains(Track.Source.camera.rawValue))
+                XCTAssertFalse(room.localParticipant.permissions.canPublishSources.contains(Track.Source.screenShareVideo.rawValue))
             }
             for client in clients.prefix(4) { try await client.send("v1/rooms/\(roomID)/heartbeat", body: EmptyBody()) }
             for _ in 0..<100 {
@@ -116,7 +119,7 @@ final class CallIntegrationTests: XCTestCase {
             try await clients[0].send("v1/rooms/\(roomID)/share", body: ShareBody(enabled: true))
             try await Task.sleep(for: .milliseconds(500))
             XCTAssertTrue(media[0].localParticipant.permissions.canPublishSources.contains(Track.Source.screenShareVideo.rawValue))
-            XCTAssertFalse(media[0].localParticipant.permissions.canPublishSources.contains(Track.Source.camera.rawValue))
+            XCTAssertTrue(media[0].localParticipant.permissions.canPublishSources.contains(Track.Source.camera.rawValue))
             XCTAssertFalse(media[0].localParticipant.permissions.canPublishSources.contains(Track.Source.screenShareAudio.rawValue))
             let videoReceiver = SyntheticVideoReceiver(expectation: expectation(description: "Synthetic screen frame delivered"))
             media[1].add(delegate: videoReceiver)
@@ -134,7 +137,28 @@ final class CallIntegrationTests: XCTestCase {
             await fulfillment(of: [videoReceiver.expectation], timeout: 15)
             XCTAssertTrue(videoReceiver.receivedFrame)
             frameTask?.cancel()
+            frameTask = nil
             try await media[0].localParticipant.unpublish(publication: publication)
+            let cameraReceiver = SyntheticVideoReceiver(expectation: expectation(description: "Synthetic camera frame delivered"),
+                                                        source: .camera)
+            media[1].add(delegate: cameraReceiver)
+            let cameraTrack = await LocalVideoTrack.createBufferTrack(name: "pairdesk.camera.fixture", source: .camera)
+            let cameraCapturer = try XCTUnwrap(cameraTrack.capturer as? BufferCapturer)
+            cameraCapturer.capture(pixel)
+            frameTask = Task {
+                while !Task.isCancelled {
+                    cameraCapturer.capture(pixel)
+                    try? await Task.sleep(for: .milliseconds(66))
+                }
+            }
+            let cameraPublication = try await media[0].localParticipant.publish(videoTrack: cameraTrack,
+                                                                                 options: VideoPublishOptions(name: "pairdesk.camera.fixture", simulcast: false))
+            await fulfillment(of: [cameraReceiver.expectation], timeout: 15)
+            XCTAssertTrue(cameraReceiver.receivedFrame)
+            frameTask?.cancel()
+            frameTask = nil
+            try await media[0].localParticipant.unpublish(publication: cameraPublication)
+            media[1].remove(delegate: cameraReceiver)
             do {
                 try await clients[1].send("v1/rooms/\(roomID)/share", body: ShareBody(enabled: true))
                 XCTFail("A second sharer was admitted")
@@ -167,14 +191,18 @@ final class CallIntegrationTests: XCTestCase {
 
 private final class SyntheticVideoReceiver: NSObject, RoomDelegate, VideoRenderer, @unchecked Sendable {
     let expectation: XCTestExpectation
+    private let source: Track.Source
     private let lock = NSLock()
     private var didReceive = false
     var receivedFrame: Bool { lock.lock(); defer { lock.unlock() }; return didReceive }
     @MainActor var isAdaptiveStreamEnabled: Bool { false }
     @MainActor var adaptiveStreamSize: CGSize { CGSize(width: 640, height: 480) }
-    init(expectation: XCTestExpectation) { self.expectation = expectation }
+    init(expectation: XCTestExpectation, source: Track.Source = .screenShareVideo) {
+        self.expectation = expectation
+        self.source = source
+    }
     func room(_ room: Room, participant: RemoteParticipant, didSubscribeTrack publication: RemoteTrackPublication) {
-        guard let track = publication.track as? RemoteVideoTrack, track.source == .screenShareVideo else { return }
+        guard let track = publication.track as? RemoteVideoTrack, track.source == source else { return }
         track.add(videoRenderer: self)
     }
     func render(frame: VideoFrame) {

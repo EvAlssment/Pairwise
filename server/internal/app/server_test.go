@@ -52,7 +52,7 @@ func fixture(t *testing.T) (*Server, User) {
 				return
 			}
 			for _, source := range q.Permission.CanPublishSources {
-				if source != 2 && source != 3 {
+				if source != 1 && source != 2 && source != 3 {
 					http.Error(w, "forbidden media source", 400)
 					return
 				}
@@ -318,8 +318,8 @@ func TestRoomReservationCapAndMediaToken(t *testing.T) {
 		if !ok {
 			t.Fatal("invalid source claim")
 		}
-		if len(sources) != 1 || sources[0] != "microphone" {
-			t.Fatalf("join sources must be microphone only: %#v", sources)
+		if len(sources) != 2 || sources[0] != "camera" || sources[1] != "microphone" {
+			t.Fatalf("join sources must allow camera and microphone only: %#v", sources)
 		}
 		if video["canPublishData"] != true {
 			t.Fatal("authenticated participant must be allowed to publish remote-control data")

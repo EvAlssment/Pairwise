@@ -113,6 +113,14 @@ struct SharedScreenWindow: View {
                 .tint(rtc.isMicrophoneEnabled ? Theme.accent : Theme.attention)
                 .help(rtc.isMicrophoneEnabled ? "Mute microphone" : "Unmute microphone")
                 .accessibilityLabel(rtc.isMicrophoneEnabled ? "Mute microphone" : "Unmute microphone")
+                Button {
+                    Task { do { try await rtc.setCameraEnabled(!rtc.isCameraEnabled) } catch { store.error = error.localizedDescription } }
+                } label: {
+                    Label(rtc.isCameraEnabled ? "Camera off" : "Camera on", systemImage: rtc.isCameraEnabled ? "video.fill" : "video.slash.fill")
+                }
+                .buttonStyle(.bordered)
+                .tint(rtc.isCameraEnabled ? Theme.accent : nil)
+                .help(rtc.isCameraEnabled ? "Turn camera off" : "Turn camera on")
                 Button { showClipboard = true } label: {
                     Label(rtc.clipboardSyncEnabled ? "Clipboard sync on" : "Clipboard",
                           systemImage: rtc.clipboardSyncEnabled ? "doc.on.clipboard.fill" : "doc.on.clipboard")
@@ -154,6 +162,7 @@ struct SharedScreenWindow: View {
                 }.fixedSize(horizontal: false, vertical: true)
                     .background(Theme.surface)
             }
+            CameraStrip(feeds: rtc.cameraFeeds).padding(.horizontal, 12).padding(.vertical, 4)
             HStack(spacing: 0) {
                 ZStack {
                     Color.black

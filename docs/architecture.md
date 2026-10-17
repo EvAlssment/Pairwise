@@ -6,17 +6,17 @@ flowchart LR
     B[macOS SwiftUI client B] <-->|Presence; admission; screen claim| API
     API --> DB[Private JSON account/session store]
     API -->|Scoped tokens and permissions| SFU[Self-hosted LiveKit]
-    A <-->|Voice; screen; authenticated data| SFU
-    B <-->|Voice; screen; authenticated data| SFU
+    A <-->|Voice; camera; screen; authenticated data| SFU
+    B <-->|Voice; camera; screen; authenticated data| SFU
     A --> WA[Bundled Whisper Tiny on Mac A]
     B --> WB[Bundled Whisper Tiny on Mac B]
 ```
 
 ## Native app
 
-SwiftUI supplies a menu-bar roster and call controls, small incoming-call prompt, permission checklist and a dedicated large screen viewer with an optional transcript panel. AppStore connects the account API to RTCService and WhisperTranscriber. SessionVault uses macOS Keychain. InteractiveScreenView renders LiveKit video through an AppKit view and maps input relative to the visible aspect-fit frame. Screen sharing uses Apple's system picker and the per-session `SCContentFilter`; display-region selection uses a local still preview and configures ScreenCaptureKit's source rectangle. Pairwise does not enumerate shareable windows or displays.
+SwiftUI supplies a menu-bar roster and call controls, small incoming-call prompt, permission checklist and a dedicated large screen viewer with camera tiles and an optional transcript panel. AppStore connects the account API to RTCService and WhisperTranscriber. SessionVault uses macOS Keychain. InteractiveScreenView renders LiveKit screen video through an AppKit view and maps input relative to the visible aspect-fit frame. Camera video uses LiveKit camera tracks and renders only while explicitly enabled. Screen sharing uses Apple's system picker and the per-session `SCContentFilter`; display-region selection uses a local still preview and configures ScreenCaptureKit's source rectangle. Pairwise does not enumerate shareable windows or displays.
 
-RTCService owns LiveKit connections, screen tracks, microphone state and audio-renderer attachments. No camera API is used. Remote participant identities are taken from SDK callbacks, not a sender field in untrusted JSON. Data messages are bounded and versioned. A host-generated control epoch and monotonic two-second lease invalidate old input; ordered reliable messages preserve key/button transitions. The sharing Mac also broadcasts whether it will accept input and why not (no Accessibility access, control paused, or a window share), when a share starts and whenever that changes, and repeats it to any request it cannot grant; viewers show that reason instead of inferring control from the track name, and give up on an unanswered request after five seconds. The app releases known held input on supported revocation/teardown paths. It does not yet have a separate crash-surviving injection helper.
+RTCService owns LiveKit connections, camera and screen tracks, microphone state and audio-renderer attachments. Camera authorization is requested only after the person turns video on; camera publication is limited to 720p/30 and stays off on call join. Remote participant identities are taken from SDK callbacks, not a sender field in untrusted JSON. Data messages are bounded and versioned. A host-generated control epoch and monotonic two-second lease invalidate old input; ordered reliable messages preserve key/button transitions. The sharing Mac also broadcasts whether it will accept input and why not (no Accessibility access, control paused, or a window share), when a share starts and whenever that changes, and repeats it to any request it cannot grant; viewers show that reason instead of inferring control from the track name, and give up on an unanswered request after five seconds. The app releases known held input on supported revocation/teardown paths. It does not yet have a separate crash-surviving injection helper.
 
 Screen capture starts only after the person selects a display in the macOS picker and the server grants a sharing claim. This avoids broad Screen Recording authorization while retaining explicit per-session user consent. The first preset is 1440p/30fps, 5 Mbps, no simulcast or application audio. These settings require actual text and scrolling evaluation; they are not a commercial-product quality benchmark.
 
@@ -26,7 +26,7 @@ Audio renderer callbacks copy normalized mono PCM, then enter a local inference 
 
 One Go API with a synchronized atomic JSON store is enough for this team's account and room metadata. It is not intended for multiple API replicas. There is no public signup or email sender. bcrypt verifies passwords; opaque random sessions authorize requests. Admin membership is checked server-side.
 
-The API uses LiveKit's RoomService to create/recreate rooms with maxParticipants=4 and update publication permissions. Join grants microphone and data only. A sharing claim adds screen video to one participant. Camera and screen-share audio are never added. Human admission reservations use heartbeat expiry; LiveKit supplies the final connected participant cap.
+The API uses LiveKit's RoomService to create/recreate rooms with maxParticipants=4 and update publication permissions. Join grants camera, microphone, and data; a sharing claim adds screen video to one participant. Screen-share audio remains unavailable. Human admission reservations use heartbeat expiry; LiveKit supplies the final connected participant cap.
 
 The development stack binds to localhost. Remote use requires API HTTPS, LiveKit WSS, reachable media ports and TURN/TLS. LiveKit/WebRTC transport encryption protects network transit; the server can access media because application-level E2EE is deferred in this user-approved scope.
 

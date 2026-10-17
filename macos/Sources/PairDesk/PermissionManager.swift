@@ -39,10 +39,12 @@ final class PermissionManager: ObservableObject {
     static let shared = PermissionManager()
     private var requestedAccessibility = false
     @Published private(set) var microphone = false
+    @Published private(set) var camera = false
     @Published private(set) var accessibility = false
     init() { refresh() }
     func refresh() {
         microphone = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+        camera = AVCaptureDevice.authorizationStatus(for: .video) == .authorized
         accessibility = AXIsProcessTrusted()
     }
     func requestMicrophone() async {
@@ -50,6 +52,13 @@ final class PermissionManager: ObservableObject {
         if AVCaptureDevice.authorizationStatus(for: .audio) == .notDetermined {
             _ = await AVCaptureDevice.requestAccess(for: .audio)
         } else { open("Privacy_Microphone") }
+        refresh()
+    }
+    func requestCamera() async {
+        refresh()
+        if AVCaptureDevice.authorizationStatus(for: .video) == .notDetermined {
+            _ = await AVCaptureDevice.requestAccess(for: .video)
+        } else { open("Privacy_Camera") }
         refresh()
     }
     func requestAccessibility() {
@@ -95,6 +104,7 @@ struct PermissionsView: View {
             Text("PairDesk asks for access only when you use the related feature. You can call and view a teammate's screen without enabling remote control.")
                 .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             row("Microphone", detail: "Needed to talk. You can still join a call and listen without it.", ready: permissions.microphone) { if permissions.microphone { permissions.open("Privacy_Microphone") } else { Task { await permissions.requestMicrophone() } } }
+            row("Camera", detail: "Optional. Turn it on during a call to share live video. Camera stays off until you choose to enable it.", ready: permissions.camera) { if permissions.camera { permissions.open("Privacy_Camera") } else { Task { await permissions.requestCamera() } } }
             HStack(alignment: .top, spacing: 14) {
                 Image(systemName: "display").foregroundStyle(.secondary).frame(width: 20)
                 VStack(alignment: .leading, spacing: 5) {

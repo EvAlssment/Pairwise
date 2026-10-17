@@ -148,9 +148,7 @@ plutil -lint "$CONTENTS/Info.plist"
 /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$CONTENTS/Info.plist" | grep -Fx 'app.internal.pairdesk' >/dev/null
 /usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$CONTENTS/Info.plist" | grep -Fx '14.0' >/dev/null
 /usr/libexec/PlistBuddy -c 'Print :CFBundleIconFile' "$CONTENTS/Info.plist" | grep -Fx 'PairDesk' >/dev/null
-if /usr/libexec/PlistBuddy -c 'Print :NSCameraUsageDescription' "$CONTENTS/Info.plist" >/dev/null 2>&1; then
-  fail "camera usage description must not be present"
-fi
+/usr/libexec/PlistBuddy -c 'Print :NSCameraUsageDescription' "$CONTENTS/Info.plist" | grep -F 'turn on video during a call' >/dev/null || fail "camera usage description is missing or unclear"
 ARCHS=$(lipo -archs "$APP_EXECUTABLE")
 for framework in "$FRAMEWORKS"/*.framework; do
   [ -d "$framework" ] || continue
