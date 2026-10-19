@@ -2,6 +2,44 @@ import XCTest
 @testable import PairDesk
 
 final class WhisperTranscriberTests: XCTestCase {
+    func testTemporaryAudioDirectoryAndMarkerAreOwnerOnly() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("pairdesk-test-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let directory = try WhisperTemporaryAudioStore.createJobDirectory(in: root)
+        let marker = directory.appendingPathComponent(".pairdesk-whisper-owned")
+        let directoryAttributes = try FileManager.default.attributesOfItem(atPath: directory.path)
+        let markerAttributes = try FileManager.default.attributesOfItem(atPath: marker.path)
+        XCTAssertEqual(((directoryAttributes[.posixPermissions] as? NSNumber)?.intValue ?? -1) & 0o077, 0)
+        XCTAssertEqual(((markerAttributes[.posixPermissions] as? NSNumber)?.intValue ?? -1) & 0o077, 0)
+    }
+
+    func testStartupCleanupRemovesOnlyOldMarkedPairDeskDirectories() throws {
+        let fileManager = FileManager.default
+        let root = fileManager.temporaryDirectory.appendingPathComponent("pairdesk-test-\(UUID().uuidString)", isDirectory: true)
+        try fileManager.createDirectory(at: root, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+        defer { try? fileManager.removeItem(at: root) }
+
+        let now = Date()
+        let stale = try WhisperTemporaryAudioStore.createJobDirectory(in: root)
+        try Data([1, 2, 3]).write(to: stale.appendingPathComponent("audio.wav"))
+        try fileManager.setAttributes([.modificationDate: now.addingTimeInterval(-WhisperTemporaryAudioStore.retentionInterval - 60)], ofItemAtPath: stale.path)
+
+        let recent = try WhisperTemporaryAudioStore.createJobDirectory(in: root)
+        let unmarked = root.appendingPathComponent(WhisperTemporaryAudioStore.directoryPrefix + UUID().uuidString, isDirectory: true)
+        try fileManager.createDirectory(at: unmarked, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+        try Data([4, 5, 6]).write(to: unmarked.appendingPathComponent("audio.wav"))
+        try fileManager.setAttributes([.modificationDate: now.addingTimeInterval(-WhisperTemporaryAudioStore.retentionInterval - 60)], ofItemAtPath: unmarked.path)
+
+        let removed = WhisperTemporaryAudioStore.cleanupStaleDirectories(in: root, now: now)
+
+        XCTAssertEqual(removed, 1)
+        XCTAssertFalse(fileManager.fileExists(atPath: stale.path))
+        XCTAssertTrue(fileManager.fileExists(atPath: recent.path))
+        XCTAssertTrue(fileManager.fileExists(atPath: unmarked.path))
+    }
+
     func testWAVHeaderIsMono16000HzPCMAndClipsSamples() throws {
         let wav = WhisperTranscriber.makeWAV(samples: [-2, -1, 0, 1, 2, .nan])
         XCTAssertEqual(String(data: wav[0..<4], encoding: .ascii), "RIFF")

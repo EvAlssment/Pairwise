@@ -72,6 +72,7 @@ final class WhisperTranscriber: ObservableObject {
     private var jobs: [UUID: WhisperJobToken] = [:]
 
     init(resourceDirectory: URL? = nil, executableURL: URL? = nil) {
+        WhisperTemporaryAudioStore.cleanupStaleDirectories()
         let root = resourceDirectory ?? Bundle.main.resourceURL?.appendingPathComponent("whisper", isDirectory: true)
             ?? URL(fileURLWithPath: "/")
         self.resourceDirectory = root
@@ -215,9 +216,8 @@ final class WhisperTranscriber: ObservableObject {
     }
 
     nonisolated private static func transcribe(samples: [Float], executable: URL, model: URL, token: WhisperJobToken) -> String? {
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("pairdesk-whisper-\(UUID().uuidString)", isDirectory: true)
         do {
-            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+            let directory = try WhisperTemporaryAudioStore.createJobDirectory()
             defer { try? FileManager.default.removeItem(at: directory) }
             let wav = directory.appendingPathComponent("audio.wav")
             let outputBase = directory.appendingPathComponent("result")
@@ -233,6 +233,7 @@ final class WhisperTranscriber: ObservableObject {
             process.waitUntilExit()
             guard !token.isCancelled, process.terminationStatus == 0 else { return nil }
             let output = outputBase.appendingPathExtension("txt")
+            try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: output.path)
             guard let data = try? Data(contentsOf: output), let text = String(data: data, encoding: .utf8) else { return nil }
             return text.trimmingCharacters(in: .whitespacesAndNewlines)
         } catch {
