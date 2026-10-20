@@ -34,7 +34,7 @@ final class CallIntegrationTests: XCTestCase {
                     try await client.send("v1/rooms/\(roomID)/heartbeat", body: EmptyBody())
                 }
                 let join: JoinResponse = try await clients[index].post("v1/rooms/\(roomID)/join", body: EmptyBody())
-                let room = Room()
+                let room = Room(roomOptions: RoomOptions(reportRemoteTrackStatistics: true))
                 media.append(room)
                 let relayOnly = ProcessInfo.processInfo.environment["PAIRDESK_TEST_RELAY_ONLY"] == "1"
                 try await room.connect(url: join.url, token: join.token,
@@ -120,7 +120,8 @@ final class CallIntegrationTests: XCTestCase {
             for i in 0..<4 {
                 for client in clients.prefix(i) { try await client.send("v1/rooms/\(roomID)/heartbeat", body: EmptyBody()) }
                 let join: JoinResponse = try await clients[i].post("v1/rooms/\(roomID)/join", body: EmptyBody())
-                let room = Room(delegate: i == 1 ? receiver : nil)
+                let room = Room(delegate: i == 1 ? receiver : nil,
+                                roomOptions: RoomOptions(reportRemoteTrackStatistics: true))
                 media.append(room)
                 let relayOnly = ProcessInfo.processInfo.environment["PAIRDESK_TEST_RELAY_ONLY"] == "1"
                 try await room.connect(url: join.url, token: join.token, connectOptions: ConnectOptions(iceTransportPolicy: relayOnly ? .relay : .all))
@@ -323,6 +324,8 @@ private final class SyntheticVideoReceiver: NSObject, RoomDelegate, VideoRendere
         let frameCount: Int
         let observedFramesPerSecond: Double?
         let timeToFirstFrameMilliseconds: Double?
+        let packetLossPercent: Double?
+        let selectedPathRTTMilliseconds: Double?
     }
 
     let expectation: XCTestExpectation
@@ -335,6 +338,7 @@ private final class SyntheticVideoReceiver: NSObject, RoomDelegate, VideoRendere
     private var measuredFrameCount = 0
     private var measuredWidth: Int?
     private var measuredHeight: Int?
+    private var remoteVideoTrack: RemoteVideoTrack?
     private var recoveryStartedAt: TimeInterval?
     private var storedRecoveryMilliseconds: Double?
     var receivedFrame: Bool { lock.lock(); defer { lock.unlock() }; return didReceive }
@@ -347,6 +351,9 @@ private final class SyntheticVideoReceiver: NSObject, RoomDelegate, VideoRendere
     }
     func room(_ room: Room, participant: RemoteParticipant, didSubscribeTrack publication: RemoteTrackPublication) {
         guard let track = publication.track as? RemoteVideoTrack, track.source == source else { return }
+        lock.lock()
+        remoteVideoTrack = track
+        lock.unlock()
         track.add(videoRenderer: self)
     }
     func render(frame: VideoFrame) {
@@ -377,8 +384,17 @@ private final class SyntheticVideoReceiver: NSObject, RoomDelegate, VideoRendere
         let elapsed = if let firstFrameAt, let lastFrameAt { lastFrameAt - firstFrameAt } else { 0.0 }
         let fps = elapsed > 0 ? Double(max(0, measuredFrameCount - 1)) / elapsed : nil
         let firstFrameMilliseconds = firstFrameAt.map { max(0, ($0 - measurementStartedAt) * 1_000) }
+        let stats = remoteVideoTrack?.statistics
+        let videoStats = stats?.inboundRtpStream.first(where: { $0.kind == "video" })
+        let received = Double(videoStats?.packetsReceived ?? 0)
+        let lost = Double(max(0, videoStats?.packetsLost ?? 0))
+        let packetLoss = received + lost > 0 ? lost / (received + lost) * 100 : nil
+        let selectedPairID = stats?.transportStats?.selectedCandidatePairId
+        let selectedPair = stats?.iceCandidatePair.first(where: { $0.id == selectedPairID })
+        let rtt = selectedPair?.currentRoundTripTime.map { $0 * 1_000 }
         return Snapshot(width: measuredWidth, height: measuredHeight, frameCount: measuredFrameCount,
-                        observedFramesPerSecond: fps, timeToFirstFrameMilliseconds: firstFrameMilliseconds)
+                        observedFramesPerSecond: fps, timeToFirstFrameMilliseconds: firstFrameMilliseconds,
+                        packetLossPercent: packetLoss, selectedPathRTTMilliseconds: rtt)
     }
 
     func markRecoveryStart() {
@@ -413,7 +429,9 @@ private struct SyntheticMediaBenchmark: Encodable {
     let framesReceived: Int
     let timeToFirstFrameMilliseconds: Double?
     let syntheticSenderPauseRecoveryMilliseconds: Double?
-    let unmeasured: [String] = ["packet_loss", "selected_path_rtt", "pointer_to_render_latency", "sender_cpu", "receiver_cpu", "readability"]
+    let packetLossPercent: Double?
+    let selectedPathRTTMilliseconds: Double?
+    let unmeasured: [String]
 }
 
 private func writeSyntheticBenchmark(_ snapshot: SyntheticVideoReceiver.Snapshot,
@@ -427,7 +445,10 @@ private func writeSyntheticBenchmark(_ snapshot: SyntheticVideoReceiver.Snapshot
         source: "synthetic-screen-track", width: snapshot.width, height: snapshot.height,
         observedFramesPerSecond: snapshot.observedFramesPerSecond, framesReceived: snapshot.frameCount,
         timeToFirstFrameMilliseconds: snapshot.timeToFirstFrameMilliseconds,
-        syntheticSenderPauseRecoveryMilliseconds: recoveryMilliseconds)
+        syntheticSenderPauseRecoveryMilliseconds: recoveryMilliseconds,
+        packetLossPercent: snapshot.packetLossPercent,
+        selectedPathRTTMilliseconds: snapshot.selectedPathRTTMilliseconds,
+        unmeasured: ["pointer_to_render_latency", "sender_cpu", "receiver_cpu", "readability"])
     let encoder = JSONEncoder()
     encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
     let requestedOutput = URL(fileURLWithPath: path)

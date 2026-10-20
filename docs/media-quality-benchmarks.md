@@ -4,11 +4,11 @@ Pairwise currently exposes viewer-side WebRTC resolution, frame rate, received p
 
 ## Current CI coverage
 
-The macOS CI job runs native clients against an isolated local API and LiveKit server. It checks call admission, authenticated data delivery, synthetic camera publication/decoding, clipboard transfer, cursor/control messages, and the single-sharer rule. This is a deterministic transport and behavior check; it does not currently inject bandwidth, latency, jitter, or packet loss, and it does not exercise macOS screen capture or remote input injection.
+The macOS CI job runs native clients against an isolated local API and LiveKit server. It checks call admission, authenticated data delivery, synthetic camera publication/decoding, clipboard transfer, cursor/control messages, and the single-sharer rule. The 1:1 and 4-participant synthetic screen profiles now collect receiver-side WebRTC packet-loss percentage and selected ICE-pair RTT when the SDK exposes them. This is a deterministic loopback transport and behavior check; it does not currently inject bandwidth, latency, jitter, or packet loss, and it does not exercise macOS screen capture or remote input injection.
 
 The CI integration suite emits two metadata-only synthetic screen-track samples: one with two native clients (1:1) and one with four. Each records rendered dimensions, callback-based observed frame rate, time from test receiver setup to first frame, and recovery time after the sender pauses and resumes. The files are named by participant count, validated together against a strict field allowlist, and archived under `media-quality-<commit>-<run-id>`. Both are loopback transport; they are not real screen captures or internet-quality baselines. No media frames are written to disk.
 
-The reports explicitly mark packet loss, selected-path RTT, pointer-to-render latency, sender/receiver CPU, and readability as unmeasured. CI archives the measurements but does not set release budgets or fail on a performance threshold. The four-client profile represents the expected 3–4 participant call; CI currently has no deterministic network conditioning.
+The report validator requires receiver-side packet loss and selected-path RTT for both participant profiles; the CI run fails if the WebRTC stats are unavailable. Pointer-to-render latency, sender/receiver CPU, and readability remain explicitly unmeasured. CI archives the measurements but does not set release budgets or fail on a performance threshold. The four-client profile represents the expected 3–4 participant call; CI currently has no deterministic network conditioning.
 
 Do not treat CI results as evidence of readable 4K text, production internet quality, screen-share CPU cost, or pointer-to-render latency. No performance budget should be set until a repeatable baseline is captured on supported Macs.
 
@@ -34,7 +34,7 @@ Run at the default 1440p30 preset and the 4K30 maximum. Repeat once with a const
 
 - A reproducible network conditioner in CI and machine-readable per-commit results.
 - A deterministic network conditioner for the 1:1 and 3–4 participant scenarios. The current reports are loopback samples, not network-conditioned media.
-- Packet loss, selected-path RTT, pointer response, and actual share interruption/recovery under induced network outage. The current sender-pause recovery metric measures a synthetic source stop/start only.
+- Packet loss, selected-path RTT, pointer response, and actual share interruption/recovery under induced network outage on a constrained path. The current sender-pause recovery metric measures a synthetic source stop/start only; loopback packet loss and RTT are not internet-path baselines.
 - CPU and readability baselines on supported hardware, plus validated regression thresholds.
 - A 3–4 participant real-device reference run and confirmation that exported diagnostics remain content-free.
 

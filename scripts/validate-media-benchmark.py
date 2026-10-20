@@ -20,15 +20,19 @@ ALLOWED_FIELDS = {
     "framesReceived",
     "timeToFirstFrameMilliseconds",
     "syntheticSenderPauseRecoveryMilliseconds",
+    "packetLossPercent",
+    "selectedPathRTTMilliseconds",
     "unmeasured",
 }
-UNMEASURED = {
-    "packet_loss",
-    "selected_path_rtt",
+ALWAYS_UNMEASURED = {
     "pointer_to_render_latency",
     "sender_cpu",
     "receiver_cpu",
     "readability",
+}
+MEASUREMENTS = {
+    "packetLossPercent": (0, 100),
+    "selectedPathRTTMilliseconds": (0, 120_000),
 }
 
 
@@ -68,8 +72,15 @@ def main() -> int:
         observed_profiles.add(profile)
         if report["framesReceived"] <= 0:
             raise ValueError(f"{name}: benchmark did not receive video frames")
-        if set(report["unmeasured"]) != UNMEASURED:
-            raise ValueError(f"{name}: unmeasured fields must remain explicit")
+        unmeasured = report["unmeasured"]
+        if not isinstance(unmeasured, list) or len(unmeasured) != len(set(unmeasured)):
+            raise ValueError(f"{name}: unmeasured fields must be a unique list")
+        if set(unmeasured) != ALWAYS_UNMEASURED:
+            raise ValueError(f"{name}: pointer latency, CPU, and readability must remain explicitly unmeasured")
+        for field, (minimum, maximum) in MEASUREMENTS.items():
+            value = report.get(field)
+            if not isinstance(value, (int, float)) or not minimum <= value <= maximum:
+                raise ValueError(f"{name}: missing or invalid measured field: {field}")
         for field in ("width", "height", "observedFramesPerSecond", "timeToFirstFrameMilliseconds"):
             if not isinstance(report.get(field), (int, float)) or report[field] <= 0:
                 raise ValueError(f"{name}: missing or invalid measured field: {field}")
