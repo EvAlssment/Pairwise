@@ -14,10 +14,13 @@ func main() {
 	if path == "" {
 		path = "./data/pairdesk.json"
 	}
-	st, e := app.OpenStore(path)
+	openCtx, cancelOpen := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancelOpen()
+	st, e := app.OpenStoreFromEnv(openCtx, path)
 	if e != nil {
 		log.Fatal(e)
 	}
+	defer st.Close()
 	api := app.New(st)
 	go api.RunPushWorker(context.Background())
 	addr := os.Getenv("PAIRDESK_ADDR")

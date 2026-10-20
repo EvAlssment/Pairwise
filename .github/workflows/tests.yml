@@ -13,6 +13,35 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  postgres-integration:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: pairdesk_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d pairdesk_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+      - name: Shared-storage concurrency tests
+        working-directory: server
+        env:
+          PAIRDESK_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/pairdesk_test?sslmode=disable
+        run: go test -race ./internal/app -run 'TestPostgres' -count=1
+
   macos:
     runs-on: macos-15
     timeout-minutes: 30

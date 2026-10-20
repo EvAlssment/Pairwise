@@ -27,6 +27,9 @@ services:
     environment:
       PAIRDESK_ADDR: '0.0.0.0:8080'
       PAIRDESK_DATA: /data/pairdesk.json
+      # Set to a private Cloud SQL PostgreSQL DSN before running more than one
+      # API replica. Empty keeps the existing single-writer JSON-volume mode.
+      PAIRDESK_DATABASE_URL: ${PAIRDESK_DATABASE_URL:-}
       LIVEKIT_URL: wss://${MEDIA_DOMAIN:?run configure.py}
       LIVEKIT_API_URL: http://livekit:7880
       LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:?run configure.py}

@@ -238,7 +238,7 @@ func (s *Server) RunPushWorker(ctx context.Context) {
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 	for {
-		s.deliverPushJobs(ctx)
+		s.deliverPushJobsSafely(ctx)
 		select {
 		case <-ctx.Done():
 			return
@@ -246,6 +246,18 @@ func (s *Server) RunPushWorker(ctx context.Context) {
 		case <-ticker.C:
 		}
 	}
+}
+
+func (s *Server) deliverPushJobsSafely(ctx context.Context) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			if _, ok := recovered.(storageError); !ok {
+				panic(recovered)
+			}
+			log.Printf("push worker paused: shared storage unavailable")
+		}
+	}()
+	s.deliverPushJobs(ctx)
 }
 
 func (s *Server) deliverPushJobs(ctx context.Context) {
@@ -258,6 +270,14 @@ func (s *Server) deliverPushJobsWithSender(ctx context.Context, sender PushSende
 	if sender == nil {
 		return
 	}
+	if s.pushWorkerID == "" {
+		if id, err := randomID(16); err == nil {
+			s.pushWorkerID = id
+		} else {
+			s.pushWorkerID = fmt.Sprintf("%p-%d", s, time.Now().UnixNano())
+		}
+	}
+	workerID := s.pushWorkerID
 	for {
 		if ctx.Err() != nil {
 			return
@@ -266,7 +286,7 @@ func (s *Server) deliverPushJobsWithSender(ctx context.Context, sender PushSende
 		jobs := make([]PushJob, 0, len(s.store.s.PushJobs))
 		now := time.Now().UTC()
 		for _, job := range s.store.s.PushJobs {
-			if !now.Before(job.NextAttemptAt) || !now.Before(job.ExpiresAt) {
+			if (!now.Before(job.NextAttemptAt) || !now.Before(job.ExpiresAt)) && (!now.Before(job.LeaseUntil) || job.LeaseOwner == workerID) {
 				jobs = append(jobs, job)
 			}
 		}
@@ -276,21 +296,35 @@ func (s *Server) deliverPushJobsWithSender(ctx context.Context, sender PushSende
 		}
 		sort.Slice(jobs, func(i, j int) bool { return jobs[i].NextAttemptAt.Before(jobs[j].NextAttemptAt) })
 		job := jobs[0]
+		previous := job
+		job.LeaseOwner = workerID
+		job.LeaseUntil = now.Add(15 * time.Second)
+		s.store.s.PushJobs[job.ID] = job
+		if err := s.store.save(); err != nil {
+			s.store.s.PushJobs[job.ID] = previous
+			s.store.unlock()
+			log.Printf("push outbox claim failed event=%s", job.Event)
+			return
+		}
 		device, deviceExists := s.store.s.Devices[deviceKey(job.UserID, job.DeviceID)]
 		active := s.pushJobActiveLocked(job)
 		s.store.unlock()
 
 		if !now.Before(job.ExpiresAt) || !active || !deviceExists || device.Platform != job.Platform {
-			if !s.finishPushJob(job.ID) {
+			if !s.finishPushJob(job.ID, workerID) {
 				return
 			}
 			continue
 		}
-		jobCtx, cancel := context.WithDeadline(ctx, job.ExpiresAt)
+		sendDeadline := now.Add(10 * time.Second)
+		if job.ExpiresAt.Before(sendDeadline) {
+			sendDeadline = job.ExpiresAt
+		}
+		jobCtx, cancel := context.WithDeadline(ctx, sendDeadline)
 		err := sender.Send(jobCtx, device, job.Event, job.CallID, job.ExpiresAt)
 		cancel()
 		if err == nil {
-			if !s.finishPushJob(job.ID) {
+			if !s.finishPushJob(job.ID, workerID) {
 				return
 			}
 			continue
@@ -302,7 +336,7 @@ func (s *Server) deliverPushJobsWithSender(ctx context.Context, sender PushSende
 				return
 			}
 			log.Printf("push registration deactivated platform=%s event=%s", device.Platform, job.Event)
-			if !s.finishPushJob(job.ID) {
+			if !s.finishPushJob(job.ID, workerID) {
 				return
 			}
 			continue
@@ -311,7 +345,11 @@ func (s *Server) deliverPushJobsWithSender(ctx context.Context, sender PushSende
 			if ctx.Err() != nil {
 				return
 			}
-			if !s.finishPushJob(job.ID) {
+			if !time.Now().Before(job.ExpiresAt) {
+				if !s.finishPushJob(job.ID, workerID) {
+					return
+				}
+			} else if !s.retryPushJob(job) {
 				return
 			}
 			continue
@@ -342,12 +380,15 @@ func (s *Server) pushJobActiveLocked(job PushJob) bool {
 	}
 }
 
-func (s *Server) finishPushJob(id string) bool {
+func (s *Server) finishPushJob(id, workerID string) bool {
 	s.store.lock()
 	defer s.store.unlock()
 	job, exists := s.store.s.PushJobs[id]
 	if !exists {
 		return true
+	}
+	if job.LeaseOwner != workerID {
+		return false
 	}
 	delete(s.store.s.PushJobs, id)
 	if err := s.store.save(); err != nil {
@@ -365,8 +406,13 @@ func (s *Server) retryPushJob(job PushJob) bool {
 	if !exists {
 		return true
 	}
+	if job.LeaseOwner != "" && current.LeaseOwner != job.LeaseOwner {
+		return false
+	}
 	previous := current
 	current.Attempts++
+	current.LeaseOwner = ""
+	current.LeaseUntil = time.Time{}
 	delay := time.Duration(1<<min(current.Attempts, 4)) * 250 * time.Millisecond
 	current.NextAttemptAt = time.Now().UTC().Add(delay)
 	if !time.Now().Before(current.ExpiresAt) {

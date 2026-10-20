@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
@@ -9,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"net/http"
 	"os"
@@ -30,6 +32,7 @@ type Server struct {
 	push                         PushSender
 	pushWake                     chan struct{}
 	pushMu                       sync.Mutex
+	pushWorkerID                 string
 	liveURL, liveKey, liveSecret string
 	liveAPIURL                   string
 	dummyHash                    []byte
@@ -73,12 +76,33 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/v1/active-calls", s.auth(s.activeCalls))
 	mux.HandleFunc("/v1/join-requests", s.auth(s.joinRequests))
 	mux.HandleFunc("/v1/join-requests/", s.auth(s.joinRequestAction))
-	return securityHeaders(mux)
+	return securityHeaders(recoverStorage(mux))
+}
+
+func recoverStorage(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				if _, ok := recovered.(storageError); !ok {
+					panic(recovered)
+				}
+				log.Printf("shared storage unavailable path=%s", r.URL.Path)
+				fail(w, http.StatusServiceUnavailable, "shared storage is unavailable")
+			}
+		}()
+		next.ServeHTTP(w, r)
+	})
 }
 
 func (s *Server) ready(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		fail(w, 405, "method not allowed")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+	defer cancel()
+	if err := s.store.Check(ctx); err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"ok": false, "dependency": "storage"})
 		return
 	}
 	status, _, err := s.livekitCallResult("ListRooms", map[string]any{"names": []string{}})

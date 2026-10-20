@@ -2,22 +2,28 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"flag"
 	"fmt"
-	"golang.org/x/term"
 	"os"
 	"pairdesk/server/internal/app"
 	"strings"
+	"time"
+
+	"golang.org/x/term"
 )
 
 func main() {
 	if len(os.Args) < 2 {
 		usage()
 	}
-	st, e := app.OpenStore(dataPath())
+	openCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	st, e := app.OpenStoreFromEnv(openCtx, dataPath())
 	if e != nil {
 		fatal(e)
 	}
+	defer st.Close()
 	switch os.Args[1] {
 	case "create-user":
 		fs := flag.NewFlagSet("create-user", flag.ExitOnError)
@@ -43,6 +49,28 @@ func main() {
 			fatal(err)
 		}
 		fmt.Printf("Updated %s\n", os.Args[2])
+	case "export-json":
+		fs := flag.NewFlagSet("export-json", flag.ExitOnError)
+		to := fs.String("to", "", "Destination JSON file")
+		_ = fs.Parse(os.Args[2:])
+		if *to == "" {
+			fatal(fmt.Errorf("--to is required"))
+		}
+		if e := st.ExportJSON(*to); e != nil {
+			fatal(e)
+		}
+		fmt.Printf("Exported state to %s\n", *to)
+	case "import-json":
+		fs := flag.NewFlagSet("import-json", flag.ExitOnError)
+		from := fs.String("from", "", "Source JSON file")
+		_ = fs.Parse(os.Args[2:])
+		if *from == "" {
+			fatal(fmt.Errorf("--from is required"))
+		}
+		if e := st.ImportJSON(*from); e != nil {
+			fatal(e)
+		}
+		fmt.Printf("Imported state from %s\n", *from)
 	default:
 		usage()
 	}
@@ -69,7 +97,7 @@ func password() (string, error) {
 	return strings.TrimSpace(v), e
 }
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: pairdesk-admin create-user --name NAME --email EMAIL [--admin] | disable-user EMAIL | enable-user EMAIL")
+	fmt.Fprintln(os.Stderr, "usage: pairdesk-admin create-user --name NAME --email EMAIL [--admin] | disable-user EMAIL | enable-user EMAIL | export-json --to FILE | import-json --from FILE")
 	os.Exit(2)
 }
 func fatal(e error) { fmt.Fprintln(os.Stderr, e); os.Exit(1) }
