@@ -51,8 +51,7 @@ final class LocalAgentBridge: ObservableObject {
 
     func revoke(reason: String = "user-revoked") {
         guard isEnabled || listener >= 0 else { return }
-        state.audit("revoke", capability: reason)
-        state.revoke()
+        state.revoke(reason: reason)
         if listener >= 0 {
             shutdown(listener, SHUT_RDWR)
             close(listener)
@@ -179,9 +178,10 @@ final class AgentBridgeState: @unchecked Sendable {
         self.token = token
         self.capabilities = capabilities
     }
-    func revoke() {
+    func revoke(reason: String) {
         lock.lock(); defer { lock.unlock() }
         token = nil; capabilities = []
+        LocalAgentBridgeAudit.write(action: "revoke", capability: reason, to: auditURL)
     }
     func audit(_ action: String, capability: String) {
         lock.lock(); defer { lock.unlock() }

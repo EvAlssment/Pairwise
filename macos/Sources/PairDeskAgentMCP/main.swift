@@ -23,7 +23,11 @@ while let line = readLine() {
                     "result": ["protocolVersion": "2025-11-25",
                                "capabilities": ["tools": ["listChanged": false]],
                                "serverInfo": ["name": "pairdesk-local", "version": "0.1.0"]]]
-    case "ping": response = ["jsonrpc": "2.0", "id": id, "result": ["resultType": "complete"]]
+    case "ping":
+        guard supportsRequestMetadata(request, legacy: initializedLegacy) else {
+            response = protocolError(id: id); send(response, to: output); continue
+        }
+        response = ["jsonrpc": "2.0", "id": id, "result": ["resultType": "complete"]]
     case "tools/list":
         guard supportsRequestMetadata(request, legacy: initializedLegacy) else {
             response = protocolError(id: id); send(response, to: output); continue
