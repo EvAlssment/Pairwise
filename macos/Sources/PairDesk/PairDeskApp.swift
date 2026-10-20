@@ -84,7 +84,11 @@ final class PairDeskDelegate: NSObject, NSApplicationDelegate {
         }.store(in: &subscriptions)
         store.$activeRoom.map { $0?.id }.removeDuplicates().sink { id in
             guard id == nil else { return }
-            Task { @MainActor in AppWindows.shared.close("screen"); AppWindows.shared.close("share") }
+            Task { @MainActor in
+                AppWindows.shared.close("screen")
+                AppWindows.shared.close("share")
+                AppWindows.shared.close("transcript")
+            }
         }.store(in: &subscriptions)
         AppRuntime.shared.start()
     }

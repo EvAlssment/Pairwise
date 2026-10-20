@@ -506,6 +506,14 @@ private struct TranscriptPanel: View {
     }
 }
 
+struct TranscriptWindow: View {
+    @ObservedObject var store: AppStore
+    var body: some View {
+        TranscriptPanel(transcriber: store.transcripts, rtc: store.rtc, bridge: store.agentBridge)
+            .frame(width: 340, height: 700)
+    }
+}
+
 struct AccountView: View {
     @EnvironmentObject private var loginItem: LoginItemManager
     @ObservedObject var store: AppStore

@@ -159,6 +159,10 @@ struct MenuBarPanel: View {
                 }
             }
             CameraStrip(feeds: rtc.cameraFeeds)
+            Button { show("transcript") } label: {
+                Label("Transcript and local agent access…", systemImage: "text.quote")
+                    .font(.system(size: 11, weight: .medium))
+            }.buttonStyle(.plain).foregroundStyle(Theme.accent)
             if !store.incomingJoinRequests.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
                     sectionHeader("JOIN REQUESTS")
@@ -473,6 +477,7 @@ struct MenuBarPanel: View {
             case "account": AppWindows.shared.showAccount(store: store, loginItem: loginItem)
             case "share": AppWindows.shared.showSharePicker(store: store)
             case "screen": AppWindows.shared.showSharedScreen(store: store)
+            case "transcript": AppWindows.shared.showTranscript(store: store)
             default: break
             }
         }

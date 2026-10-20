@@ -28,6 +28,10 @@ final class AppWindows {
         show("share") { Self.hosted(ScreenSharePickerView(store: store), title: "Share your screen") }
     }
 
+    func showTranscript(store: AppStore) {
+        show("transcript") { Self.hosted(TranscriptWindow(store: store), title: "PairDesk · Transcript and agent access") }
+    }
+
     func showSharedScreen(store: AppStore) {
         show("screen") {
             let root = SharedScreenWindow(store: store, rtc: store.rtc, transcripts: store.transcripts, agentBridge: store.agentBridge)
