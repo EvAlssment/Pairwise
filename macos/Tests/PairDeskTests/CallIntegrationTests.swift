@@ -28,7 +28,9 @@ final class CallIntegrationTests: XCTestCase {
         defer { frameTask?.cancel() }
         do {
             for index in 0..<2 {
-                for client in clients.prefix(index + 1) {
+                // Only participants who already joined have a room reservation
+                // to refresh. Heartbeating a future participant is rejected.
+                for client in clients.prefix(index) {
                     try await client.send("v1/rooms/\(roomID)/heartbeat", body: EmptyBody())
                 }
                 let join: JoinResponse = try await clients[index].post("v1/rooms/\(roomID)/join", body: EmptyBody())
