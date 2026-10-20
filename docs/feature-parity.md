@@ -1,6 +1,6 @@
 # Pairwise product parity and improvement plan
 
-Assessment date: 13 October 2026. This compares the current Pairwise source and recorded verification against publicly documented Tuple and Hopp capabilities. A feature marked implemented in code is not automatically considered accepted on physical Macs; the hardware acceptance record remains pending.
+Assessment date: 20 October 2026. This compares the current Pairwise source and recorded verification against publicly documented Tuple and Hopp capabilities. A feature marked implemented in code is not automatically considered accepted on physical Macs; the hardware acceptance record remains pending.
 
 ## Product boundary
 
@@ -60,7 +60,7 @@ The in-call menu includes a local-only mic level meter. Device selectors and the
 
 ### P2 — Finish internal operations
 
-Administrator password reset and account enable/disable are now available in the app, with session revocation and protection against disabling the last admin. `/healthz` reports process liveness and `/readyz` checks LiveKit reachability without exposing credentials. A local support report is available from Account settings; the person reviews it before copying, and raw error strings and user content are excluded. A plan-only GCP alert creation script is ready; apply it only after selecting a verified notification channel and restoring GCP API access. Run a backup-restore drill against a disposable recovery target; a versioned release/update path remains open. Keep SSO, external integrations, and enterprise audit features out of this phase.
+Administrator password reset and account enable/disable are available in the app, with session revocation and protection against disabling the last admin. `/healthz` reports process liveness and `/readyz` checks LiveKit reachability without exposing credentials. A local support report is available from Account settings; the person reviews it before copying, and raw error strings and user content are excluded. The GCP project has an enabled multi-region `/readyz` alert routed to its owner email channel; actual email delivery has not been verified. An isolated restore drill against the 20 October snapshot loaded six accounts and authenticated a throwaway user in three seconds without touching the production volume; an existing teammate's post-restore sign-in still needs owner verification. The repeatable procedure is in [production recovery](production-recovery.md). A versioned release/update path remains open. Keep SSO, external integrations, and enterprise audit features out of this phase.
 
 ## Deliberately not pursuing now
 
