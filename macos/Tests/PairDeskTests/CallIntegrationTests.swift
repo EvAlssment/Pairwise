@@ -6,6 +6,94 @@ import CoreVideo
 
 final class CallIntegrationTests: XCTestCase {
     @MainActor
+    func testOneToOneSyntheticScreenQualityProfile() async throws {
+        guard let address = ProcessInfo.processInfo.environment["PAIRDESK_TEST_API"],
+              let password = ProcessInfo.processInfo.environment["PAIRDESK_TEST_PASSWORD"] else {
+            throw XCTSkip("Run scripts/test-call.sh for isolated LiveKit integration")
+        }
+        struct LoginBody: Encodable { let email: String; let password: String }
+        struct RoomBody: Encodable { let name: String }
+        struct ShareBody: Encodable { let enabled: Bool }
+        let unsigned = try APIClient(server: address)
+        var clients: [APIClient] = []
+        for index in 1...2 {
+            let result: LoginResponse = try await unsigned.post("v1/login", body: LoginBody(
+                email: "integration-\(index)@pairdesk.invalid", password: password))
+            clients.append(try APIClient(server: address, token: result.token))
+        }
+        let created: RoomResponse = try await clients[0].post("v1/rooms", body: RoomBody(name: "Synthetic 1:1 benchmark"))
+        let roomID = created.room.id
+        var media: [Room] = []
+        var frameTask: Task<Void, Never>?
+        defer { frameTask?.cancel() }
+        do {
+            for index in 0..<2 {
+                for client in clients.prefix(index + 1) {
+                    try await client.send("v1/rooms/\(roomID)/heartbeat", body: EmptyBody())
+                }
+                let join: JoinResponse = try await clients[index].post("v1/rooms/\(roomID)/join", body: EmptyBody())
+                let room = Room()
+                media.append(room)
+                let relayOnly = ProcessInfo.processInfo.environment["PAIRDESK_TEST_RELAY_ONLY"] == "1"
+                try await room.connect(url: join.url, token: join.token,
+                    connectOptions: ConnectOptions(iceTransportPolicy: relayOnly ? .relay : .all))
+                XCTAssertEqual(room.connectionState, .connected)
+            }
+            try await clients[0].send("v1/rooms/\(roomID)/share", body: ShareBody(enabled: true))
+            try await Task.sleep(for: .milliseconds(500))
+
+            let receiver = SyntheticVideoReceiver(expectation: expectation(description: "1:1 synthetic screen frame delivered"))
+            media[1].add(delegate: receiver)
+            let track = await LocalVideoTrack.createBufferTrack(name: "pairdesk.screen.1to1",
+                source: .screenShareVideo, options: BufferCaptureOptions(dimensions: .h1080_169, fps: 30))
+            let capturer = try XCTUnwrap(track.capturer as? BufferCapturer)
+            let frames = try (0..<6).map { try syntheticPixelBuffer(width: 1_920, height: 1_080, phase: $0 * 29) }
+            capturer.capture(try XCTUnwrap(frames.first))
+            frameTask = Task {
+                var frame = 1
+                while !Task.isCancelled {
+                    capturer.capture(frames[frame % frames.count])
+                    frame += 1
+                    try? await Task.sleep(for: .milliseconds(33))
+                }
+            }
+            let publication = try await media[0].localParticipant.publish(videoTrack: track,
+                options: VideoPublishOptions(screenShareEncoding: VideoEncoding(maxBitrate: 5_000_000, maxFps: 30),
+                                             simulcast: false))
+            await fulfillment(of: [receiver.expectation], timeout: 15)
+            try await Task.sleep(for: .seconds(3))
+            let metrics = try XCTUnwrap(receiver.snapshot(), "1:1 profile must receive measurable frames")
+            frameTask?.cancel()
+            await frameTask?.value
+            frameTask = nil
+
+            receiver.markRecoveryStart()
+            try await Task.sleep(for: .milliseconds(500))
+            capturer.capture(try XCTUnwrap(frames.first))
+            frameTask = Task {
+                var frame = 1
+                while !Task.isCancelled {
+                    capturer.capture(frames[frame % frames.count])
+                    frame += 1
+                    try? await Task.sleep(for: .milliseconds(33))
+                }
+            }
+            try await receiver.waitForRecovery(timeout: 10)
+            try writeSyntheticBenchmark(metrics, recoveryMilliseconds: receiver.recoveryMilliseconds, participantCount: media.count)
+            frameTask?.cancel()
+            await frameTask?.value
+            frameTask = nil
+            try await media[0].localParticipant.unpublish(publication: publication)
+        } catch {
+            for room in media { await room.disconnect() }
+            for client in clients { try? await client.send("v1/rooms/\(roomID)/leave", body: EmptyBody()) }
+            throw error
+        }
+        for room in media { await room.disconnect() }
+        for client in clients { try? await client.send("v1/rooms/\(roomID)/leave", body: EmptyBody()) }
+    }
+
+    @MainActor
     func testFourNativeClientsCameraPublicationAndExclusiveScreenPermission() async throws {
         guard let address = ProcessInfo.processInfo.environment["PAIRDESK_TEST_API"],
               let password = ProcessInfo.processInfo.environment["PAIRDESK_TEST_PASSWORD"] else {
@@ -340,7 +428,9 @@ private func writeSyntheticBenchmark(_ snapshot: SyntheticVideoReceiver.Snapshot
         syntheticSenderPauseRecoveryMilliseconds: recoveryMilliseconds)
     let encoder = JSONEncoder()
     encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-    let output = URL(fileURLWithPath: path)
+    let requestedOutput = URL(fileURLWithPath: path)
+    let profileName = "\(requestedOutput.deletingPathExtension().lastPathComponent)-\(participantCount)p.json"
+    let output = requestedOutput.deletingLastPathComponent().appendingPathComponent(profileName)
     try FileManager.default.createDirectory(at: output.deletingLastPathComponent(),
                                             withIntermediateDirectories: true)
     try encoder.encode(report).write(to: output, options: .atomic)

@@ -48,14 +48,17 @@ jobs:
       - name: Validate synthetic media benchmark
         if: always()
         run: |
-          test -s .cache/pairwise-media-benchmark.json
-          python3 scripts/validate-media-benchmark.py .cache/pairwise-media-benchmark.json
+          test -s .cache/pairwise-media-benchmark-2p.json
+          test -s .cache/pairwise-media-benchmark-4p.json
+          python3 scripts/validate-media-benchmark.py \
+            .cache/pairwise-media-benchmark-2p.json \
+            .cache/pairwise-media-benchmark-4p.json
       - name: Archive synthetic media benchmark
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: media-quality-${{ github.sha }}-${{ github.run_id }}
-          path: .cache/pairwise-media-benchmark.json
+          path: .cache/pairwise-media-benchmark-*.json
           if-no-files-found: ignore
       - name: Server race tests and vet
         working-directory: server

@@ -4,11 +4,11 @@ Pairwise currently exposes viewer-side WebRTC resolution, frame rate, received p
 
 ## Current CI coverage
 
-The macOS CI job runs four native clients against an isolated local API and LiveKit server. It checks call admission, authenticated data delivery, synthetic camera publication/decoding, clipboard transfer, cursor/control messages, and the single-sharer rule. This is a deterministic transport and behavior check; it does not currently inject bandwidth, latency, jitter, or packet loss, and it does not exercise macOS screen capture or remote input injection.
+The macOS CI job runs native clients against an isolated local API and LiveKit server. It checks call admission, authenticated data delivery, synthetic camera publication/decoding, clipboard transfer, cursor/control messages, and the single-sharer rule. This is a deterministic transport and behavior check; it does not currently inject bandwidth, latency, jitter, or packet loss, and it does not exercise macOS screen capture or remote input injection.
 
-The group-call integration test also emits a metadata-only synthetic screen-track sample. It records the rendered frame dimensions, callback-based observed frame rate, time from test receiver setup to first frame, and recovery time after the sender pauses and resumes. CI validates a strict field allowlist and uploads the JSON as `media-quality-<commit>-<run-id>`. The sample is loopback transport with four local test participants; it is not a real screen capture or an internet quality baseline. No media frames are written to disk.
+The CI integration suite emits two metadata-only synthetic screen-track samples: one with two native clients (1:1) and one with four. Each records rendered dimensions, callback-based observed frame rate, time from test receiver setup to first frame, and recovery time after the sender pauses and resumes. The files are named by participant count, validated together against a strict field allowlist, and archived under `media-quality-<commit>-<run-id>`. Both are loopback transport; they are not real screen captures or internet-quality baselines. No media frames are written to disk.
 
-The report explicitly marks packet loss, selected-path RTT, pointer-to-render latency, sender/receiver CPU, and readability as unmeasured. CI currently archives measurements but does not set release budgets or fail on a performance threshold. One synthetic group profile does not satisfy the 1:1 plus 3–4 participant profile requirement.
+The reports explicitly mark packet loss, selected-path RTT, pointer-to-render latency, sender/receiver CPU, and readability as unmeasured. CI archives the measurements but does not set release budgets or fail on a performance threshold. The four-client profile represents the expected 3–4 participant call; CI currently has no deterministic network conditioning.
 
 Do not treat CI results as evidence of readable 4K text, production internet quality, screen-share CPU cost, or pointer-to-render latency. No performance budget should be set until a repeatable baseline is captured on supported Macs.
 
@@ -33,7 +33,7 @@ Run at the default 1440p30 preset and the 4K30 maximum. Repeat once with a const
 ## Still needed for issue #35
 
 - A reproducible network conditioner in CI and machine-readable per-commit results.
-- A deterministic network conditioner plus 1:1 and constrained 3–4 participant scenarios. The current synthetic group artifact is a first loopback sample, not network-conditioned media.
+- A deterministic network conditioner for the 1:1 and 3–4 participant scenarios. The current reports are loopback samples, not network-conditioned media.
 - Packet loss, selected-path RTT, pointer response, and actual share interruption/recovery under induced network outage. The current sender-pause recovery metric measures a synthetic source stop/start only.
 - CPU and readability baselines on supported hardware, plus validated regression thresholds.
 - A 3–4 participant real-device reference run and confirmation that exported diagnostics remain content-free.

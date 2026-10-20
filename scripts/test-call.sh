@@ -38,4 +38,4 @@ export PAIRDESK_TEST_PASSWORD
 PAIRDESK_TEST_API=http://127.0.0.1:18081
 export PAIRDESK_TEST_API
 (cd macos && swift test -j 4 --filter 'CallIntegrationTests|DirectCallIntegrationTests|CallFeedbackIntegrationTests|RemoteMuteIntegrationTests|HostCursorIntegrationTests')
-echo 'Four native clients verified against the selected LiveKit endpoint; synthetic accounts and API cleaned up.'
+echo 'Native call/media integration profiles verified against the selected LiveKit endpoint; synthetic accounts and API cleaned up.'

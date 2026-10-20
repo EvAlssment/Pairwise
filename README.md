@@ -88,6 +88,8 @@ Read [the architecture notes](docs/architecture.md), [feature parity roadmap](do
 
 PairDesk's opt-in, read-only local coding-agent bridge is documented in [docs/local-agent-bridge.md](docs/local-agent-bridge.md). It exposes only separately granted participant names and local transcript text during a call; screenshot access is not implemented.
 
+See [docs/media-quality-benchmarks.md](docs/media-quality-benchmarks.md) for the CI synthetic benchmark scope and the separate physical Mac reference procedure.
+
 ## License
 
 Pairwise source code is MIT-licensed; see [LICENSE](LICENSE). Vendored and bundled third-party components keep their upstream licenses and notices. Open-source licensing does not grant rights to Apple's signing identities, service credentials, Whisper model downloads, or a team's user data.
