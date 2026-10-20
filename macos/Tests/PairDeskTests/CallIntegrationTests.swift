@@ -416,8 +416,10 @@ private final class SyntheticVideoReceiver: NSObject, RoomDelegate, VideoRendere
 }
 
 private struct SyntheticMediaBenchmark: Encodable {
-    let schemaVersion = 1
-    let classification = "synthetic-loopback-ci"
+    let schemaVersion = 2
+    let classification: String
+    let networkProfile: String
+    let configuredNetwork: SyntheticNetworkProfile
     let commit: String?
     let runID: String?
     let generatedAt: String
@@ -434,11 +436,38 @@ private struct SyntheticMediaBenchmark: Encodable {
     let unmeasured: [String]
 }
 
+private struct SyntheticNetworkProfile: Encodable {
+    let directionalBandwidthKbitPerSecond: Int
+    let oneWayDelayMilliseconds: Int
+    let delayVariationMilliseconds: [Int]
+    let packetLossProbabilityPercent: Double
+}
+
 private func writeSyntheticBenchmark(_ snapshot: SyntheticVideoReceiver.Snapshot,
                                     recoveryMilliseconds: Double?, participantCount: Int) throws {
     guard let path = ProcessInfo.processInfo.environment["PAIRDESK_MEDIA_BENCHMARK_OUTPUT"] else { return }
+    let profile = ProcessInfo.processInfo.environment["PAIRDESK_BENCHMARK_PROFILE"] ?? "baseline"
+    guard profile == "baseline" || profile == "constrained" else {
+        throw NSError(domain: "SyntheticMediaBenchmark", code: 2,
+                      userInfo: [NSLocalizedDescriptionKey: "Unknown network benchmark profile: \(profile)"])
+    }
+    let isConstrained = profile == "constrained"
+    guard !isConstrained || ProcessInfo.processInfo.environment["PAIRDESK_NETWORK_CONDITION_ACTIVE"] == "1" else {
+        throw NSError(domain: "SyntheticMediaBenchmark", code: 3,
+                      userInfo: [NSLocalizedDescriptionKey: "Constrained profile requires the macOS network conditioner"])
+    }
+    let environment = ProcessInfo.processInfo.environment
+    let delaySequence = (environment["PAIRDESK_NETWORK_CONDITION_DELAY_SEQUENCE_MS"] ?? "0")
+        .split(separator: ",").compactMap { Int($0) }
+    let configuredNetwork = SyntheticNetworkProfile(
+        directionalBandwidthKbitPerSecond: Int(environment["PAIRDESK_NETWORK_CONDITION_BANDWIDTH_KBIT"] ?? "0") ?? 0,
+        oneWayDelayMilliseconds: isConstrained ? 40 : 0,
+        delayVariationMilliseconds: delaySequence.isEmpty ? [0] : delaySequence,
+        packetLossProbabilityPercent: Double(environment["PAIRDESK_NETWORK_CONDITION_PACKET_LOSS_PERCENT"] ?? "0") ?? 0)
     let formatter = ISO8601DateFormatter()
     let report = SyntheticMediaBenchmark(
+        classification: "synthetic-\(profile)-ci", networkProfile: profile,
+        configuredNetwork: configuredNetwork,
         commit: ProcessInfo.processInfo.environment["PAIRDESK_BENCHMARK_COMMIT"],
         runID: ProcessInfo.processInfo.environment["PAIRDESK_BENCHMARK_RUN_ID"],
         generatedAt: formatter.string(from: Date()), participantCount: participantCount,
@@ -452,7 +481,7 @@ private func writeSyntheticBenchmark(_ snapshot: SyntheticVideoReceiver.Snapshot
     let encoder = JSONEncoder()
     encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
     let requestedOutput = URL(fileURLWithPath: path)
-    let profileName = "\(requestedOutput.deletingPathExtension().lastPathComponent)-\(participantCount)p.json"
+    let profileName = "\(requestedOutput.deletingPathExtension().lastPathComponent)-\(profile)-\(participantCount)p.json"
     let output = requestedOutput.deletingLastPathComponent().appendingPathComponent(profileName)
     try FileManager.default.createDirectory(at: output.deletingLastPathComponent(),
                                             withIntermediateDirectories: true)
