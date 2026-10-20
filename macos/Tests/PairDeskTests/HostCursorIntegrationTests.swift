@@ -6,6 +6,76 @@ import XCTest
 
 final class HostCursorIntegrationTests: XCTestCase {
     @MainActor
+    func testScreenAnnotationsRelayWithConsentAndNeverBecomeRemoteInput() async throws {
+        guard let address = ProcessInfo.processInfo.environment["PAIRDESK_TEST_API"],
+              let password = ProcessInfo.processInfo.environment["PAIRDESK_TEST_PASSWORD"] else {
+            throw XCTSkip("Run scripts/test-call.sh for annotation relay integration")
+        }
+        _ = NSApplication.shared
+        struct LoginBody: Encodable { let email: String; let password: String }
+        struct RoomBody: Encodable { let name: String }
+        let unsigned = try APIClient(server: address)
+        var clients: [APIClient] = []
+        var users: [TeamUser] = []
+        for index in 1...3 {
+            let login: LoginResponse = try await unsigned.post("v1/login", body: LoginBody(
+                email: "integration-annotation-\(index)@pairdesk.invalid", password: password))
+            clients.append(try APIClient(server: address, token: login.token))
+            users.append(login.user)
+        }
+        let created: RoomResponse = try await clients[0].post("v1/rooms", body: RoomBody(name: "Screen annotation relay"))
+        let host = RTCService()
+        let viewer = Room()
+        let observer = Room()
+        let relayed = AnnotationPacketReceiver(expectation: expectation(description: "Sharer relays annotation to peers"))
+        observer.add(delegate: relayed)
+        do {
+            let hostJoin: JoinResponse = try await clients[0].post("v1/rooms/\(created.room.id)/join", body: EmptyBody())
+            try await host.connect(url: hostJoin.url, token: hostJoin.token,
+                                   identity: hostJoin.participantIdentity, name: users[0].name)
+            let viewerJoin: JoinResponse = try await clients[1].post("v1/rooms/\(created.room.id)/join", body: EmptyBody())
+            try await viewer.connect(url: viewerJoin.url, token: viewerJoin.token)
+            let observerJoin: JoinResponse = try await clients[2].post("v1/rooms/\(created.room.id)/join", body: EmptyBody())
+            try await observer.connect(url: observerJoin.url, token: observerJoin.token)
+            try await waitFor { host.participants.count == 3 }
+
+            host.debugStartCursorShare(bounds: CGRect(x: 0, y: 0, width: 1_920, height: 1_080), session: "annotation-share")
+            let point = ScreenAnnotationMessage(session: "annotation-share", sequence: 1, kind: .point,
+                                                strokeID: "stroke-1", point: .init(x: 0.25, y: 0.75))
+            try await viewer.localParticipant.publish(data: JSONEncoder().encode(point),
+                options: DataPublishOptions(destinationIdentities: [Participant.Identity(from: hostJoin.participantIdentity)],
+                                            topic: "pairdesk.annotation.v1", reliable: false))
+            try await waitFor { host.screenAnnotations.first?.points.first == point.point }
+            await fulfillment(of: [relayed.expectation], timeout: 5)
+            let broadcast = try XCTUnwrap(relayed.message)
+            XCTAssertEqual(relayed.sender, hostJoin.participantIdentity)
+            XCTAssertEqual(broadcast.participantIdentity, viewerJoin.participantIdentity)
+            XCTAssertEqual(broadcast.strokeID, "stroke-1")
+            XCTAssertTrue(host.remotePointers.isEmpty, "Annotation traffic must not become remote cursor or input")
+
+            host.setAnnotationsAllowed(false)
+            let blocked = ScreenAnnotationMessage(session: "annotation-share", sequence: 2, kind: .point,
+                                                  strokeID: "stroke-2", point: .init(x: 0.5, y: 0.5))
+            try await viewer.localParticipant.publish(data: JSONEncoder().encode(blocked),
+                options: DataPublishOptions(destinationIdentities: [Participant.Identity(from: hostJoin.participantIdentity)],
+                                            topic: "pairdesk.annotation.v1", reliable: false))
+            try await Task.sleep(for: .milliseconds(250))
+            XCTAssertTrue(host.screenAnnotations.isEmpty, "Disabling annotations must clear marks and reject new points")
+            await viewer.disconnect()
+            try await waitFor { host.participants.count == 2 && host.screenAnnotations.isEmpty }
+            await host.disconnect()
+            await observer.disconnect()
+        } catch {
+            await host.disconnect()
+            await viewer.disconnect()
+            await observer.disconnect()
+            for client in clients { try? await client.send("v1/rooms/\(created.room.id)/leave", body: EmptyBody()) }
+            throw error
+        }
+        for client in clients { try? await client.send("v1/rooms/\(created.room.id)/leave", body: EmptyBody()) }
+    }
+
+    @MainActor
     func testAuthenticatedCursorPacketsShowNamesOnHostAndClearWithTheShare() async throws {
         guard let address = ProcessInfo.processInfo.environment["PAIRDESK_TEST_API"],
               let password = ProcessInfo.processInfo.environment["PAIRDESK_TEST_PASSWORD"] else {
@@ -94,5 +164,26 @@ final class HostCursorIntegrationTests: XCTestCase {
             try await Task.sleep(for: .milliseconds(100))
         }
         XCTFail("Host cursor state did not propagate", file: file, line: line)
+    }
+}
+
+private final class AnnotationPacketReceiver: RoomDelegate, @unchecked Sendable {
+    let expectation: XCTestExpectation
+    private let lock = NSLock()
+    private var storedMessage: ScreenAnnotationMessage?
+    private var storedSender: String?
+    var message: ScreenAnnotationMessage? { lock.lock(); defer { lock.unlock() }; return storedMessage }
+    var sender: String? { lock.lock(); defer { lock.unlock() }; return storedSender }
+    init(expectation: XCTestExpectation) { self.expectation = expectation }
+    func room(_ room: Room, participant: RemoteParticipant?, didReceiveData data: Data,
+              forTopic topic: String, encryptionType: EncryptionType) {
+        guard topic == "pairdesk.annotation.v1", let participant,
+              let message = try? JSONDecoder().decode(ScreenAnnotationMessage.self, from: data) else { return }
+        lock.lock()
+        guard storedMessage == nil else { lock.unlock(); return }
+        storedMessage = message
+        storedSender = participant.identity?.stringValue
+        lock.unlock()
+        expectation.fulfill()
     }
 }
