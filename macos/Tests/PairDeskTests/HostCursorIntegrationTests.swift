@@ -61,6 +61,24 @@ final class HostCursorIntegrationTests: XCTestCase {
                                             topic: "pairdesk.annotation.v1", reliable: false))
             try await Task.sleep(for: .milliseconds(250))
             XCTAssertTrue(host.screenAnnotations.isEmpty, "Disabling annotations must clear marks and reject new points")
+
+            host.setAnnotationsAllowed(true)
+            let beforeShareChange = ScreenAnnotationMessage(session: "annotation-share", sequence: 3, kind: .point,
+                                                            strokeID: "stroke-before-share-change",
+                                                            point: .init(x: 0.7, y: 0.2))
+            try await viewer.localParticipant.publish(data: JSONEncoder().encode(beforeShareChange),
+                options: DataPublishOptions(destinationIdentities: [Participant.Identity(from: hostJoin.participantIdentity)],
+                                            topic: "pairdesk.annotation.v1", reliable: false))
+            try await waitFor { host.screenAnnotations.first?.strokeID == "stroke-before-share-change" }
+            host.debugStartCursorShare(bounds: CGRect(x: 0, y: 0, width: 1_920, height: 1_080), session: "annotation-share-next")
+            XCTAssertTrue(host.screenAnnotations.isEmpty, "Changing the share session must clear old marks")
+            let afterShareChange = ScreenAnnotationMessage(session: "annotation-share-next", sequence: 1, kind: .point,
+                                                           strokeID: "stroke-after-share-change",
+                                                           point: .init(x: 0.3, y: 0.4))
+            try await viewer.localParticipant.publish(data: JSONEncoder().encode(afterShareChange),
+                options: DataPublishOptions(destinationIdentities: [Participant.Identity(from: hostJoin.participantIdentity)],
+                                            topic: "pairdesk.annotation.v1", reliable: false))
+            try await waitFor { host.screenAnnotations.first?.strokeID == "stroke-after-share-change" }
             await viewer.disconnect()
             try await waitFor { host.participants.count == 2 && host.screenAnnotations.isEmpty }
             await host.disconnect()
