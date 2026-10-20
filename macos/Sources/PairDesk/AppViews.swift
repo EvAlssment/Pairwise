@@ -383,6 +383,10 @@ struct ScreenSharePickerView: View {
                 ForEach(ScreenShareSource.allCases) { source in Text(source.title).tag(source) }
             }.pickerStyle(.segmented)
             Text(source.explanation + " PairDesk only gets access to your selection for this sharing session.").font(.callout).foregroundStyle(.secondary)
+            if source == .display {
+                Label("PairDesk cannot hide individual apps or notification banners from full-display sharing yet. Choose Window or Region to limit what others see.", systemImage: "eye")
+                    .font(.caption).foregroundStyle(Theme.attention).fixedSize(horizontal: false, vertical: true)
+            }
             if source == .window {
                 Text("Window sharing is view-only. Share a display or region to use remote control.")
                     .font(.caption).foregroundStyle(.secondary)
