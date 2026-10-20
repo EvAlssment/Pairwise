@@ -31,6 +31,9 @@ jobs:
         env:
           PAIRDESK_TEST_MEDIA_URL: ws://127.0.0.1:7880
           PAIRDESK_TEST_MEDIA_API_URL: http://127.0.0.1:7880
+          PAIRDESK_MEDIA_BENCHMARK_OUTPUT: .cache/pairwise-media-benchmark.json
+          PAIRDESK_BENCHMARK_COMMIT: ${{ github.sha }}
+          PAIRDESK_BENCHMARK_RUN_ID: ${{ github.run_id }}
         run: |
           set -eu
           sh infra/setup.sh
@@ -42,6 +45,18 @@ jobs:
             sleep 1
           done
           sh scripts/test-call.sh
+      - name: Validate synthetic media benchmark
+        if: always()
+        run: |
+          test -s .cache/pairwise-media-benchmark.json
+          python3 scripts/validate-media-benchmark.py .cache/pairwise-media-benchmark.json
+      - name: Archive synthetic media benchmark
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: media-quality-${{ github.sha }}-${{ github.run_id }}
+          path: .cache/pairwise-media-benchmark.json
+          if-no-files-found: ignore
       - name: Server race tests and vet
         working-directory: server
         run: go test -race ./... && go vet ./...
