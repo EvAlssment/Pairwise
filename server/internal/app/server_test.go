@@ -3,6 +3,7 @@ package app
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -11,6 +12,20 @@ import (
 	"testing"
 	"time"
 )
+
+func TestSharedStorageFailureReturnsSanitizedServiceUnavailable(t *testing.T) {
+	handler := recoverStorage(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		panic(storageError{errors.New("postgres connection string contains private details")})
+	}))
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/v1/me", nil))
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503", response.Code)
+	}
+	if strings.Contains(response.Body.String(), "private details") || strings.Contains(response.Body.String(), "postgres") {
+		t.Fatalf("storage error leaked to client: %s", response.Body.String())
+	}
+}
 
 func fixture(t *testing.T) (*Server, User) {
 	t.Helper()

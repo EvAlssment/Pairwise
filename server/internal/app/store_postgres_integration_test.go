@@ -65,6 +65,39 @@ func TestPostgresConcurrentWorkersLeasePushOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	startWrites := make(chan struct{})
+	writeErrors := make(chan error, 2)
+	for _, write := range []struct {
+		store *Store
+		id    string
+	}{{first, "replica-a"}, {second, "replica-b"}} {
+		write := write
+		go func() {
+			<-startWrites
+			write.store.lock()
+			write.store.s.Users[write.id] = User{ID: write.id, Enabled: true}
+			err := write.store.save()
+			if err != nil {
+				delete(write.store.s.Users, write.id)
+			}
+			write.store.unlock()
+			writeErrors <- err
+		}()
+	}
+	close(startWrites)
+	for range 2 {
+		if err = <-writeErrors; err != nil {
+			t.Fatal(err)
+		}
+	}
+	first.lock()
+	_, replicaAExists := first.s.Users["replica-a"]
+	_, replicaBExists := first.s.Users["replica-b"]
+	first.unlock()
+	if !replicaAExists || !replicaBExists {
+		t.Fatalf("concurrent replica writes were lost: replica-a=%v replica-b=%v", replicaAExists, replicaBExists)
+	}
+
 	sender := &countedBlockingSender{entered: make(chan struct{}, 2), release: make(chan struct{})}
 	worker1 := &Server{store: first}
 	worker2 := &Server{store: second}
