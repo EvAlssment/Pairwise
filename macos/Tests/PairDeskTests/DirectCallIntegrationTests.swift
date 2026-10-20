@@ -16,7 +16,7 @@ final class DirectCallIntegrationTests: XCTestCase {
         var clients: [APIClient] = []
         var users: [TeamUser] = []
         for i in 1...5 {
-            let login: LoginResponse = try await unsigned.post("v1/login", body: LoginBody(email: "integration-\(i)@pairdesk.invalid", password: password))
+            let login: LoginResponse = try await unsigned.post("v1/login", body: LoginBody(email: "integration-direct-\(i)@pairdesk.invalid", password: password))
             clients.append(try APIClient(server: address, token: login.token))
             users.append(login.user)
         }
@@ -118,7 +118,7 @@ final class DirectCallIntegrationTests: XCTestCase {
         var rooms: [Room] = []
         var activeRoomID: String?
         for i in 1...5 {
-            let login: LoginResponse = try await unsigned.post("v1/login", body: LoginBody(email: "integration-\(i)@pairdesk.invalid", password: password))
+            let login: LoginResponse = try await unsigned.post("v1/login", body: LoginBody(email: "integration-join-\(i)@pairdesk.invalid", password: password))
             clients.append(try APIClient(server: address, token: login.token))
             users.append(login.user)
         }

@@ -25,6 +25,8 @@ trap cleanup EXIT HUP INT TERM
 (cd server && go build -o "$FIXTURE/api" ./cmd/pairdesk-api && go build -o "$FIXTURE/admin" ./cmd/pairdesk-admin)
 for i in 1 2 3 4 5; do
   "$FIXTURE/admin" create-user --name "Integration $i" --email "integration-$i@pairdesk.invalid" >/dev/null
+  "$FIXTURE/admin" create-user --name "Direct integration $i" --email "integration-direct-$i@pairdesk.invalid" >/dev/null
+  "$FIXTURE/admin" create-user --name "Join integration $i" --email "integration-join-$i@pairdesk.invalid" >/dev/null
 done
 LIVEKIT_URL=${PAIRDESK_TEST_MEDIA_URL:-ws://127.0.0.1:17880} LIVEKIT_API_URL=${PAIRDESK_TEST_MEDIA_API_URL:-http://127.0.0.1:17880} PAIRDESK_ADDR=127.0.0.1:18081 "$FIXTURE/api" > "$FIXTURE/api.log" 2>&1 &
 API_PID=$!
