@@ -86,6 +86,8 @@ The LiveKit integration test needs a running local stack and is exercised separa
 
 Read [the architecture notes](docs/architecture.md), [feature parity roadmap](docs/feature-parity.md), [release guide](docs/releasing.md), [self-hosting guide](docs/self-hosting.md), and [third-party notices](THIRD_PARTY_NOTICES.md) before operating a public server or redistributing a binary.
 
+PairDesk's opt-in, read-only local coding-agent bridge is documented in [docs/local-agent-bridge.md](docs/local-agent-bridge.md). It exposes only separately granted participant names and local transcript text during a call; screenshot access is not implemented.
+
 ## License
 
 Pairwise source code is MIT-licensed; see [LICENSE](LICENSE). Vendored and bundled third-party components keep their upstream licenses and notices. Open-source licensing does not grant rights to Apple's signing identities, service credentials, Whisper model downloads, or a team's user data.

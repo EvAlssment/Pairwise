@@ -34,6 +34,7 @@ final class AppStore: ObservableObject {
     }
     let rtc = RTCService()
     let transcripts = WhisperTranscriber()
+    let agentBridge = LocalAgentBridge()
     private var subscriptions = Set<AnyCancellable>()
     private var hadRemoteParticipant = false
     private var restoringSession = false
@@ -86,6 +87,7 @@ final class AppStore: ObservableObject {
         }.store(in: &subscriptions)
         rtc.$participants.sink { [weak self] participants in
             guard let self else { return }
+            self.updateAgentBridge()
             if participants.contains(where: { !$0.isLocal }) {
                 self.hadRemoteParticipant = true
                 // Private rooms admit the target only after acceptance, so a
@@ -97,12 +99,26 @@ final class AppStore: ObservableObject {
                 Task { await self.leave() }
             }
         }.store(in: &subscriptions)
+        $activeRoom.combineLatest(transcripts.$segments).sink { [weak self] _, _ in
+            self?.updateAgentBridge()
+        }.store(in: &subscriptions)
         rtc.onAudioBuffer = { [weak self] identity, name, samples, rate in
             Task { @MainActor in
                 guard let self, self.activeRoom != nil else { return }
                 self.transcripts.appendAudio(speakerID: identity, name: name, samples: samples, sampleRate: rate)
             }
         }
+    }
+
+    private func updateAgentBridge() {
+        let participants = rtc.participants.map { person in
+            ["name": person.name]
+        }
+        let transcript = transcripts.segments.suffix(40).map { segment in
+            ["speaker": String(segment.speakerName.prefix(120)), "text": String(segment.text.prefix(600)),
+             "time": ISO8601DateFormatter().string(from: segment.createdAt)]
+        }
+        agentBridge.update(callID: activeRoom?.id, participants: participants, transcript: transcript)
     }
 
     private func updateCallAudio() {

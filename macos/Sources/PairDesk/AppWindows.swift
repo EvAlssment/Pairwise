@@ -30,7 +30,7 @@ final class AppWindows {
 
     func showSharedScreen(store: AppStore) {
         show("screen") {
-            let root = SharedScreenWindow(store: store, rtc: store.rtc, transcripts: store.transcripts)
+            let root = SharedScreenWindow(store: store, rtc: store.rtc, transcripts: store.transcripts, agentBridge: store.agentBridge)
                 .frame(minWidth: 700, minHeight: 450)
             let window = Self.hosted(root, title: "PairDesk · Shared screen", fixedSize: false)
             window.styleMask = [.titled, .closable, .miniaturizable, .resizable]

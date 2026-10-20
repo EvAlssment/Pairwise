@@ -59,6 +59,7 @@ struct SharedScreenWindow: View {
     @ObservedObject var store: AppStore
     @ObservedObject var rtc: RTCService
     @ObservedObject var transcripts: WhisperTranscriber
+    @ObservedObject var agentBridge: LocalAgentBridge = AppRuntime.shared.store.agentBridge
     @State private var showTranscript = false
     @State private var showClipboard = false
     @State private var permissions = false
@@ -275,7 +276,7 @@ struct SharedScreenWindow: View {
                         }.padding(30)
                     }
                 }.frame(maxWidth: .infinity, maxHeight: .infinity)
-                if showTranscript { TranscriptPanel(transcriber: transcripts, rtc: rtc).frame(width: 275) }
+                if showTranscript { TranscriptPanel(transcriber: transcripts, rtc: rtc, bridge: agentBridge).frame(width: 300) }
             }
             if let error = rtc.error { HStack { Text(error).font(.caption).foregroundStyle(.orange); Spacer(); Button("Permissions") { permissions = true } }.padding(8) }
         }.background(Theme.surface).tint(Theme.accent)
@@ -439,6 +440,9 @@ struct WorkspaceView: View {
 private struct TranscriptPanel: View {
     @ObservedObject var transcriber: WhisperTranscriber
     @ObservedObject var rtc: RTCService
+    @ObservedObject var bridge: LocalAgentBridge
+    @State private var allowParticipants = false
+    @State private var allowTranscript = false
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             HStack { Text("Local transcript").font(.system(size: 14, weight: .semibold)); Spacer(); Image(systemName: "lock").font(.system(size: 11)).foregroundStyle(Theme.accent) }
@@ -460,6 +464,26 @@ private struct TranscriptPanel: View {
             }
             HStack { Button("Clear") { transcriber.clear() }.buttonStyle(.plain); Spacer(); Button("Export text") { export() }.buttonStyle(.plain).disabled(transcriber.segments.isEmpty) }.font(.system(size: 11)).foregroundStyle(Theme.textMuted)
             Text("No upload. Not saved automatically.").font(.system(size: 9)).foregroundStyle(Theme.textMuted)
+            Divider()
+            HStack { Text("Coding agent access").font(.system(size: 14, weight: .semibold)); Spacer(); Image(systemName: "lock.shield").foregroundStyle(Theme.accent) }
+            Text("Only this Mac · active call only · read only").font(.system(size: 10)).foregroundStyle(Theme.textMuted)
+            Toggle("Participant names", isOn: $allowParticipants).toggleStyle(.switch).font(.system(size: 11)).disabled(bridge.isEnabled)
+            Toggle("Transcript text", isOn: $allowTranscript).toggleStyle(.switch).font(.system(size: 11)).disabled(bridge.isEnabled)
+            if bridge.isEnabled, let token = bridge.credential {
+                Text("Access is enabled for this call. The selected context may be sent to your configured model provider by the agent.")
+                    .font(.system(size: 10)).foregroundStyle(Theme.textMuted).fixedSize(horizontal: false, vertical: true)
+                Button("Copy MCP configuration") { copyAgentConfiguration(token: token) }.buttonStyle(.bordered)
+                Button("Revoke agent access") { bridge.revoke() }.buttonStyle(.plain).foregroundStyle(.red)
+            } else {
+                Button("Enable local agent access") {
+                    _ = bridge.authorize(capabilities: Set([allowParticipants ? "participants" : nil,
+                                                            allowTranscript ? "transcript" : nil].compactMap { $0 }))
+                }.buttonStyle(.borderedProminent).disabled(!allowParticipants && !allowTranscript)
+            }
+            if !bridge.isEnabled && (!allowParticipants || !allowTranscript) {
+                Text("Each capability is optional. Screenshots, audio, screen streams, and remote control are not exposed.")
+                    .font(.system(size: 9)).foregroundStyle(Theme.textMuted).fixedSize(horizontal: false, vertical: true)
+            }
         }.padding(20)
     }
     private func export() {
@@ -470,6 +494,15 @@ private struct TranscriptPanel: View {
         let text = transcriber.segments.map { "[\($0.createdAt.formatted(date: .omitted, time: .standard))] \($0.speakerName): \($0.text)" }.joined(separator: "\n\n")
         do { try text.write(to: url, atomically: true, encoding: .utf8) }
         catch { NSAlert(error: error).runModal() }
+    }
+    private func copyAgentConfiguration(token: String) {
+        let executable = Bundle.main.bundleURL.appendingPathComponent("Contents/MacOS/pairdesk-agent-mcp").path
+        let config: [String: Any] = ["mcpServers": ["pairdesk": ["command": executable,
+            "env": ["PAIRDESK_BRIDGE_TOKEN": token, "PAIRDESK_BRIDGE_SOCKET": bridge.socketPath]]]]
+        guard let data = try? JSONSerialization.data(withJSONObject: config, options: [.prettyPrinted, .sortedKeys]),
+              let text = String(data: data, encoding: .utf8) else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
     }
 }
 

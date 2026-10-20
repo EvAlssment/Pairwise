@@ -42,6 +42,8 @@ fi
 BIN_PATH=${PAIRDESK_BIN_PATH:-$(cd "$MACOS" && swift build --scratch-path "$BUILD_PATH" --show-bin-path -c "$CONFIGURATION")}
 EXECUTABLE="$BIN_PATH/PairDesk"
 test -x "$EXECUTABLE" || fail "SwiftPM executable is missing at $EXECUTABLE"
+BRIDGE_EXECUTABLE="$BIN_PATH/pairdesk-agent-mcp"
+test -x "$BRIDGE_EXECUTABLE" || fail "SwiftPM MCP helper is missing at $BRIDGE_EXECUTABLE"
 
 test -x "$WHISPER_RUNTIME/whisper-cli" || fail "run scripts/prepare-whisper.sh first"
 test -f "$WHISPER_RUNTIME/ggml-tiny.bin" || fail "Whisper Tiny model is missing"
@@ -60,6 +62,7 @@ FRAMEWORKS="$CONTENTS/Frameworks"
 RESOURCES="$CONTENTS/Resources"
 APP_EXECUTABLE="$CONTENTS/MacOS/PairDesk"
 ditto "$EXECUTABLE" "$APP_EXECUTABLE"
+ditto "$BRIDGE_EXECUTABLE" "$CONTENTS/MacOS/pairdesk-agent-mcp"
 ditto "$MACOS/Info.plist" "$CONTENTS/Info.plist"
 if [ -n "${PAIRDESK_DEFAULT_SERVER:-}" ]; then
   python3 - "$CONTENTS/Info.plist" "$PAIRDESK_DEFAULT_SERVER" <<'PYURL'
@@ -78,7 +81,7 @@ test -f "$MACOS/Resources/PairDesk.icns" || fail "app icon is missing; run: swif
 ditto "$MACOS/Resources/PairDesk.icns" "$RESOURCES/PairDesk.icns"
 ditto "$WHISPER_RUNTIME/whisper-cli" "$RESOURCES/whisper/whisper-cli"
 ditto "$WHISPER_RUNTIME/ggml-tiny.bin" "$RESOURCES/whisper/ggml-tiny.bin"
-chmod 755 "$APP_EXECUTABLE" "$RESOURCES/whisper/whisper-cli"
+chmod 755 "$APP_EXECUTABLE" "$CONTENTS/MacOS/pairdesk-agent-mcp" "$RESOURCES/whisper/whisper-cli"
 
 # SwiftPM resource bundles carry Package.resolved resources such as LiveKit's
 # privacy manifest. Copy every top-level bundle emitted with the executable.
@@ -116,17 +119,21 @@ done
 # SwiftPM binaries refer to developer toolchain Swift libraries. Embed the
 # platform Swift runtime that the binary actually needs for a standalone app.
 xcrun swift-stdlib-tool --copy --platform macosx --destination "$FRAMEWORKS" --scan-executable "$APP_EXECUTABLE"
+xcrun swift-stdlib-tool --copy --platform macosx --destination "$FRAMEWORKS" --scan-executable "$CONTENTS/MacOS/pairdesk-agent-mcp"
 install_name_tool -add_rpath '@executable_path/../Frameworks' "$APP_EXECUTABLE"
-otool -l "$APP_EXECUTABLE" | awk '/cmd LC_RPATH/ { getline; getline; print $2 }' | sort -u | while IFS= read -r build_rpath; do
-  case "$build_rpath" in
-    "$BIN_PATH/PackageFrameworks"|*/Xcode.app/Contents/Developer/Toolchains/*)
-      install_name_tool -delete_rpath "$build_rpath" "$APP_EXECUTABLE"
-      ;;
-  esac
+install_name_tool -add_rpath '@executable_path/../Frameworks' "$CONTENTS/MacOS/pairdesk-agent-mcp"
+for bundled_executable in "$APP_EXECUTABLE" "$CONTENTS/MacOS/pairdesk-agent-mcp"; do
+  otool -l "$bundled_executable" | awk '/cmd LC_RPATH/ { getline; getline; print $2 }' | sort -u | while IFS= read -r build_rpath; do
+    case "$build_rpath" in
+      "$BIN_PATH/PackageFrameworks"|*/Xcode.app/Contents/Developer/Toolchains/*)
+        install_name_tool -delete_rpath "$build_rpath" "$bundled_executable"
+        ;;
+    esac
+  done
+  if otool -l "$bundled_executable" | grep -E '/(Xcode\.app|\.build)/' >/dev/null; then
+    fail "build or toolchain rpath remained in $(basename "$bundled_executable")"
+  fi
 done
-if otool -l "$APP_EXECUTABLE" | grep -E '/(Xcode\.app|\.build)/' >/dev/null; then
-  fail "build or toolchain rpath remained in the app executable"
-fi
 
 NOTICES="$RESOURCES/ThirdPartyNotices"
 CHECKOUTS="$BUILD_PATH/checkouts"
@@ -167,6 +174,7 @@ find "$FRAMEWORKS" -maxdepth 1 -type f -name '*.dylib' -print | while IFS= read 
   codesign --force --sign "$SIGNING_IDENTITY" "$library"
 done
 codesign --force --sign "$SIGNING_IDENTITY" "$RESOURCES/whisper/whisper-cli"
+codesign --force --sign "$SIGNING_IDENTITY" "$CONTENTS/MacOS/pairdesk-agent-mcp"
 codesign --force --deep --sign "$SIGNING_IDENTITY" "$STAGING"
 codesign --verify --deep --strict --verbose=2 "$STAGING"
 
