@@ -288,6 +288,16 @@ struct MenuBarPanel: View {
 
     private var sharingStatus: some View {
         VStack(alignment: .leading, spacing: 8) {
+            if !rtc.privacyVeilAppNames.isEmpty {
+                Label("Hidden from the shared display", systemImage: "eye.slash")
+                    .font(.caption).foregroundStyle(Theme.attention)
+                Text(rtc.privacyVeilAppNames.joined(separator: ", "))
+                    .font(.caption2).foregroundStyle(Theme.textMuted)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text("Remote control is disabled while these apps are hidden.")
+                    .font(.caption).foregroundStyle(Theme.textMuted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             if let controller = rtc.activeControllerIdentity {
                 Label("\(rtc.participantName(for: controller)) is controlling your Mac", systemImage: "cursorarrow.motionlines")
                     .font(.caption).foregroundStyle(Theme.textMuted)
@@ -298,11 +308,11 @@ struct MenuBarPanel: View {
                 Button(rtc.automaticControlEnabled ? "Stop control" : "Allow control again") {
                     if rtc.automaticControlEnabled { rtc.pauseRemoteControl() } else { rtc.resumeRemoteControl() }
                 }.buttonStyle(QuietButtonStyle(compact: true)).disabled(rtc.isReconnecting)
-            } else if rtc.isSharingWindow {
+            } else if rtc.privacyVeilAppNames.isEmpty && rtc.isSharingWindow {
                 Text("Window sharing is view-only").font(.caption).foregroundStyle(Theme.textMuted)
-            } else if !permissions.accessibility {
+            } else if rtc.privacyVeilAppNames.isEmpty && !permissions.accessibility {
                 Button("Set up remote control…") { show("permissions") }.buttonStyle(.plain).font(.caption).foregroundStyle(Theme.accent)
-            } else {
+            } else if rtc.privacyVeilAppNames.isEmpty {
                 Text("Remote control unavailable for this share").font(.caption).foregroundStyle(Theme.textMuted)
             }
         }

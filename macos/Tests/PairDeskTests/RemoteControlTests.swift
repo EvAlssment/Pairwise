@@ -135,6 +135,9 @@ final class RemoteControlTests: XCTestCase {
         XCTAssertFalse(untrusted.available); XCTAssertEqual(untrusted.reason, .accessibility)
         let paused = RemoteControlAvailability.evaluate(sharingWindow: false, accessibilityTrusted: true, automaticControlEnabled: false)
         XCTAssertFalse(paused.available); XCTAssertEqual(paused.reason, .paused)
+        let veiled = RemoteControlAvailability.evaluate(sharingWindow: false, accessibilityTrusted: true,
+                                                       automaticControlEnabled: true, privacyVeilEnabled: true)
+        XCTAssertFalse(veiled.available); XCTAssertEqual(veiled.reason, .privacyVeil)
         let ready = RemoteControlAvailability.evaluate(sharingWindow: false, accessibilityTrusted: true, automaticControlEnabled: true)
         XCTAssertTrue(ready.available); XCTAssertNil(ready.reason)
     }

@@ -6,6 +6,64 @@ import XCTest
 
 final class HostCursorIntegrationTests: XCTestCase {
     @MainActor
+    func testPrivacyVeilIsReportedToViewersAndBlocksControlRequests() async throws {
+        guard let address = ProcessInfo.processInfo.environment["PAIRDESK_TEST_API"],
+              let password = ProcessInfo.processInfo.environment["PAIRDESK_TEST_PASSWORD"] else {
+            throw XCTSkip("Run scripts/test-call.sh for privacy veil control integration")
+        }
+        _ = NSApplication.shared
+        struct LoginBody: Encodable { let email: String; let password: String }
+        struct RoomBody: Encodable { let name: String }
+        let unsigned = try APIClient(server: address)
+        let hostLogin: LoginResponse = try await unsigned.post("v1/login", body: LoginBody(
+            email: "integration-1@pairdesk.invalid", password: password))
+        let viewerLogin: LoginResponse = try await unsigned.post("v1/login", body: LoginBody(
+            email: "integration-2@pairdesk.invalid", password: password))
+        let hostClient = try APIClient(server: address, token: hostLogin.token)
+        let viewerClient = try APIClient(server: address, token: viewerLogin.token)
+        let created: RoomResponse = try await hostClient.post("v1/rooms", body: RoomBody(name: "Privacy veil control"))
+        let host = RTCService()
+        let statusReceiver = ControlAvailabilityReceiver(expectation: expectation(description: "View-only privacy status received"))
+        let viewer = Room(delegate: statusReceiver)
+        do {
+            let hostJoin: JoinResponse = try await hostClient.post("v1/rooms/\(created.room.id)/join", body: EmptyBody())
+            try await host.connect(url: hostJoin.url, token: hostJoin.token,
+                                   identity: hostJoin.participantIdentity, name: hostLogin.user.name)
+            let viewerJoin: JoinResponse = try await viewerClient.post("v1/rooms/\(created.room.id)/join", body: EmptyBody())
+            try await viewer.connect(url: viewerJoin.url, token: viewerJoin.token)
+            try await waitFor { host.participants.count == 2 }
+
+            host.debugStartCursorShare(bounds: CGRect(x: 0, y: 0, width: 1_920, height: 1_080),
+                                       session: "privacy-share", hiddenApplicationNames: ["Notes"])
+            await fulfillment(of: [statusReceiver.expectation], timeout: 5)
+            XCTAssertFalse(host.remoteControlAvailable)
+            XCTAssertFalse(host.automaticControlEnabled)
+            XCTAssertEqual(host.privacyVeilAppNames, ["Notes"], "Hidden app names should remain local to the sharer")
+            XCTAssertEqual(statusReceiver.message?.available, false)
+            XCTAssertEqual(statusReceiver.message?.reason, RemoteControlUnavailableReason.privacyVeil.rawValue)
+
+            let request = RemoteControlMessage(epoch: "", sequence: 1, kind: .request,
+                                               cursorSession: "privacy-share")
+            try await viewer.localParticipant.publish(data: JSONEncoder().encode(request),
+                options: DataPublishOptions(destinationIdentities: [Participant.Identity(from: hostJoin.participantIdentity)],
+                                            topic: "pairdesk.control.v1", reliable: true))
+            try await Task.sleep(for: .milliseconds(300))
+            XCTAssertNil(host.activeControllerIdentity, "A hidden app share must not grant remote input")
+            XCTAssertEqual(host.privacyVeilAppNames, ["Notes"])
+            await host.disconnect()
+            await viewer.disconnect()
+        } catch {
+            await host.disconnect()
+            await viewer.disconnect()
+            try? await hostClient.send("v1/rooms/\(created.room.id)/leave", body: EmptyBody())
+            try? await viewerClient.send("v1/rooms/\(created.room.id)/leave", body: EmptyBody())
+            throw error
+        }
+        try? await hostClient.send("v1/rooms/\(created.room.id)/leave", body: EmptyBody())
+        try? await viewerClient.send("v1/rooms/\(created.room.id)/leave", body: EmptyBody())
+    }
+
+    @MainActor
     func testScreenAnnotationsRelayWithConsentAndNeverBecomeRemoteInput() async throws {
         guard let address = ProcessInfo.processInfo.environment["PAIRDESK_TEST_API"],
               let password = ProcessInfo.processInfo.environment["PAIRDESK_TEST_PASSWORD"] else {
@@ -182,6 +240,33 @@ final class HostCursorIntegrationTests: XCTestCase {
             try await Task.sleep(for: .milliseconds(100))
         }
         XCTFail("Host cursor state did not propagate", file: file, line: line)
+    }
+}
+
+private final class ControlAvailabilityReceiver: RoomDelegate, @unchecked Sendable {
+    let expectation: XCTestExpectation
+    private let lock = NSLock()
+    private var storedMessage: RemoteControlMessage?
+    private var fulfilled = false
+
+    init(expectation: XCTestExpectation) { self.expectation = expectation }
+
+    var message: RemoteControlMessage? {
+        lock.lock()
+        defer { lock.unlock() }
+        return storedMessage
+    }
+
+    func room(_ room: Room, participant: RemoteParticipant?, didReceiveData data: Data,
+              forTopic topic: String, encryptionType: EncryptionType) {
+        guard topic == "pairdesk.control.v1", let message = try? JSONDecoder().decode(RemoteControlMessage.self, from: data),
+              message.kind == .availability, message.reason == RemoteControlUnavailableReason.privacyVeil.rawValue else { return }
+        lock.lock()
+        storedMessage = message
+        let shouldFulfill = !fulfilled
+        fulfilled = true
+        lock.unlock()
+        if shouldFulfill { expectation.fulfill() }
     }
 }
 

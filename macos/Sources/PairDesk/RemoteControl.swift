@@ -57,6 +57,7 @@ enum RemoteControlUnavailableReason: String, Codable, Equatable {
     case accessibility
     case paused
     case windowShare
+    case privacyVeil
     case ownerActive
     case displayGeometry
 
@@ -65,6 +66,7 @@ enum RemoteControlUnavailableReason: String, Codable, Equatable {
         case .accessibility: "\(host) needs to allow PairDesk in Accessibility before you can control"
         case .paused: "\(host) paused remote control"
         case .windowShare: "window sharing is view only"
+        case .privacyVeil: "\(host) is hiding apps · remote control is disabled for privacy"
         case .ownerActive: "\(host) is using the mouse or keyboard · try again in a moment"
         case .displayGeometry: "the selected display could not be mapped safely for remote control"
         }
@@ -75,8 +77,11 @@ enum RemoteControlUnavailableReason: String, Codable, Equatable {
 /// the track name, and would show "control available" for a Mac that cannot
 /// accept input.
 enum RemoteControlAvailability {
-    static func evaluate(sharingWindow: Bool, accessibilityTrusted: Bool, automaticControlEnabled: Bool, ownerActive: Bool = false, displayGeometryKnown: Bool = true) -> (available: Bool, reason: RemoteControlUnavailableReason?) {
+    static func evaluate(sharingWindow: Bool, accessibilityTrusted: Bool, automaticControlEnabled: Bool,
+                         privacyVeilEnabled: Bool = false, ownerActive: Bool = false,
+                         displayGeometryKnown: Bool = true) -> (available: Bool, reason: RemoteControlUnavailableReason?) {
         if sharingWindow { return (false, .windowShare) }
+        if privacyVeilEnabled { return (false, .privacyVeil) }
         if !displayGeometryKnown { return (false, .displayGeometry) }
         if !accessibilityTrusted { return (false, .accessibility) }
         if !automaticControlEnabled { return (false, .paused) }

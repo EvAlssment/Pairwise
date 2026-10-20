@@ -49,7 +49,11 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
     @Published private(set) var cameraDeviceNotice: String?
     @Published private(set) var isSharing = false {
         didSet {
-            if !isSharing { sharingIndicator.hide(); hostCursorOverlay.hide() }
+            if !isSharing {
+                sharingIndicator.hide()
+                hostCursorOverlay.hide()
+                privacyVeilAppNames = []
+            }
             else { updateHostCursors() }
         }
     }
@@ -65,6 +69,8 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
     /// Viewer side: why the sharer will not accept input, when it won't.
     @Published private(set) var remoteControlUnavailableReason: RemoteControlUnavailableReason?
     @Published private(set) var automaticControlEnabled = false
+    /// Local-only labels; never included in control-availability or call data.
+    @Published private(set) var privacyVeilAppNames: [String] = []
     @Published private(set) var remotePointers: [RemotePointer] = [] { didSet { updateHostCursors() } }
     @Published private(set) var cursorSessionID: String?
     @Published private(set) var localCursorPosition: CGPoint?
@@ -308,6 +314,7 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
         shareBounds = nil
         shareIsWindow = false
         remoteControlAvailable = false
+        remoteControlUnavailableReason = nil
         automaticControlEnabled = false
         controlArbiter.disable()
         queuedLocalIntents.removeAll()
@@ -747,7 +754,10 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
             shareBounds = selectedWindow ? nil : selectedFrame
             setCursorSession(selectedFrame == nil ? nil : UUID().uuidString)
             shareIsWindow = selectedWindow
-            remoteControlAvailable = !shareIsWindow && canControlDisplay
+            privacyVeilAppNames = Array(Set(excludingApplications.map(\.applicationName))).sorted {
+                $0.localizedCaseInsensitiveCompare($1) == .orderedAscending
+            }
+            remoteControlAvailable = !shareIsWindow && privacyVeilAppNames.isEmpty && canControlDisplay
             remoteControlManuallyPaused = false
             automaticControlEnabled = remoteControlAvailable
             if automaticControlEnabled { controlArbiter.enable() }
@@ -769,9 +779,14 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
             }
             activeSharerIdentity = localIdentity
             controlState = .host
-            status = selectedWindow
+            remoteControlUnavailableReason = !privacyVeilAppNames.isEmpty ? .privacyVeil
+                : (selectedWindow ? .windowShare
+                   : (!AXIsProcessTrusted() ? .accessibility : (selectedFrame == nil ? .displayGeometry : nil)))
+            status = !privacyVeilAppNames.isEmpty
+                ? "Sharing display · remote control disabled while apps are hidden"
+                : (selectedWindow
                 ? "Sharing window · remote control unavailable"
-                : (automaticControlEnabled ? "Sharing display · teammates can control when they interact" : "Sharing display · remote control unavailable")
+                : (automaticControlEnabled ? "Sharing display · teammates can control when they interact" : "Sharing display · remote control unavailable"))
             sendControl(.init(epoch: UUID().uuidString, sequence: nextSequence(), kind: .releaseAll))
             startAccessibilityMonitor()
             sendControlAvailability()
@@ -780,6 +795,7 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
         } catch {
             if let pendingTrack { _ = try? await pendingTrack.capturer.stopCapture() }
             hostCursorOverlay.hide()
+            privacyVeilAppNames = []
             self.error = "Screen sharing failed: \(error.localizedDescription)"
             throw error
         }
@@ -804,6 +820,7 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
             screenTrack = nil
             shareBounds = nil
             remoteControlAvailable = false
+            remoteControlUnavailableReason = nil
             automaticControlEnabled = false
             controlArbiter.disable()
             isSharing = false
@@ -822,6 +839,7 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
         screenTrack = nil
         shareBounds = nil
         remoteControlAvailable = false
+        remoteControlUnavailableReason = nil
         automaticControlEnabled = false
         controlArbiter.disable()
         isSharing = false
@@ -938,6 +956,7 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
         let state = RemoteControlAvailability.evaluate(sharingWindow: shareIsWindow,
                                                        accessibilityTrusted: AXIsProcessTrusted(),
                                                        automaticControlEnabled: automaticControlEnabled,
+                                                       privacyVeilEnabled: !privacyVeilAppNames.isEmpty,
                                                        ownerActive: ProcessInfo.processInfo.systemUptime < ownerBusyUntil,
                                                        displayGeometryKnown: shareBounds != nil)
         sendControl(.init(epoch: "", sequence: nextSequence(), kind: .availability,
@@ -983,7 +1002,7 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
         accessibilityMonitorTask?.cancel()
         accessibilityMonitorTask = Task { [weak self] in
             while !Task.isCancelled {
-                guard let self, self.isSharing, !self.shareIsWindow else { return }
+                guard let self, self.isSharing, !self.shareIsWindow, self.privacyVeilAppNames.isEmpty else { return }
                 self.refreshRemoteControlPermission()
                 do { try await Task.sleep(for: .seconds(1)) } catch { return }
             }
@@ -992,6 +1011,13 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
 
     private func refreshRemoteControlPermission() {
         guard isSharing, !shareIsWindow, shareBounds != nil, !controlTransportFailed else { return }
+        guard privacyVeilAppNames.isEmpty else {
+            remoteControlAvailable = false
+            automaticControlEnabled = false
+            controlArbiter.disable()
+            remoteControlUnavailableReason = .privacyVeil
+            return
+        }
         let trusted = AXIsProcessTrusted()
         if trusted && !remoteControlAvailable {
             remoteControlAvailable = true
@@ -2238,14 +2264,21 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
     var debugHostCursorPanel: NSPanel? { hostCursorOverlay.panel }
 
     /// Exercise real cursor packets and native presentation without recording a desktop.
-    func debugStartCursorShare(bounds: CGRect, session: String) {
+    func debugStartCursorShare(bounds: CGRect, session: String, hiddenApplicationNames: [String] = []) {
         resetIndependentCursors()
         hostCursorOverlay.prepare(captureBounds: bounds)
         shareBounds = bounds
         shareIsWindow = false
+        privacyVeilAppNames = hiddenApplicationNames
+        remoteControlAvailable = hiddenApplicationNames.isEmpty && AXIsProcessTrusted()
+        automaticControlEnabled = remoteControlAvailable
+        remoteControlUnavailableReason = hiddenApplicationNames.isEmpty ? nil : .privacyVeil
+        controlArbiter.disable()
+        if automaticControlEnabled { controlArbiter.enable() }
         setCursorSession(session)
         activeSharerIdentity = localIdentity
         isSharing = true
+        if !hiddenApplicationNames.isEmpty { sendControlAvailability() }
     }
 
     /// UI snapshot fixtures only: stand in for a connected room.
