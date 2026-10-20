@@ -664,7 +664,8 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
         audioForwardingConsented = enabled
     }
 
-    func startScreenShare(contentFilter: SCContentFilter, sourceRect: CGRect = .zero) async throws {
+    func startScreenShare(contentFilter: SCContentFilter, sourceRect: CGRect = .zero,
+                          excludingApplications: [SCRunningApplication] = []) async throws {
         guard !isSharing, !isStartingShare else { throw LiveKitError(.invalidState, message: "Screen sharing is already active or starting.") }
         isStartingShare = true
         defer { isStartingShare = false }
@@ -702,10 +703,18 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
             } else if !selectedWindow, NSScreen.screens.count == 1 {
                 selectedFrame = sourceRect.isEmpty ? contentFilter.contentRect : sourceRect
             } else { selectedFrame = nil }
+            guard excludingApplications.isEmpty || (!selectedWindow && displayID != nil && selectedFrame != nil) else {
+                throw LiveKitError(.invalidState, message: "The selected app privacy veil could not be applied safely. Choose the display again or share a window.")
+            }
             var captureFilter = contentFilter
             if let selectedFrame, let displayID, !selectedWindow {
                 hostCursorOverlay.prepare(captureBounds: selectedFrame)
-                let exclusionFilter = try await hostCursorOverlay.captureFilter(from: contentFilter, displayID: displayID)
+                let exclusionFilter = try await hostCursorOverlay.captureFilter(from: contentFilter, displayID: displayID,
+                                                                                  excludingApplications: excludingApplications)
+                guard excludingApplications.isEmpty || exclusionFilter != nil else {
+                    hostCursorOverlay.hide()
+                    throw LiveKitError(.invalidState, message: "The selected app privacy veil could not be applied safely. No screen was shared.")
+                }
                 captureFilter = exclusionFilter ?? contentFilter
             }
             let canControlDisplay = selectedFrame != nil && AXIsProcessTrusted()

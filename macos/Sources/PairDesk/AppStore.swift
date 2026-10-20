@@ -538,7 +538,8 @@ final class AppStore: ObservableObject {
             let selection = try await SystemScreenPicker.shared.chooseSource(source)
             try await api.send("v1/rooms/\(room.id)/share", body: Body(enabled: true))
             screenClaimRoomID = room.id
-            try await rtc.startScreenShare(contentFilter: selection.filter, sourceRect: selection.sourceRect)
+            try await rtc.startScreenShare(contentFilter: selection.filter, sourceRect: selection.sourceRect,
+                                           excludingApplications: selection.excludedApplications)
         } catch {
             try? await releaseScreenClaim()
             if (error as? CocoaError)?.code != .userCancelled { self.error = error.localizedDescription }
@@ -554,7 +555,8 @@ final class AppStore: ObservableObject {
             let selection = try await SystemScreenPicker.shared.chooseSource(source)
             await rtc.stopScreenShare()
             guard !rtc.isSharing else { throw APIError(status: 0, message: "The current screen share could not be stopped safely.") }
-            try await rtc.startScreenShare(contentFilter: selection.filter, sourceRect: selection.sourceRect)
+            try await rtc.startScreenShare(contentFilter: selection.filter, sourceRect: selection.sourceRect,
+                                           excludingApplications: selection.excludedApplications)
             screenClaimRoomID = room.id
         } catch {
             if (error as? CocoaError)?.code != .userCancelled {

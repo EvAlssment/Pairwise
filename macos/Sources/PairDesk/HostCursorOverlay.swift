@@ -39,6 +39,7 @@ final class HostCursorOverlay {
     /// The picker selects a complete display; retain that display and crop while
     /// excluding our own overlay so viewers don't receive duplicate cursors.
     func captureFilter(from selection: SCContentFilter, displayID: CGDirectDisplayID,
+                       excludingApplications: [SCRunningApplication] = [],
                        exclusionSupported: Bool = true) async throws -> SCContentFilter? {
         // Keep the normal screen share available on systems where the picker
         // doesn't expose enough metadata to exclude our own overlay. In that
@@ -69,7 +70,9 @@ final class HostCursorOverlay {
             hide()
             return nil
         }
-        let filter = SCContentFilter(display: display, excludingWindows: [window])
+        let filter = SCContentFilter(display: display,
+                                     excludingApplications: excludingApplications,
+                                     exceptingWindows: [window])
         filter.includeMenuBar = selection.includeMenuBar
         return filter
     }

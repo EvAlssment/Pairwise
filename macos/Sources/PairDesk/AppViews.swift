@@ -385,7 +385,7 @@ struct ScreenSharePickerView: View {
             }.pickerStyle(.segmented)
             Text(source.explanation + " PairDesk only gets access to your selection for this sharing session.").font(.callout).foregroundStyle(.secondary)
             if source == .display {
-                Label("PairDesk cannot hide individual apps or notification banners from full-display sharing yet. Choose Window or Region to limit what others see.", systemImage: "eye")
+                Label("On macOS 15.2 or newer, you can hide selected apps after choosing a display. Notification banners may still appear; use Focus to silence them. Window or Region sharing limits what others see.", systemImage: "eye")
                     .font(.caption).foregroundStyle(Theme.attention).fixedSize(horizontal: false, vertical: true)
             }
             if source == .window {
