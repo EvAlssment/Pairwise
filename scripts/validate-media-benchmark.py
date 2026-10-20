@@ -122,6 +122,11 @@ def main() -> int:
         recovery = report.get("syntheticSenderPauseRecoveryMilliseconds")
         if not isinstance(recovery, (int, float)) or recovery <= 0:
             raise ValueError(f"{name}: missing or invalid sender-pause recovery measurement")
+        print(
+            f"{profile} {participants}p: selected RTT {report['selectedPathRTTMilliseconds']:.1f} ms, "
+            f"packet loss {report['packetLossPercent']:.2f}%, "
+            f"observed FPS {report['observedFramesPerSecond']:.1f}"
+        )
     if observed_profiles != {("baseline", 2), ("baseline", 4), ("constrained", 2), ("constrained", 4)}:
         raise ValueError("benchmark artifacts must include baseline and constrained 2-person/4-person profiles")
     if network_profiles != {"baseline", "constrained"}:

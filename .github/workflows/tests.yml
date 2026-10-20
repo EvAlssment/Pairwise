@@ -60,7 +60,7 @@ jobs:
         env:
           PAIRDESK_TEST_MEDIA_URL: ws://127.0.0.1:7880
           PAIRDESK_TEST_MEDIA_API_URL: http://127.0.0.1:7880
-          PAIRDESK_MEDIA_BENCHMARK_OUTPUT: ${{ github.workspace }}/.cache/pairwise-media-benchmark.json
+          PAIRDESK_MEDIA_BENCHMARK_OUTPUT: ${{ github.workspace }}/media-benchmark-output/pairwise-media-benchmark.json
           PAIRDESK_BENCHMARK_COMMIT: ${{ github.sha }}
           PAIRDESK_BENCHMARK_RUN_ID: ${{ github.run_id }}
           PAIRDESK_TEST_FILTER: CallIntegrationTests/testOneToOneSyntheticScreenQualityProfile|CallIntegrationTests/testFourNativeClientsCameraPublicationAndExclusiveScreenPermission
@@ -79,22 +79,22 @@ jobs:
       - name: Validate synthetic media benchmark
         if: always()
         run: |
-          test -s .cache/pairwise-media-benchmark-baseline-2p.json
-          test -s .cache/pairwise-media-benchmark-baseline-4p.json
-          test -s .cache/pairwise-media-benchmark-constrained-2p.json
-          test -s .cache/pairwise-media-benchmark-constrained-4p.json
+          test -s media-benchmark-output/pairwise-media-benchmark-baseline-2p.json
+          test -s media-benchmark-output/pairwise-media-benchmark-baseline-4p.json
+          test -s media-benchmark-output/pairwise-media-benchmark-constrained-2p.json
+          test -s media-benchmark-output/pairwise-media-benchmark-constrained-4p.json
           python3 scripts/validate-media-benchmark.py \
-            .cache/pairwise-media-benchmark-baseline-2p.json \
-            .cache/pairwise-media-benchmark-baseline-4p.json \
-            .cache/pairwise-media-benchmark-constrained-2p.json \
-            .cache/pairwise-media-benchmark-constrained-4p.json
+            media-benchmark-output/pairwise-media-benchmark-baseline-2p.json \
+            media-benchmark-output/pairwise-media-benchmark-baseline-4p.json \
+            media-benchmark-output/pairwise-media-benchmark-constrained-2p.json \
+            media-benchmark-output/pairwise-media-benchmark-constrained-4p.json
       - name: Archive synthetic media benchmark
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: media-quality-${{ github.sha }}-${{ github.run_id }}
-          path: .cache/pairwise-media-benchmark-*.json
-          if-no-files-found: ignore
+          path: media-benchmark-output/pairwise-media-benchmark-*.json
+          if-no-files-found: error
       - name: Server race tests and vet
         working-directory: server
         run: go test -race ./... && go vet ./...
