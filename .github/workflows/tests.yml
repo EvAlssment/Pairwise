@@ -31,7 +31,7 @@ jobs:
         env:
           PAIRDESK_TEST_MEDIA_URL: ws://127.0.0.1:7880
           PAIRDESK_TEST_MEDIA_API_URL: http://127.0.0.1:7880
-          PAIRDESK_MEDIA_BENCHMARK_OUTPUT: .cache/pairwise-media-benchmark.json
+          PAIRDESK_MEDIA_BENCHMARK_OUTPUT: ${{ github.workspace }}/.cache/pairwise-media-benchmark.json
           PAIRDESK_BENCHMARK_COMMIT: ${{ github.sha }}
           PAIRDESK_BENCHMARK_RUN_ID: ${{ github.run_id }}
         run: |

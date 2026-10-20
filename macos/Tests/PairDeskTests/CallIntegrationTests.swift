@@ -340,7 +340,10 @@ private func writeSyntheticBenchmark(_ snapshot: SyntheticVideoReceiver.Snapshot
         syntheticSenderPauseRecoveryMilliseconds: recoveryMilliseconds)
     let encoder = JSONEncoder()
     encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-    try encoder.encode(report).write(to: URL(fileURLWithPath: path), options: .atomic)
+    let output = URL(fileURLWithPath: path)
+    try FileManager.default.createDirectory(at: output.deletingLastPathComponent(),
+                                            withIntermediateDirectories: true)
+    try encoder.encode(report).write(to: output, options: .atomic)
 }
 
 private final class DataReceiver: RoomDelegate, @unchecked Sendable {
