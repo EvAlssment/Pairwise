@@ -12,4 +12,10 @@ The local socket accepts one newline-delimited JSON object per connection: `{"to
 
 Granting context to a local agent can cause that agent to send the granted names or transcript to its configured model provider, save it in its own history, or otherwise process it. PairDesk cannot control those downstream actions. Share only what is appropriate for that agent and revoke access when it is no longer needed.
 
-This prototype has not been validated against every MCP client, hardened against other processes running as the same macOS user, or tested under a notarized release. Treat it as an opt-in development feature until those checks are complete. The native picker and a real MCP client's image rendering still need end-to-end validation on a Mac.
+## Threat model
+
+The bridge is designed to prevent access from a different local OS account and from clients without the current call's random credential. The socket directory is mode `0700`, the socket and audit file are mode `0600`, credentials are replaced on each grant and invalidated on revoke/call end, and no TCP listener exists. Screenshot access adds a fresh macOS window-picker decision for each request. The audit records access decisions without call content.
+
+This does not isolate PairDesk from other processes running as the same macOS user. The person copies a temporary credential into the MCP client's configuration; another same-user process able to read that configuration or the process environment can reuse the credential while the grant is active. The mode bits do not defend against the same UID. Use only a trusted MCP client, limit the selected capabilities, and revoke the grant after use. The configured agent may also send granted content to its model provider or retain it in its own history.
+
+The bridge has not been validated against every MCP client or under a notarized release. The native screenshot picker and a real MCP client's image rendering still need end-to-end validation on a Mac. Treat those as outstanding release checks; the unit test with a protocol fixture does not prove either UI path.

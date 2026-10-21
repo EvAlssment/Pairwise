@@ -504,6 +504,8 @@ private struct TranscriptPanel: View {
             Divider()
             HStack { Text("Coding agent access").font(.system(size: 14, weight: .semibold)); Spacer(); Image(systemName: "lock.shield").foregroundStyle(Theme.accent) }
             Text("Only this Mac · active call only · read only").font(.system(size: 10)).foregroundStyle(Theme.textMuted)
+            Text("The copied config contains a temporary access key. Other apps running as your macOS user may be able to read that config; connect only a trusted agent and revoke access when finished.")
+                .font(.system(size: 9)).foregroundStyle(Theme.attention).fixedSize(horizontal: false, vertical: true)
             Toggle("Participant names", isOn: $allowParticipants).toggleStyle(.switch).font(.system(size: 11)).disabled(bridge.isEnabled)
             Toggle("Transcript text", isOn: $allowTranscript).toggleStyle(.switch).font(.system(size: 11)).disabled(bridge.isEnabled)
             Toggle("One-time window screenshots", isOn: $allowScreenshot).toggleStyle(.switch).font(.system(size: 11)).disabled(bridge.isEnabled)
