@@ -510,10 +510,10 @@ private struct ProcessCPUProbe {
 }
 
 private struct SyntheticNetworkProfile: Encodable {
-    let directionalBandwidthKbitPerSecond: Int
-    let oneWayDelayMilliseconds: Int
-    let delayVariationMilliseconds: [Int]
-    let packetLossProbabilityPercent: Double
+    let outboundBandwidthKbitPerSecond: Int
+    let outboundOneWayDelayMilliseconds: Int
+    let outboundDelayVariationMilliseconds: [Int]
+    let outboundPacketLossProbabilityPercent: Double
 }
 
 private func writeSyntheticBenchmark(_ snapshot: SyntheticVideoReceiver.Snapshot,
@@ -534,10 +534,10 @@ private func writeSyntheticBenchmark(_ snapshot: SyntheticVideoReceiver.Snapshot
     let delaySequence = (environment["PAIRDESK_NETWORK_CONDITION_DELAY_SEQUENCE_MS"] ?? "0")
         .split(separator: ",").compactMap { Int($0) }
     let configuredNetwork = SyntheticNetworkProfile(
-        directionalBandwidthKbitPerSecond: Int(environment["PAIRDESK_NETWORK_CONDITION_BANDWIDTH_KBIT"] ?? "0") ?? 0,
-        oneWayDelayMilliseconds: isConstrained ? 40 : 0,
-        delayVariationMilliseconds: delaySequence.isEmpty ? [0] : delaySequence,
-        packetLossProbabilityPercent: Double(environment["PAIRDESK_NETWORK_CONDITION_PACKET_LOSS_PERCENT"] ?? "0") ?? 0)
+        outboundBandwidthKbitPerSecond: Int(environment["PAIRDESK_NETWORK_CONDITION_BANDWIDTH_KBIT"] ?? "0") ?? 0,
+        outboundOneWayDelayMilliseconds: isConstrained ? 40 : 0,
+        outboundDelayVariationMilliseconds: delaySequence.isEmpty ? [0] : delaySequence,
+        outboundPacketLossProbabilityPercent: Double(environment["PAIRDESK_NETWORK_CONDITION_PACKET_LOSS_PERCENT"] ?? "0") ?? 0)
     let formatter = ISO8601DateFormatter()
     let report = SyntheticMediaBenchmark(
         classification: "synthetic-\(profile)-ci", networkProfile: profile,

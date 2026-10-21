@@ -10,8 +10,6 @@ from pathlib import Path
 PIPE_HEADER = re.compile(r"^\s*0*(\d+):")
 COUNTER_ROW = re.compile(r"^\s*\d+\s+udp\s+.*?\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s*$")
 EXPECTED_RULES = {
-    "dummynet in quick inet proto udp from any port 17882:17981 to any pipe 591",
-    "dummynet out quick inet proto udp from any port 17882:17981 to any pipe 591",
     "dummynet out quick inet proto udp from any to any port 17882:17981 pipe 592",
 }
 
@@ -27,7 +25,7 @@ def main() -> int:
 
     rules = {line.strip() for line in args.rules.read_text(encoding="utf-8").splitlines()}
     if not EXPECTED_RULES.issubset(rules):
-        raise ValueError("PF did not report both expected loopback dummynet rules")
+        raise ValueError("PF did not report the expected outbound dummynet rule")
 
     pipes: dict[int, dict[str, int | bool]] = {}
     current_pipe: int | None = None
@@ -38,19 +36,18 @@ def main() -> int:
             pipes.setdefault(current_pipe, {"present": True, "packets": 0, "bytes": 0, "drops": 0})
             continue
         row = COUNTER_ROW.match(line)
-        if row and current_pipe in (591, 592):
+        if row and current_pipe == 592:
             packets, byte_count, _queued_packets, _queued_bytes, drops = map(int, row.groups())
             pipe = pipes[current_pipe]
             pipe["packets"] = int(pipe["packets"]) + packets
             pipe["bytes"] = int(pipe["bytes"]) + byte_count
             pipe["drops"] = int(pipe["drops"]) + drops
 
-    observed_packets = sum(int(pipes.get(pipe, {}).get("packets", 0)) for pipe in (591, 592))
-    observed_drops = sum(int(pipes.get(pipe, {}).get("drops", 0)) for pipe in (591, 592))
-    if any(int(pipes.get(pipe, {}).get("packets", 0)) <= 0 for pipe in (591, 592)):
-        raise ValueError("dummynet did not observe media traffic in both directions")
+    outbound = pipes.get(592, {})
+    observed_packets = int(outbound.get("packets", 0))
+    observed_drops = int(outbound.get("drops", 0))
     if observed_packets <= 0:
-        raise ValueError("dummynet reported no classified media packets")
+        raise ValueError("dummynet reported no client-to-LiveKit UDP packets")
     if observed_drops <= 0:
         raise ValueError("dummynet reported no dropped media packets at the configured loss rate")
 
@@ -61,21 +58,22 @@ def main() -> int:
         "runID": args.run_id,
         "configured": {
             "interface": "all",
+            "direction": "client-to-livekit-server",
             "udpPortRange": "17882-17981",
-            "directionalBandwidthKbitPerSecond": 20_000,
+            "outboundBandwidthKbitPerSecond": 20_000,
             "delaySequenceMilliseconds": [20, 60, 30, 50],
-            "packetLossProbabilityPercent": 0.5,
+            "packetLossProbabilityPercent": 1.0,
         },
         "observed": {
             "packets": observed_packets,
-            "bytes": sum(int(pipes.get(pipe, {}).get("bytes", 0)) for pipe in (591, 592)),
+            "bytes": int(outbound.get("bytes", 0)),
             "droppedPackets": observed_drops,
-            "pipes": {str(pipe): pipes.get(pipe, {"present": False, "packets": 0, "bytes": 0, "drops": 0}) for pipe in (591, 592)},
+            "pipes": {"592": outbound or {"present": False, "packets": 0, "bytes": 0, "drops": 0}},
         },
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    print(f"Dummynet conditioned {observed_packets} UDP packets and dropped {observed_drops}.")
+    print(f"Dummynet conditioned {observed_packets} client-to-LiveKit UDP packets and dropped {observed_drops}.")
     return 0
 
 

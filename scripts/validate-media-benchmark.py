@@ -101,25 +101,25 @@ def main() -> int:
             raise ValueError(f"{name}: classification does not match network profile")
         configured = report["configuredNetwork"]
         if not isinstance(configured, dict) or set(configured) != {
-            "directionalBandwidthKbitPerSecond",
-            "oneWayDelayMilliseconds",
-            "delayVariationMilliseconds",
-            "packetLossProbabilityPercent",
+            "outboundBandwidthKbitPerSecond",
+            "outboundOneWayDelayMilliseconds",
+            "outboundDelayVariationMilliseconds",
+            "outboundPacketLossProbabilityPercent",
         }:
             raise ValueError(f"{name}: malformed network-condition metadata")
         if profile == "baseline":
             expected_config = {
-                "directionalBandwidthKbitPerSecond": 0,
-                "oneWayDelayMilliseconds": 0,
-                "delayVariationMilliseconds": [0],
-                "packetLossProbabilityPercent": 0,
+                "outboundBandwidthKbitPerSecond": 0,
+                "outboundOneWayDelayMilliseconds": 0,
+                "outboundDelayVariationMilliseconds": [0],
+                "outboundPacketLossProbabilityPercent": 0,
             }
         else:
             expected_config = {
-                "directionalBandwidthKbitPerSecond": 20_000,
-                "oneWayDelayMilliseconds": 40,
-                "delayVariationMilliseconds": [20, 60, 30, 50],
-                "packetLossProbabilityPercent": 0.5,
+                "outboundBandwidthKbitPerSecond": 20_000,
+                "outboundOneWayDelayMilliseconds": 40,
+                "outboundDelayVariationMilliseconds": [20, 60, 30, 50],
+                "outboundPacketLossProbabilityPercent": 1.0,
             }
         if configured != expected_config:
             raise ValueError(f"{name}: network-condition metadata does not match the defined profile")
@@ -218,11 +218,12 @@ def main() -> int:
             raise ValueError("network-conditioner evidence must match the benchmark commit and workflow run")
         configured = conditioner["configured"]
         if not isinstance(configured, dict) or configured != {
-            "interface": "lo0",
+            "interface": "all",
+            "direction": "client-to-livekit-server",
             "udpPortRange": "17882-17981",
-            "directionalBandwidthKbitPerSecond": 20_000,
+            "outboundBandwidthKbitPerSecond": 20_000,
             "delaySequenceMilliseconds": [20, 60, 30, 50],
-            "packetLossProbabilityPercent": 0.5,
+            "packetLossProbabilityPercent": 1.0,
         }:
             raise ValueError("network-conditioner configuration does not match the constrained profile")
         observed = conditioner["observed"]
@@ -235,8 +236,8 @@ def main() -> int:
         if not isinstance(observed["droppedPackets"], int) or observed["droppedPackets"] <= 0:
             raise ValueError("network conditioner did not observe packet drops")
         pipes = observed["pipes"]
-        if not isinstance(pipes, dict) or set(pipes) != {"591", "592"}:
-            raise ValueError("network-conditioner artifact must include both directional pipes")
+        if not isinstance(pipes, dict) or set(pipes) != {"592"}:
+            raise ValueError("network-conditioner artifact must include measured outbound pipe 592")
         for pipe_id, pipe in pipes.items():
             if not isinstance(pipe, dict) or set(pipe) != {"present", "packets", "bytes", "drops"}:
                 raise ValueError(f"pipe {pipe_id}: malformed counters")
@@ -245,16 +246,16 @@ def main() -> int:
             ):
                 raise ValueError(f"pipe {pipe_id}: invalid counters")
             if not pipe["present"] or pipe["packets"] <= 0 or pipe["bytes"] <= 0:
-                raise ValueError(f"pipe {pipe_id}: missing directional traffic evidence")
+                raise ValueError(f"pipe {pipe_id}: missing outbound traffic evidence")
         if sum(pipe["packets"] for pipe in pipes.values()) != observed["packets"]:
-            raise ValueError("network-conditioner packet total does not match directional counters")
+            raise ValueError("network-conditioner packet total does not match outbound counters")
         if sum(pipe["bytes"] for pipe in pipes.values()) != observed["bytes"]:
-            raise ValueError("network-conditioner byte total does not match directional counters")
+            raise ValueError("network-conditioner byte total does not match outbound counters")
         if sum(pipe["drops"] for pipe in pipes.values()) != observed["droppedPackets"]:
-            raise ValueError("network-conditioner drop total does not match directional counters")
+            raise ValueError("network-conditioner drop total does not match outbound counters")
         print(
             f"dummynet: {observed['packets']} packets, {observed['bytes']} bytes, "
-            f"{observed['droppedPackets']} dropped across reported pipes"
+            f"{observed['droppedPackets']} dropped on client-to-LiveKit outbound traffic"
         )
     print("Synthetic screen and cursor profiles passed schema, network, and privacy validation.")
     return 0

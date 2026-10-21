@@ -18,7 +18,6 @@ for tool in pfctl dnctl sudo; do
 done
 sudo -n true || { echo "Passwordless sudo is required on the disposable CI runner." >&2; exit 2; }
 
-PIPE_IN=591
 PIPE_OUT=592
 ANCHOR=pairdesk-benchmark
 TMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/pairdesk-net.XXXXXX")
@@ -32,7 +31,7 @@ cleanup() {
     sudo -n pfctl -a "$ANCHOR" -F rules >/dev/null 2>&1 || true
     sudo -n pfctl -f /etc/pf.conf >/dev/null 2>&1 || true
   fi
-  sudo -n dnctl -q pipe delete "$PIPE_IN" "$PIPE_OUT" >/dev/null 2>&1 || true
+  sudo -n dnctl -q pipe delete "$PIPE_OUT" >/dev/null 2>&1 || true
   if [[ "$PF_CONFIG_LOADED" == true && "$PF_WAS_ENABLED" == Disabled ]]; then sudo -n pfctl -d >/dev/null 2>&1 || true; fi
   rm -rf "$TMP_DIR"
 }
@@ -48,16 +47,13 @@ awk -v anchor="$ANCHOR" '
   END { if (!inserted) exit 1 }
 ' /etc/pf.conf > "$TMP_DIR/pf.conf"
 cat > "$TMP_DIR/dummynet.rules" <<EOF
-# On virtualized macOS runners, requests can egress through a VM bridge while
-# loopback-server replies are observed on ingress. Match both directions by the
-# LiveKit UDP port range without binding either rule to a specific interface.
-dummynet in quick inet proto udp from any port 17882:17981 to any pipe $PIPE_IN
-dummynet out quick inet proto udp from any port 17882:17981 to any pipe $PIPE_IN
+# Shape and count client-to-LiveKit UDP egress. The same-host LiveKit server's
+# reply path bypasses PF on GitHub's macOS runner, so this report claims only
+# the outbound direction; the separate two-Mac acceptance remains necessary.
 dummynet out quick inet proto udp from any to any port 17882:17981 pipe $PIPE_OUT
 EOF
 
-sudo -n dnctl pipe "$PIPE_IN" config bw 20000Kbit/s delay 40ms plr 0.005
-sudo -n dnctl pipe "$PIPE_OUT" config bw 20000Kbit/s delay 40ms plr 0.005
+sudo -n dnctl pipe "$PIPE_OUT" config bw 20000Kbit/s delay 40ms plr 0.01
 sudo -n pfctl -n -f "$TMP_DIR/pf.conf"
 sudo -n pfctl -a "$ANCHOR" -n -f "$TMP_DIR/dummynet.rules"
 PF_WAS_ENABLED=$(sudo -n pfctl -s info | awk -F ': ' '/Status:/ {split($2, status, " "); print status[1]; exit}')
@@ -70,12 +66,11 @@ sudo -n pfctl -f "$TMP_DIR/pf.conf"
 PF_CONFIG_LOADED=true
 sudo -n pfctl -a "$ANCHOR" -f "$TMP_DIR/dummynet.rules"
 
-# Change both directions on a fixed sequence to introduce repeatable delay variation.
+# Change outbound delay on a fixed sequence to introduce repeatable jitter.
 (
   while true; do
     for delay_ms in 20 60 30 50; do
-      sudo -n dnctl pipe "$PIPE_IN" config bw 20000Kbit/s delay "${delay_ms}ms" plr 0.005
-      sudo -n dnctl pipe "$PIPE_OUT" config bw 20000Kbit/s delay "${delay_ms}ms" plr 0.005
+      sudo -n dnctl pipe "$PIPE_OUT" config bw 20000Kbit/s delay "${delay_ms}ms" plr 0.01
       sleep 1
     done
   done
@@ -87,7 +82,7 @@ export PAIRDESK_NETWORK_CONDITION_ACTIVE=1
 export PAIRDESK_NETWORK_CONDITION_INTERFACE=all
 export PAIRDESK_NETWORK_CONDITION_BANDWIDTH_KBIT=20000
 export PAIRDESK_NETWORK_CONDITION_DELAY_SEQUENCE_MS=20,60,30,50
-export PAIRDESK_NETWORK_CONDITION_PACKET_LOSS_PERCENT=0.5
+export PAIRDESK_NETWORK_CONDITION_PACKET_LOSS_PERCENT=1.0
 set +e
 "$@"
 COMMAND_STATUS=$?

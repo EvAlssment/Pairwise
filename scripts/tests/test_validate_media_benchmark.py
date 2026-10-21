@@ -19,10 +19,10 @@ def benchmark(profile: str, participants: int) -> dict:
         "classification": f"synthetic-{profile}-ci",
         "networkProfile": profile,
         "configuredNetwork": {
-            "directionalBandwidthKbitPerSecond": 20_000 if constrained else 0,
-            "oneWayDelayMilliseconds": 40 if constrained else 0,
-            "delayVariationMilliseconds": [20, 60, 30, 50] if constrained else [0],
-            "packetLossProbabilityPercent": 0.5 if constrained else 0,
+            "outboundBandwidthKbitPerSecond": 20_000 if constrained else 0,
+            "outboundOneWayDelayMilliseconds": 40 if constrained else 0,
+            "outboundDelayVariationMilliseconds": [20, 60, 30, 50] if constrained else [0],
+            "outboundPacketLossProbabilityPercent": 1.0 if constrained else 0,
         },
         "commit": "test-commit",
         "runID": "test-run",
@@ -71,19 +71,19 @@ def conditioner() -> dict:
         "commit": "test-commit",
         "runID": "test-run",
         "configured": {
-            "interface": "lo0",
+            "interface": "all",
+            "direction": "client-to-livekit-server",
             "udpPortRange": "17882-17981",
-            "directionalBandwidthKbitPerSecond": 20_000,
+            "outboundBandwidthKbitPerSecond": 20_000,
             "delaySequenceMilliseconds": [20, 60, 30, 50],
-            "packetLossProbabilityPercent": 0.5,
+            "packetLossProbabilityPercent": 1.0,
         },
         "observed": {
-            "packets": 1_113,
-            "bytes": 267_042,
+            "packets": 693,
+            "bytes": 166_721,
             "droppedPackets": 3,
             "pipes": {
-                "591": {"present": True, "packets": 420, "bytes": 100_321, "drops": 1},
-                "592": {"present": True, "packets": 693, "bytes": 166_721, "drops": 2},
+                "592": {"present": True, "packets": 693, "bytes": 166_721, "drops": 3},
             },
         },
     }
@@ -95,7 +95,7 @@ class MediaBenchmarkValidatorTests(unittest.TestCase):
         zero_bitrate: bool = False,
         zero_drops: bool = False,
         negative_rtt: bool = False,
-        one_way_traffic: bool = False,
+        missing_outbound_traffic: bool = False,
     ) -> subprocess.CompletedProcess[str]:
         with tempfile.TemporaryDirectory(prefix="pairwise-benchmark-validator-") as temporary:
             reports = []
@@ -114,12 +114,11 @@ class MediaBenchmarkValidatorTests(unittest.TestCase):
             if zero_drops:
                 conditioner_report["observed"]["droppedPackets"] = 0
                 conditioner_report["observed"]["pipes"]["592"]["drops"] = 0
-                conditioner_report["observed"]["pipes"]["591"]["drops"] = 0
-            if one_way_traffic:
-                conditioner_report["observed"]["packets"] = 693
-                conditioner_report["observed"]["bytes"] = 166_721
-                conditioner_report["observed"]["droppedPackets"] = 2
-                conditioner_report["observed"]["pipes"]["591"] = {
+            if missing_outbound_traffic:
+                conditioner_report["observed"]["packets"] = 0
+                conditioner_report["observed"]["bytes"] = 0
+                conditioner_report["observed"]["droppedPackets"] = 0
+                conditioner_report["observed"]["pipes"]["592"] = {
                     "present": False, "packets": 0, "bytes": 0, "drops": 0,
                 }
             conditioner_path.write_text(json.dumps(conditioner_report), encoding="utf-8")
@@ -141,7 +140,7 @@ class MediaBenchmarkValidatorTests(unittest.TestCase):
         result = self.run_validator()
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("received bitrate 850 kbit/s", result.stdout)
-        self.assertIn("dummynet: 1113 packets, 267042 bytes, 3 dropped", result.stdout)
+        self.assertIn("dummynet: 693 packets, 166721 bytes, 3 dropped", result.stdout)
 
     def test_cursor_latency_is_reported_with_explicit_loopback_limits(self) -> None:
         result = self.run_validator()
@@ -158,10 +157,10 @@ class MediaBenchmarkValidatorTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("did not observe packet drops", result.stderr)
 
-    def test_rejects_conditioner_with_only_one_direction(self) -> None:
-        result = self.run_validator(one_way_traffic=True)
+    def test_rejects_conditioner_without_observed_outbound_traffic(self) -> None:
+        result = self.run_validator(missing_outbound_traffic=True)
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("missing directional traffic evidence", result.stderr)
+        self.assertIn("did not classify media packets", result.stderr)
 
     def test_rejects_negative_measurements(self) -> None:
         result = self.run_validator(negative_rtt=True)
