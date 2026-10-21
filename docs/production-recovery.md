@@ -1,25 +1,121 @@
 # PairDesk production recovery
 
-PairDesk stores accounts, password hashes, sessions, call state, audit events, mobile registrations, and the push outbox in `/data/pairdesk.json`. The current deployment is single-writer. The GCP host takes daily mode-600 snapshots in `/var/lib/pairdesk/backups`; the API's Docker volume remains the live source of truth.
+Production API state is stored in the PostgreSQL 16 Cloud SQL instance
+`pairdesk-pg` in `us-central1`; the API and push worker run as one writer on
+`pairdesk-server`. Cloud SQL automated backups are enabled with seven retained
+backups, seven-day point-in-time recovery (PITR), and deletion protection. The
+API connects through the Cloud SQL Auth Proxy using its attached runtime
+service account. Keep the old root-only JSON snapshot and boot-disk snapshot
+from the 2026-10-21 migration as rollback artifacts; they are not the live
+state source.
 
-## Verify backups and run an isolated restore drill
+## Check production recovery configuration
 
-Run these commands on the PairDesk VM through IAP. The drill uses the deployed API image, copies one snapshot into a temporary private directory, and starts an API container bound to a loopback-only host port with media credentials unset. It creates and signs in a throwaway account against the restored copy, checks that the original account records loaded, and removes the temporary container, network, and files on exit. It never writes the live Docker volume or sends credentials to GCP services.
+Use a signed-in `gcloud` account with read access. These commands do not change
+the instance:
 
 ```sh
-sudo systemctl status pairdesk-backup.timer --no-pager
-sudo find /var/lib/pairdesk/backups -maxdepth 1 -type f -name 'pairdesk-*.json' -printf '%TY-%Tm-%Td %TH:%TM %m %u %f\n' | sort
-sudo /opt/pairdesk/infra/production/restore-drill.sh /var/lib/pairdesk/backups/PAIRWISE_SNAPSHOT.json
+gcloud sql instances describe pairdesk-pg \
+  --project=named-tube-444103-p0 \
+  --format='yaml(name,state,databaseVersion,region,settings.backupConfiguration)'
+gcloud sql backups list --instance=pairdesk-pg \
+  --project=named-tube-444103-p0 --limit=10
 ```
 
-Choose an existing snapshot path from the listing. The script requires a root-owned file with mode `600`, a free loopback port (default `18082`), Docker, Python 3, OpenSSL, and curl. Set `PAIRDESK_RESTORE_DRILL_PORT` when that port is occupied. Its recovery-time figure covers the isolated snapshot load and test-account login; it is not a measured production outage recovery time.
+Check that backup and PITR settings remain enabled, recent backups are
+successful, and the production instance is `RUNNABLE` before depending on this
+procedure. Do not include database passwords, connection strings, tokens, or
+state payloads in tickets or logs.
 
-The drill verifies that the snapshot parses, original account records and password hashes are present, and a temporary account can authenticate against the restored service. It cannot verify that a teammate's existing password works without using that teammate's credential. Have an account owner verify sign-in after any real production restore.
+## Exercise backup restore and PITR safely
 
-## Production restore boundary
+Run recovery drills by restoring into a disposable Cloud SQL instance. Do not
+restore over `pairdesk-pg` to test the procedure. For a PITR drill, select a
+UTC time within the configured seven-day window and before the present, then
+clone the source:
 
-Do not run an unreviewed restore against the live volume. A production recovery requires a maintenance window, an independently preserved copy of the current `/data/pairdesk.json`, a chosen and verified snapshot, stopping the single API writer, restoring the file with owner `65532:65532` and mode `600`, restarting the API, checking `/healthz` and `/readyz`, and asking account owners to verify sign-in. Preserve both pre-restore and source snapshots until verification is complete. Restoring the JSON snapshot also rolls back sessions and call/device/outbox state to the snapshot time; clients may need to sign in again, and stale push jobs must expire under their existing TTL policy.
+```sh
+gcloud sql instances clone pairdesk-pg pairdesk-pitr-drill-YYYYMMDD \
+  --point-in-time='2026-10-21T13:24:00Z' \
+  --preferred-zone=us-central1-a \
+  --project=named-tube-444103-p0
+```
+
+The destination inherits source protections and settings. Confirm the
+operation completed and the destination is `RUNNABLE`. Connect only to that
+destination through the Cloud SQL Auth Proxy; use a temporary password for the
+cloned `pairdesk_app` role, never the production password. Read back aggregate
+state counts without selecting user records or secret fields. For example:
+
+```sql
+SELECT updated_at,
+       (SELECT count(*) FROM jsonb_object_keys(payload->'users')) AS users,
+       (SELECT count(*) FROM jsonb_object_keys(payload->'sessions')) AS sessions,
+       (SELECT count(*) FROM jsonb_object_keys(payload->'rooms')) AS rooms,
+       (SELECT count(*) FROM jsonb_object_keys(payload->'presence')) AS presence,
+       (SELECT count(*) FROM jsonb_object_keys(payload->'calls')) AS calls,
+       (SELECT count(*) FROM jsonb_object_keys(payload->'devices')) AS devices,
+       (SELECT count(*) FROM jsonb_object_keys(payload->'pushJobs')) AS push_jobs
+FROM pairdesk_state WHERE id = 1;
+```
+
+After collecting recovery time and confirming the selected recovery point,
+remove the temporary proxy. Disable deletion protection only on the disposable
+clone, then delete that clone:
+
+```sh
+gcloud sql instances patch pairdesk-pitr-drill-YYYYMMDD \
+  --no-deletion-protection --project=named-tube-444103-p0
+gcloud sql instances delete pairdesk-pitr-drill-YYYYMMDD \
+  --project=named-tube-444103-p0
+```
+
+Record the backup or PITR timestamp, operation result, aggregate counts,
+recovery time, and cleanup result. Do not record user values, password hashes,
+push tokens, sessions, or call content. Account owners must verify their own
+sign-in after a real production recovery; an aggregate database read cannot
+prove an existing user's password works.
+
+## Production recovery boundary
+
+A real production recovery needs an approved maintenance window. First preserve
+the current database state and identify the target backup or PITR timestamp.
+Restore to a new instance, verify it independently, and record the chosen
+recovery point. Stop the API and worker before changing the production
+connection; keep the old instance intact until readiness, existing-account
+sign-in, calls, presence, and outbox replay are verified. Then ask account
+owners to test sign-in and call behavior. Preserve the original database and
+all recovery artifacts until owners confirm success. The deployment is
+single-writer; do not add API or worker replicas until the PostgreSQL
+multi-instance integration gate is green and the deployment plan is reviewed.
+
+## Completed GCP drill (2026-10-21)
+
+After cutover, on-demand backup `1792589086990` completed successfully at
+`2026-10-21T13:24:46.990Z`. It was restored to isolated PostgreSQL 16 instance
+`pairdesk-restore-drill-20261021`. Aggregate readback showed 8 users, 6
+sessions, 31 rooms, 5 presence records, 1 call, and empty join-request, device,
+push-job, and audit collections. The clone and its temporary proxy were
+removed after the readback.
+
+A separate PITR clone of `pairdesk-pg` at `2026-10-21T13:24:00Z` completed
+successfully (Cloud SQL operation
+`8fa4dbb0-779f-4fa5-9d23-076c00000032`, start `13:50:52Z`, completion
+`14:00:45Z`). Its restored row had `updated_at=13:23:59.457609Z`; aggregate
+readback showed 8 users, 6 sessions, 31 rooms, 5 presence records, 1 call, and
+no device or pending push-job records. The PITR clone inherited deletion
+protection; protection was disabled on that disposable clone and the instance
+was deleted after verification. Neither drill used or printed user credentials
+or state contents.
+
+These drills prove backup restore and PITR data recovery. They do not prove
+that a teammate can sign in after a production restore or that a deployed
+multi-replica service can call external APNs/FCM providers. Those checks remain
+separate acceptance gates.
 
 ## Alerting
 
-GCP project `named-tube-444103-p0` has a multi-region uptime check for `/readyz` and an enabled five-minute failure alert routed to the project owner's email notification channel. The channel resource being enabled does not prove that an alert was delivered; confirm receipt during an operational test before relying on it.
+GCP project `named-tube-444103-p0` has a multi-region uptime check for `/readyz`
+and an enabled five-minute failure alert routed to the project-owner email
+channel. An enabled channel does not prove mailbox delivery; confirm receipt
+during an operational test before relying on it.

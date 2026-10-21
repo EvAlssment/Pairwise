@@ -123,25 +123,30 @@ public API hostname. An existing unexpired session successfully read `/v1/me`,
 `/v1/users`, and `/v1/active-calls`. A live state export retained all persistent
 sections and all five presence entries; one presence timestamp refreshed after
 the API resumed, as expected. The root-only JSON export and boot-disk snapshot
-remain available for rollback. The deployment is still one API writer; do not
-scale it until the two-instance database integration tests cover authentication,
-presence, call creation, outbox delivery/retry, and restart/replay together.
+remain available for rollback. The deployment is still one API writer.
 
 The merged PostgreSQL lifecycle integration test exercises two independent
 stores and API handlers, verifies shared sessions and presence, races two call
 requests for the same teammate, and simulates restart with new stores and API
 handlers. It verifies persisted retry state, successful replay, and no second
 delivery after completion. CI runs this test against disposable PostgreSQL.
-Production remains configured as one API writer; the test does not validate
-live APNs/FCM delivery or the behavior of multiple deployed VM replicas.
+It does not validate live APNs/FCM delivery or multiple deployed VM replicas.
 
-The pre-cutover isolated-clone restore and sentinel readback verified the
-Cloud SQL restore path. The production migration itself was validated by an
-exact state export comparison and post-restart API checks, not by restoring a
-post-cutover production backup. Run and record that restore drill before
+Post-cutover recovery was exercised against isolated clones. Backup
+`1792589086990` restored successfully, and PITR clone operation
+`8fa4dbb0-779f-4fa5-9d23-076c00000032` recovered the state at
+`2026-10-21T13:24:00Z`; both clones were removed after aggregate readback. The
+exact timestamps, row counts, and cleanup results are in
+[`production-recovery.md`](production-recovery.md). Neither drill touched the
+production instance. Existing-account sign-in after a real production restore,
+external APNs/FCM delivery, and a multi-replica deployed configuration remain
+separate acceptance checks. The production migration itself was validated by
+an exact state export comparison and post-restart API checks, not by restoring
+a post-cutover production backup. Run and record that restore drill before
 closing this issue or scaling the API.
 
-Cloud Monitoring has one enabled Pairwise readiness alert policy. A temporary
-test policy targeting the configured email channel opened an incident and was
-removed after the incident closed. The test incident confirms the alert path
-was exercised; mailbox receipt was not independently confirmed.
+Cloud Monitoring has one enabled PairDesk readiness alert policy. A temporary
+test policy was created and removed, but no test incident appeared in the
+current Monitoring alert listing. The configured email channel's delivery has
+therefore not been verified; mailbox receipt is not available from this task's
+connected account.

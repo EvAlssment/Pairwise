@@ -10,7 +10,9 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -25,6 +27,16 @@ type fakePushSender struct {
 		callID  string
 		expires time.Time
 	}
+}
+
+type failingPushSender struct {
+	err   error
+	calls int
+}
+
+func (f *failingPushSender) Send(context.Context, DeviceRegistration, string, string, time.Time) error {
+	f.calls++
+	return f.err
 }
 
 func (f *fakePushSender) Send(_ context.Context, d DeviceRegistration, event, callID string, expires time.Time) error {
@@ -125,6 +137,96 @@ func TestInvalidPushTokenCleanupIsScopedAndDurable(t *testing.T) {
 	reopened.unlock()
 	if exists {
 		t.Fatal("registration with no remaining valid token was not removed")
+	}
+}
+
+func TestPushWorkerDropsExpiredJobsAndSafelyCleansInvalidProviderTokens(t *testing.T) {
+	cases := []struct {
+		name             string
+		platform         string
+		pushToken        string
+		voipToken        string
+		event            string
+		expired          bool
+		wantCalls        int
+		wantDevice       bool
+		wantPushToken    string
+		wantVoIPToken    string
+		loggedTokenValue string
+	}{
+		{
+			name:     "expired invitation is discarded without provider request",
+			platform: "android", pushToken: "expired-fcm-secret", event: "direct_call",
+			expired: true, wantCalls: 0, wantDevice: true, wantPushToken: "expired-fcm-secret",
+			loggedTokenValue: "expired-fcm-secret",
+		},
+		{
+			name:     "APNs VoIP token rejection preserves standard token",
+			platform: "ios", pushToken: "apns-standard-secret", voipToken: "apns-voip-secret", event: "direct_call",
+			wantCalls: 1, wantDevice: true, wantPushToken: "apns-standard-secret", wantVoIPToken: "",
+			loggedTokenValue: "apns-voip-secret",
+		},
+		{
+			name:     "FCM token rejection removes unusable registration",
+			platform: "android", pushToken: "fcm-secret", event: "direct_call",
+			wantCalls: 1, wantDevice: false, loggedTokenValue: "fcm-secret",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s, user := fixture(t)
+			now := time.Now().UTC()
+			callExpiry := now.Add(time.Minute)
+			jobExpiry := callExpiry
+			if tc.expired {
+				callExpiry = now.Add(-time.Second)
+				jobExpiry = callExpiry
+			}
+			callID := "call-for-invalid-token"
+			device := DeviceRegistration{UserID: user.ID, DeviceID: "phone", Platform: tc.platform, PushToken: tc.pushToken, VoIPToken: tc.voipToken, UpdatedAt: now}
+			job := PushJob{ID: "test-push-job", UserID: user.ID, DeviceID: device.DeviceID, Platform: tc.platform, Event: tc.event, CallID: callID, ExpiresAt: jobExpiry, NextAttemptAt: now.Add(-time.Second)}
+			s.store.lock()
+			s.store.s.Devices[deviceKey(user.ID, device.DeviceID)] = device
+			s.store.s.Calls[callID] = CallInvitation{ID: callID, CallerID: "caller", TargetID: user.ID, RoomID: "test-room", Status: callPending, ExpiresAt: callExpiry}
+			s.store.s.PushJobs[job.ID] = job
+			if err := s.store.save(); err != nil {
+				s.store.unlock()
+				t.Fatal(err)
+			}
+			s.store.unlock()
+
+			var output bytes.Buffer
+			previousOutput := log.Writer()
+			log.SetOutput(&output)
+			t.Cleanup(func() { log.SetOutput(previousOutput) })
+			providerErr := error(&InvalidPushTokenError{provider: "test provider"})
+			if tc.expired {
+				providerErr = errors.New("provider should not be called for expired jobs")
+			}
+			sender := &failingPushSender{err: providerErr}
+			s.deliverPushJobsWithSender(context.Background(), sender)
+			if sender.calls != tc.wantCalls {
+				t.Fatalf("provider calls = %d, want %d", sender.calls, tc.wantCalls)
+			}
+			if strings.Contains(output.String(), tc.loggedTokenValue) {
+				t.Fatal("provider token appeared in worker logs")
+			}
+
+			s.store.lock()
+			_, jobExists := s.store.s.PushJobs[job.ID]
+			registered, deviceExists := s.store.s.Devices[deviceKey(user.ID, device.DeviceID)]
+			s.store.unlock()
+			if jobExists {
+				t.Fatal("expired or invalid-token outbox job was not removed")
+			}
+			if deviceExists != tc.wantDevice {
+				t.Fatalf("device exists = %v, want %v", deviceExists, tc.wantDevice)
+			}
+			if deviceExists && (registered.PushToken != tc.wantPushToken || registered.VoIPToken != tc.wantVoIPToken) {
+				t.Fatalf("provider rejection changed the wrong token: push token retained=%v, VoIP token retained=%v", registered.PushToken != "", registered.VoIPToken != "")
+			}
+		})
 	}
 }
 

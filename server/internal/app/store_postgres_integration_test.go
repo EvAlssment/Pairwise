@@ -59,6 +59,8 @@ func TestPostgresConcurrentWorkersLeasePushOnce(t *testing.T) {
 	state.Devices[deviceKey("target", "phone")] = DeviceRegistration{UserID: "target", DeviceID: "phone", Platform: "android", PushToken: "test-token"}
 	state.Calls["call"] = CallInvitation{ID: "call", CallerID: "caller", TargetID: "target", RoomID: "room", Status: callPending, ExpiresAt: now.Add(time.Minute)}
 	state.PushJobs["job"] = PushJob{ID: "job", UserID: "target", DeviceID: "phone", Platform: "android", Event: "direct_call", CallID: "call", ExpiresAt: now.Add(time.Minute), NextAttemptAt: now}
+	state.Calls["expired-call"] = CallInvitation{ID: "expired-call", CallerID: "caller", TargetID: "target", RoomID: "expired-room", Status: callPending, ExpiresAt: now.Add(-time.Second)}
+	state.PushJobs["expired-job"] = PushJob{ID: "expired-job", UserID: "target", DeviceID: "phone", Platform: "android", Event: "direct_call", CallID: "expired-call", ExpiresAt: now.Add(-time.Second), NextAttemptAt: now.Add(-time.Second)}
 	fixturePath := t.TempDir() + "/state.json"
 	b, _ := json.Marshal(state)
 	if err = os.WriteFile(fixturePath, b, 0600); err != nil {
