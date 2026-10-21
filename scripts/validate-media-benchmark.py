@@ -244,6 +244,8 @@ def main() -> int:
                 not isinstance(pipe[field], int) or pipe[field] < 0 for field in ("packets", "bytes", "drops")
             ):
                 raise ValueError(f"pipe {pipe_id}: invalid counters")
+            if not pipe["present"] or pipe["packets"] <= 0 or pipe["bytes"] <= 0:
+                raise ValueError(f"pipe {pipe_id}: missing directional traffic evidence")
         if sum(pipe["packets"] for pipe in pipes.values()) != observed["packets"]:
             raise ValueError("network-conditioner packet total does not match directional counters")
         if sum(pipe["bytes"] for pipe in pipes.values()) != observed["bytes"]:

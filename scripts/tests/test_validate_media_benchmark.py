@@ -78,11 +78,11 @@ def conditioner() -> dict:
             "packetLossProbabilityPercent": 0.5,
         },
         "observed": {
-            "packets": 693,
-            "bytes": 166_721,
-            "droppedPackets": 2,
+            "packets": 1_113,
+            "bytes": 267_042,
+            "droppedPackets": 3,
             "pipes": {
-                "591": {"present": False, "packets": 0, "bytes": 0, "drops": 0},
+                "591": {"present": True, "packets": 420, "bytes": 100_321, "drops": 1},
                 "592": {"present": True, "packets": 693, "bytes": 166_721, "drops": 2},
             },
         },
@@ -95,6 +95,7 @@ class MediaBenchmarkValidatorTests(unittest.TestCase):
         zero_bitrate: bool = False,
         zero_drops: bool = False,
         negative_rtt: bool = False,
+        one_way_traffic: bool = False,
     ) -> subprocess.CompletedProcess[str]:
         with tempfile.TemporaryDirectory(prefix="pairwise-benchmark-validator-") as temporary:
             reports = []
@@ -113,6 +114,14 @@ class MediaBenchmarkValidatorTests(unittest.TestCase):
             if zero_drops:
                 conditioner_report["observed"]["droppedPackets"] = 0
                 conditioner_report["observed"]["pipes"]["592"]["drops"] = 0
+                conditioner_report["observed"]["pipes"]["591"]["drops"] = 0
+            if one_way_traffic:
+                conditioner_report["observed"]["packets"] = 693
+                conditioner_report["observed"]["bytes"] = 166_721
+                conditioner_report["observed"]["droppedPackets"] = 2
+                conditioner_report["observed"]["pipes"]["591"] = {
+                    "present": False, "packets": 0, "bytes": 0, "drops": 0,
+                }
             conditioner_path.write_text(json.dumps(conditioner_report), encoding="utf-8")
             cursor_reports = []
             for profile in ("baseline", "constrained"):
@@ -132,7 +141,7 @@ class MediaBenchmarkValidatorTests(unittest.TestCase):
         result = self.run_validator()
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("received bitrate 850 kbit/s", result.stdout)
-        self.assertIn("dummynet: 693 packets, 166721 bytes, 2 dropped", result.stdout)
+        self.assertIn("dummynet: 1113 packets, 267042 bytes, 3 dropped", result.stdout)
 
     def test_cursor_latency_is_reported_with_explicit_loopback_limits(self) -> None:
         result = self.run_validator()
@@ -148,6 +157,11 @@ class MediaBenchmarkValidatorTests(unittest.TestCase):
         result = self.run_validator(zero_drops=True)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("did not observe packet drops", result.stderr)
+
+    def test_rejects_conditioner_with_only_one_direction(self) -> None:
+        result = self.run_validator(one_way_traffic=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("missing directional traffic evidence", result.stderr)
 
     def test_rejects_negative_measurements(self) -> None:
         result = self.run_validator(negative_rtt=True)

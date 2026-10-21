@@ -20,7 +20,7 @@ class NetworkConditionReportTests(unittest.TestCase):
         counters = root / "counters.txt"
         output = root / "network-conditioner.json"
         rules.write_text(
-            "dummynet in quick on lo0 inet proto udp from any to any port 17882:17981 pipe 591\n"
+            "dummynet in quick on lo0 inet proto udp from any port 17882:17981 to any pipe 591\n"
             "dummynet out quick on lo0 inet proto udp from any to any port 17882:17981 pipe 592\n",
             encoding="utf-8",
         )
@@ -36,6 +36,9 @@ class NetworkConditionReportTests(unittest.TestCase):
 
     def test_emits_only_aggregate_directional_counters(self) -> None:
         result, output, temporary = self.run_writer(
+            "00591: 20.000 Mbit/s 30 ms 50 sl.plr 0.005000 1 queues (1 buckets) droptail\n"
+            "BKT Prot ___Source IP/port____ ____Dest. IP/port____ Tot_pkt/bytes Pkt/Byte Drp\n"
+            "  0 udp 192.0.2.1/17882 192.0.2.1/63931 420 100321 0 0 1\n"
             "00592: 20.000 Mbit/s 30 ms 50 sl.plr 0.005000 1 queues (1 buckets) droptail\n"
             "BKT Prot ___Source IP/port____ ____Dest. IP/port____ Tot_pkt/bytes Pkt/Byte Drp\n"
             "  0 udp 192.0.2.1/63931 192.0.2.1/17932 693 166721 0 0 2\n"
@@ -43,16 +46,29 @@ class NetworkConditionReportTests(unittest.TestCase):
         try:
             self.assertEqual(result.returncode, 0, result.stderr)
             report = json.loads(output.read_text(encoding="utf-8"))
-            self.assertEqual(report["observed"]["packets"], 693)
-            self.assertEqual(report["observed"]["bytes"], 166_721)
-            self.assertEqual(report["observed"]["droppedPackets"], 2)
+            self.assertEqual(report["observed"]["packets"], 1_113)
+            self.assertEqual(report["observed"]["bytes"], 267_042)
+            self.assertEqual(report["observed"]["droppedPackets"], 3)
+            self.assertEqual(report["observed"]["pipes"]["591"], {
+                "present": True, "packets": 420, "bytes": 100_321, "drops": 1,
+            })
             self.assertEqual(report["observed"]["pipes"]["592"], {
                 "present": True, "packets": 693, "bytes": 166_721, "drops": 2,
             })
-            self.assertEqual(report["observed"]["pipes"]["591"], {
-                "present": False, "packets": 0, "bytes": 0, "drops": 0,
-            })
             self.assertNotIn("192.0.2.1", output.read_text(encoding="utf-8"))
+        finally:
+            temporary.cleanup()
+
+    def test_rejects_one_way_traffic_even_when_drops_are_observed(self) -> None:
+        result, output, temporary = self.run_writer(
+            "00592: 20.000 Mbit/s 30 ms 50 sl.plr 0.005000 1 queues (1 buckets) droptail\n"
+            "BKT Prot ___Source IP/port____ ____Dest. IP/port____ Tot_pkt/bytes Pkt/Byte Drp\n"
+            "  0 udp 192.0.2.1/63931 192.0.2.1/17932 693 166721 0 0 2\n"
+        )
+        try:
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("both directions", result.stderr)
+            self.assertFalse(output.exists())
         finally:
             temporary.cleanup()
 
@@ -62,7 +78,7 @@ class NetworkConditionReportTests(unittest.TestCase):
         )
         try:
             self.assertNotEqual(result.returncode, 0)
-            self.assertIn("no classified media packets", result.stderr)
+            self.assertIn("both directions", result.stderr)
             self.assertFalse(output.exists())
         finally:
             temporary.cleanup()

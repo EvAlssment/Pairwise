@@ -10,7 +10,7 @@ from pathlib import Path
 PIPE_HEADER = re.compile(r"^\s*0*(\d+):")
 COUNTER_ROW = re.compile(r"^\s*\d+\s+udp\s+.*?\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s*$")
 EXPECTED_RULES = {
-    "dummynet in quick on lo0 inet proto udp from any to any port 17882:17981 pipe 591",
+    "dummynet in quick on lo0 inet proto udp from any port 17882:17981 to any pipe 591",
     "dummynet out quick on lo0 inet proto udp from any to any port 17882:17981 pipe 592",
 }
 
@@ -46,6 +46,8 @@ def main() -> int:
 
     observed_packets = sum(int(pipes.get(pipe, {}).get("packets", 0)) for pipe in (591, 592))
     observed_drops = sum(int(pipes.get(pipe, {}).get("drops", 0)) for pipe in (591, 592))
+    if any(int(pipes.get(pipe, {}).get("packets", 0)) <= 0 for pipe in (591, 592)):
+        raise ValueError("dummynet did not observe media traffic in both directions")
     if observed_packets <= 0:
         raise ValueError("dummynet reported no classified media packets")
     if observed_drops <= 0:

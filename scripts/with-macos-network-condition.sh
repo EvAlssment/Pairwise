@@ -48,7 +48,9 @@ awk -v anchor="$ANCHOR" '
   END { if (!inserted) exit 1 }
 ' /etc/pf.conf > "$TMP_DIR/pf.conf"
 cat > "$TMP_DIR/dummynet.rules" <<EOF
-dummynet in quick on lo0 inet proto udp from any to any port 17882:17981 pipe $PIPE_IN
+# Incoming packets use the server's media-port range as their source; matching
+# that source is required to shape server-to-client media and data replies.
+dummynet in quick on lo0 inet proto udp from any port 17882:17981 to any pipe $PIPE_IN
 dummynet out quick on lo0 inet proto udp from any to any port 17882:17981 pipe $PIPE_OUT
 EOF
 
