@@ -169,6 +169,9 @@ func TestPostgresTwoAPIsShareAuthPresenceCallsAndReplayOutbox(t *testing.T) {
 
 	apiFor := func(store *Store) *Server {
 		api := New(store)
+		// Provide an enabled no-op sender so call creation enqueues a durable job
+		// without requiring APNs or FCM credentials in the integration suite.
+		api.push = &configuredPushSender{}
 		api.liveURL = "wss://media.example.test"
 		api.liveKey = "test-key"
 		api.liveSecret = "test-secret"
@@ -254,11 +257,50 @@ func TestPostgresTwoAPIsShareAuthPresenceCallsAndReplayOutbox(t *testing.T) {
 	if response := request(restartedAPI.Handler(), http.MethodGet, "/v1/calls", targetToken, ""); response.Code != http.StatusOK || !strings.Contains(response.Body.String(), createdResult.Call.ID) {
 		t.Fatalf("restarted API could not read the persisted call/session: %d %s", response.Code, response.Body)
 	}
-	sender := &countedBlockingSender{entered: make(chan struct{}, 1), release: make(chan struct{})}
-	close(sender.release)
-	restartedAPI.deliverPushJobsWithSender(ctx, sender)
-	restartedAPI.deliverPushJobsWithSender(ctx, sender)
-	if got := sender.calls.Load(); got != 1 {
-		t.Fatalf("restarted outbox worker delivered %d times; want exactly once", got)
+	attempts := 0
+	restartedAPI.deliverPushJobsWithSender(ctx, retryPushSender{attempts: &attempts, failUntil: 1})
+	if attempts != 1 {
+		t.Fatalf("first outbox attempt count = %d, want 1", attempts)
+	}
+	restartedStore.lock()
+	var retryAt time.Time
+	for _, job := range restartedStore.s.PushJobs {
+		if job.CallID == createdResult.Call.ID {
+			if job.Attempts != 1 || !job.NextAttemptAt.After(time.Now()) {
+				restartedStore.unlock()
+				t.Fatalf("retry state was not persisted: attempts=%d nextAttemptAt=%s", job.Attempts, job.NextAttemptAt)
+			}
+			retryAt = job.NextAttemptAt
+		}
+	}
+	restartedStore.unlock()
+	if retryAt.IsZero() {
+		t.Fatal("failed delivery removed the durable outbox job")
+	}
+
+	// A new API/store instance after the failed attempt must replay the job
+	// when its persisted retry time becomes due.
+	retryStore, err := OpenPostgresStore(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer retryStore.Close()
+	retryAPI := apiFor(retryStore)
+	if wait := time.Until(retryAt); wait > 0 {
+		timer := time.NewTimer(wait + 10*time.Millisecond)
+		defer timer.Stop()
+		select {
+		case <-timer.C:
+		case <-ctx.Done():
+			t.Fatal("timed out waiting for persisted outbox retry")
+		}
+	}
+	retryAPI.deliverPushJobsWithSender(ctx, retryPushSender{attempts: &attempts, failUntil: 1})
+	if attempts != 2 {
+		t.Fatalf("replayed outbox attempt count = %d, want 2", attempts)
+	}
+	retryAPI.deliverPushJobsWithSender(ctx, retryPushSender{attempts: &attempts, failUntil: 1})
+	if attempts != 2 {
+		t.Fatalf("completed outbox job replayed again: attempts=%d", attempts)
 	}
 }
