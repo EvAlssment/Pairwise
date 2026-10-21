@@ -160,6 +160,15 @@ enum UISnapshots {
         snapshot("window-settings", to: directory, size: CGSize(width: 960, height: 660)) {
             SettingsView(store: idle, rtc: idle.rtc, loginItem: loginItem)
         }
+        snapshot("window-settings-audio-test", to: directory, size: CGSize(width: 960, height: 660)) {
+            SettingsView(store: idle, rtc: idle.rtc, loginItem: loginItem, initialSection: .audio)
+        }
+        snapshot("window-settings-screen-share", to: directory, size: CGSize(width: 960, height: 660)) {
+            SettingsView(store: idle, rtc: idle.rtc, loginItem: loginItem, initialSection: .screenShare)
+        }
+        snapshot("window-settings-camera-test", to: directory, size: CGSize(width: 960, height: 660)) {
+            SettingsView(store: idle, rtc: idle.rtc, loginItem: loginItem, initialSection: .camera)
+        }
         snapshot("window-permissions", to: directory) { PermissionsView() }
         snapshot("window-account", to: directory) { AccountView(store: idle).environmentObject(loginItem) }
         snapshot("window-share-picker", to: directory) { ScreenSharePickerView(store: ringing) }

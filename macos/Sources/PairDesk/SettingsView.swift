@@ -1,10 +1,10 @@
 import AppKit
 import SwiftUI
 
-private enum PairDeskSettingsSection: String, CaseIterable, Identifiable {
+enum PairDeskSettingsSection: String, CaseIterable, Identifiable {
     case general = "General"
     case audio = "Audio"
-    case video = "Video"
+    case screenShare = "Screen Share"
     case camera = "Camera"
     case privacy = "Privacy"
     case permissions = "Permissions"
@@ -14,7 +14,7 @@ private enum PairDeskSettingsSection: String, CaseIterable, Identifiable {
         switch self {
         case .general: "gearshape"
         case .audio: "waveform"
-        case .video: "display"
+        case .screenShare: "display"
         case .camera: "video"
         case .privacy: "eye.slash"
         case .permissions: "hand.raised"
@@ -28,7 +28,17 @@ struct SettingsView: View {
     @ObservedObject var loginItem: LoginItemManager
     @ObservedObject private var permissions = PermissionManager.shared
     @ObservedObject private var privacyVeil = PrivacyVeilPreferences.shared
-    @State private var selection: PairDeskSettingsSection? = .general
+    @StateObject private var microphoneTest = MicrophoneTestController()
+    @StateObject private var cameraTest = CameraPreviewTestController()
+    @State private var selection: PairDeskSettingsSection?
+
+    init(store: AppStore, rtc: RTCService, loginItem: LoginItemManager,
+         initialSection: PairDeskSettingsSection = .general) {
+        self.store = store
+        self.rtc = rtc
+        self.loginItem = loginItem
+        _selection = State(initialValue: initialSection)
+    }
 
     var body: some View {
         NavigationSplitView {
@@ -60,6 +70,18 @@ struct SettingsView: View {
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             permissions.refresh()
         }
+        .onDisappear {
+            microphoneTest.stop()
+            cameraTest.stop()
+        }
+        .onChange(of: store.activeRoom?.id) { _, roomID in
+            guard roomID != nil else { return }
+            microphoneTest.stop()
+            cameraTest.stop()
+        }
+        .onChange(of: rtc.isCameraEnabled) { _, enabled in
+            if enabled { cameraTest.stop() }
+        }
     }
 
     @ViewBuilder
@@ -67,7 +89,7 @@ struct SettingsView: View {
         switch selection ?? .general {
         case .general: generalSection
         case .audio: audioSection
-        case .video: videoSection
+        case .screenShare: screenShareSection
         case .camera: cameraSection
         case .privacy: privacySection
         case .permissions: permissionsSection
@@ -133,8 +155,12 @@ struct SettingsView: View {
             SettingsCard {
                 HStack {
                     VStack(alignment: .leading, spacing: 5) {
-                        Text("Microphone level").font(.headline)
-                        Text(rtc.isMicrophoneEnabled ? "Speak to see the local input meter." : "Turn on your microphone in a call to test its level.")
+                        Text("Test microphone").font(.headline)
+                        Text(microphoneTest.isRunning
+                             ? "Speak to check the selected microphone. Samples stay on this Mac and are discarded."
+                             : (store.activeRoom == nil
+                                ? "Run a local input test before joining a call."
+                                : "Leave the call to run a separate microphone test."))
                             .font(.callout).foregroundStyle(Theme.textMuted)
                     }
                     Spacer()
@@ -142,19 +168,26 @@ struct SettingsView: View {
                         Capsule().fill(Theme.surfaceRaised)
                             .overlay(alignment: .leading) {
                                 Capsule().fill(Theme.online)
-                                    .frame(width: proxy.size.width * min(max(rtc.localMicrophoneLevel, 0), 1))
+                                    .frame(width: proxy.size.width * min(max(microphoneTest.level, 0), 1))
                             }
                     }
                     .frame(width: 150, height: 8)
-                    .accessibilityLabel("Local microphone input level")
+                    .accessibilityLabel("Microphone test input level")
+                    Button(microphoneTest.isRunning ? "Stop test" : "Test microphone") {
+                        toggleMicrophoneTest()
+                    }
+                    .disabled(store.activeRoom != nil || (!permissions.microphone && microphoneTest.isRunning))
+                }
+                if let message = microphoneTest.message {
+                    Text(message).font(.caption).foregroundStyle(Theme.attention)
                 }
             }
-            Text("Noise processing is not enabled. Input is not captured until you explicitly turn your microphone on in a call.")
+            Text("The test briefly measures input level without saving or sending audio. Call microphone controls remain separate.")
                 .font(.caption).foregroundStyle(Theme.textMuted)
         }
     }
 
-    private var videoSection: some View {
+    private var screenShareSection: some View {
         SettingsPage(title: "Screen sharing", subtitle: "Choose the maximum screen quality. Adaptive quality can lower the stream when the network needs it.") {
             SettingsCard {
                 Toggle("Adapt quality to network conditions", isOn: Binding(
@@ -226,8 +259,65 @@ struct SettingsView: View {
                         else { Task { await permissions.requestCamera() } }
                     }
                 }
+                Divider()
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Test video").font(.headline)
+                            Text(cameraTest.isRunning
+                                 ? "This preview stays on your Mac and is not shared."
+                                 : "Check your selected camera before joining a call.")
+                                .font(.callout).foregroundStyle(Theme.textMuted)
+                        }
+                        Spacer()
+                        Button(cameraTest.isRunning ? "Stop test" : "Test video") {
+                            toggleCameraTest()
+                        }
+                        .disabled(store.activeRoom != nil || rtc.isCameraEnabled)
+                    }
+                    if let preview = cameraTest.previewSession {
+                        CameraPreviewSurface(session: preview)
+                            .frame(height: 210)
+                            .clipShape(RoundedRectangle(cornerRadius: 10))
+                    }
+                    if let message = cameraTest.message {
+                        Text(message).font(.caption).foregroundStyle(Theme.attention)
+                    }
+                }
             }
         }
+    }
+
+    private func toggleMicrophoneTest() {
+        if microphoneTest.isRunning {
+            microphoneTest.stop()
+            return
+        }
+        guard permissions.microphone else {
+            Task {
+                await permissions.requestMicrophone()
+                permissions.refresh()
+                if permissions.microphone { microphoneTest.start(deviceID: rtc.selectedAudioInputID) }
+            }
+            return
+        }
+        microphoneTest.start(deviceID: rtc.selectedAudioInputID)
+    }
+
+    private func toggleCameraTest() {
+        if cameraTest.isRunning {
+            cameraTest.stop()
+            return
+        }
+        guard permissions.camera else {
+            Task {
+                await permissions.requestCamera()
+                permissions.refresh()
+                if permissions.camera { cameraTest.start(cameraID: rtc.selectedCameraID) }
+            }
+            return
+        }
+        cameraTest.start(cameraID: rtc.selectedCameraID)
     }
 
     private var privacySection: some View {
