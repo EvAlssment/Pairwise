@@ -196,6 +196,10 @@ func TestPostgresTwoAPIsShareAuthPresenceCallsAndReplayOutbox(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	callerTwo, err := firstStore.CreateUser("Second Caller", "caller-two@integration.test", "second-integration-password", false)
+	if err != nil {
+		t.Fatal(err)
+	}
 	loginToken := func(api *Server, email, password string) string {
 		t.Helper()
 		response := request(api.Handler(), http.MethodPost, "/v1/login", "", `{"email":"`+email+`","password":"`+password+`"}`)
@@ -211,6 +215,7 @@ func TestPostgresTwoAPIsShareAuthPresenceCallsAndReplayOutbox(t *testing.T) {
 		return result.Token
 	}
 	callerToken := loginToken(firstAPI, caller.Email, "long-integration-password")
+	callerTwoToken := loginToken(secondAPI, callerTwo.Email, "second-integration-password")
 	targetToken := loginToken(secondAPI, target.Email, "another-integration-password")
 	if response := request(secondAPI.Handler(), http.MethodPost, "/v1/devices", targetToken,
 		`{"deviceId":"test-phone","platform":"android","pushToken":"fake-token"}`); response.Code != http.StatusOK {
@@ -225,9 +230,32 @@ func TestPostgresTwoAPIsShareAuthPresenceCallsAndReplayOutbox(t *testing.T) {
 	if response := request(firstAPI.Handler(), http.MethodGet, "/v1/users", callerToken, ""); response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"online":true`) {
 		t.Fatalf("presence written through second API was not visible through first: %d %s", response.Code, response.Body)
 	}
-	created := request(firstAPI.Handler(), http.MethodPost, "/v1/calls", callerToken, `{"userId":"`+target.ID+`"}`)
-	if created.Code != http.StatusCreated {
-		t.Fatalf("create call through first API: %d %s", created.Code, created.Body)
+	callResponses := make(chan *httptest.ResponseRecorder, 2)
+	for _, attempt := range []struct {
+		api   *Server
+		token string
+	}{{firstAPI, callerToken}, {secondAPI, callerTwoToken}} {
+		attempt := attempt
+		go func() {
+			callResponses <- request(attempt.api.Handler(), http.MethodPost, "/v1/calls", attempt.token, `{"userId":"`+target.ID+`"}`)
+		}()
+	}
+	var created *httptest.ResponseRecorder
+	createdCount, conflictCount := 0, 0
+	for range 2 {
+		response := <-callResponses
+		switch response.Code {
+		case http.StatusCreated:
+			createdCount++
+			created = response
+		case http.StatusConflict:
+			conflictCount++
+		default:
+			t.Fatalf("concurrent call request returned %d: %s", response.Code, response.Body)
+		}
+	}
+	if createdCount != 1 || conflictCount != 1 {
+		t.Fatalf("concurrent replicas created %d calls and rejected %d; want one call and one busy response", createdCount, conflictCount)
 	}
 	var createdResult struct {
 		Call apiCall `json:"call"`
@@ -236,7 +264,11 @@ func TestPostgresTwoAPIsShareAuthPresenceCallsAndReplayOutbox(t *testing.T) {
 		t.Fatalf("call creation returned no call: %v", err)
 	}
 	seen := request(secondAPI.Handler(), http.MethodGet, "/v1/calls", targetToken, "")
-	if seen.Code != http.StatusOK || !strings.Contains(seen.Body.String(), createdResult.Call.ID) {
+	var seenResult struct {
+		Calls []apiCall `json:"calls"`
+	}
+	if err = json.Unmarshal(seen.Body.Bytes(), &seenResult); err != nil || seen.Code != http.StatusOK ||
+		len(seenResult.Calls) != 1 || seenResult.Calls[0].ID != createdResult.Call.ID {
 		t.Fatalf("call written through first API was not visible through second: %d %s", seen.Code, seen.Body)
 	}
 
