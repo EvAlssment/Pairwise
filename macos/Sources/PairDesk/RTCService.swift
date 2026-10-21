@@ -54,6 +54,7 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
                 sharingIndicator.hide()
                 hostCursorOverlay.hide()
                 privacyVeilAppNames = []
+                privacyVeilNotificationsHidden = false
                 privacyVeilProtectedBundleIDs = []
             }
             else { updateHostCursors() }
@@ -73,6 +74,7 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
     @Published private(set) var automaticControlEnabled = false
     /// Local-only labels; never included in control-availability or call data.
     @Published private(set) var privacyVeilAppNames: [String] = []
+    @Published private(set) var privacyVeilNotificationsHidden = false
     private var privacyVeilProtectedBundleIDs = Set<String>()
     private var privacyVeilStopRequested = false
     var onProtectedPrivacyAppChanged: ((String) -> Void)?
@@ -767,7 +769,13 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
             // Show the local-only veil state before the first captured frame
             // can be published. If capture or publication fails, the catch
             // path clears this value before returning to the caller.
-            privacyVeilAppNames = Array(Set(excludingApplications.map(\.applicationName))).sorted {
+            let notificationBundleIDs = PrivacyVeilPreferences.notificationCenterBundleIdentifiers
+            privacyVeilNotificationsHidden = excludingApplications.contains {
+                notificationBundleIDs.contains($0.bundleIdentifier)
+            }
+            privacyVeilAppNames = Array(Set(excludingApplications
+                .filter { !notificationBundleIDs.contains($0.bundleIdentifier) }
+                .map(\.applicationName))).sorted {
                 $0.localizedCaseInsensitiveCompare($1) == .orderedAscending
             }
             let canControlDisplay = selectedFrame != nil && AXIsProcessTrusted()
@@ -788,7 +796,7 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
             pendingTrack = track
             guard !privacyVeilStopRequested else {
                 _ = try? await track.capturer.stopCapture()
-                throw LiveKitError(.invalidState, message: "A hidden app opened while sharing was starting. No screen was shared; try again after closing it.")
+                throw LiveKitError(.invalidState, message: "A protected app changed state while sharing was starting. No screen was shared; try again after it is stable.")
             }
             let publishOptions = VideoPublishOptions(name: trackName,
                                                      screenShareEncoding: VideoEncoding(maxBitrate: quality.maxBitrate,
@@ -831,9 +839,11 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
                    : (!AXIsProcessTrusted() ? .accessibility : (selectedFrame == nil ? .displayGeometry : nil)))
             status = !privacyVeilAppNames.isEmpty
                 ? "Sharing display · remote control disabled while apps are hidden"
-                : (selectedWindow
-                ? "Sharing window · remote control unavailable"
-                : (automaticControlEnabled ? "Sharing display · teammates can control when they interact" : "Sharing display · remote control unavailable"))
+                : (privacyVeilNotificationsHidden
+                   ? "Sharing display · notification banners hidden"
+                   : (selectedWindow
+                      ? "Sharing window · remote control unavailable"
+                      : (automaticControlEnabled ? "Sharing display · teammates can control when they interact" : "Sharing display · remote control unavailable")))
             sendControl(.init(epoch: UUID().uuidString, sequence: nextSequence(), kind: .releaseAll))
             startAccessibilityMonitor()
             sendControlAvailability()
@@ -843,6 +853,7 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
             if let pendingTrack { _ = try? await pendingTrack.capturer.stopCapture() }
             hostCursorOverlay.hide()
             privacyVeilAppNames = []
+            privacyVeilNotificationsHidden = false
             privacyVeilProtectedBundleIDs = []
             self.error = "Screen sharing failed: \(error.localizedDescription)"
             throw error

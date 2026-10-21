@@ -15,8 +15,13 @@ struct HiddenApplication: Codable, Hashable, Identifiable {
 final class PrivacyVeilPreferences: ObservableObject {
     static let shared = PrivacyVeilPreferences()
     static let defaultsKey = "privacyVeilHiddenApplications"
+    static let hideNotificationsDefaultsKey = "privacyVeilHideNotificationBanners"
+    nonisolated static let notificationCenterBundleIdentifiers: Set<String> = ["com.apple.notificationcenterui"]
 
     @Published private(set) var applications: [HiddenApplication]
+    @Published var hideNotificationBanners: Bool {
+        didSet { defaults.set(hideNotificationBanners, forKey: Self.hideNotificationsDefaultsKey) }
+    }
     private let defaults: UserDefaults
 
     init(defaults: UserDefaults = .standard) {
@@ -27,9 +32,13 @@ final class PrivacyVeilPreferences: ObservableObject {
         } else {
             applications = []
         }
+        hideNotificationBanners = defaults.object(forKey: Self.hideNotificationsDefaultsKey) as? Bool ?? false
     }
 
     var bundleIdentifiers: Set<String> { Set(applications.map(\.bundleIdentifier)) }
+    var protectedBundleIdentifiers: Set<String> {
+        hideNotificationBanners ? bundleIdentifiers.union(Self.notificationCenterBundleIdentifiers) : bundleIdentifiers
+    }
 
     func addApplicationsFromPanel() {
         let panel = NSOpenPanel()

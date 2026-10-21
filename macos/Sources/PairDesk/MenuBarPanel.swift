@@ -268,6 +268,10 @@ struct MenuBarPanel: View {
 
     private var sharingStatus: some View {
         VStack(alignment: .leading, spacing: 8) {
+            if rtc.privacyVeilNotificationsHidden {
+                Label("Notification banners are hidden from the shared display", systemImage: "bell.slash.fill")
+                    .font(.caption).foregroundStyle(Theme.attention)
+            }
             if !rtc.privacyVeilAppNames.isEmpty {
                 Label("Hidden from the shared display", systemImage: "eye.slash")
                     .font(.caption).foregroundStyle(Theme.attention)

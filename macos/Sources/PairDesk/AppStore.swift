@@ -113,7 +113,7 @@ final class AppStore: ObservableObject {
         rtc.onProtectedPrivacyAppChanged = { [weak self] appName in
             Task { @MainActor [weak self] in
                 guard let self, self.rtc.isSharing else { return }
-                self.error = "Screen sharing stopped because hidden app \(appName) changed state. Start a new share to continue."
+                self.error = "Screen sharing stopped because protected app \(appName) changed state. Start a new share to continue."
                 await self.stopSharing()
             }
         }
@@ -593,7 +593,7 @@ final class AppStore: ObservableObject {
             screenClaimRoomID = room.id
             try await rtc.startScreenShare(contentFilter: selection.filter, sourceRect: selection.sourceRect,
                                            excludingApplications: selection.excludedApplications,
-                                           protectingBundleIDs: PrivacyVeilPreferences.shared.bundleIdentifiers)
+                                           protectingBundleIDs: PrivacyVeilPreferences.shared.protectedBundleIdentifiers)
         } catch {
             try? await releaseScreenClaim()
             if (error as? CocoaError)?.code != .userCancelled { self.error = error.localizedDescription }
@@ -611,7 +611,7 @@ final class AppStore: ObservableObject {
             guard !rtc.isSharing else { throw APIError(status: 0, message: "The current screen share could not be stopped safely.") }
             try await rtc.startScreenShare(contentFilter: selection.filter, sourceRect: selection.sourceRect,
                                            excludingApplications: selection.excludedApplications,
-                                           protectingBundleIDs: PrivacyVeilPreferences.shared.bundleIdentifiers)
+                                           protectingBundleIDs: PrivacyVeilPreferences.shared.protectedBundleIdentifiers)
             screenClaimRoomID = room.id
         } catch {
             if (error as? CocoaError)?.code != .userCancelled {

@@ -372,11 +372,31 @@ struct SettingsView: View {
                         .font(.callout).foregroundStyle(Theme.textMuted)
                 }
             }
-            Text("Privacy changes apply to the next share. The active share keeps the filter you approved when it started. Pairwise stops a share when a protected app opens or closes.")
+            SettingsCard {
+                if #available(macOS 15.2, *) {
+                    Toggle("Hide notification banners while sharing a display", isOn: $privacyVeil.hideNotificationBanners)
+                        .font(.headline)
+                    Text("PairDesk excludes Notification Center from the selected display before capture starts. If macOS does not expose Notification Center for filtering, the display share is cancelled. This setting does not change macOS Focus or affect window shares.")
+                        .font(.callout).foregroundStyle(Theme.textMuted)
+                } else {
+                    Label("Notification hiding requires macOS 15.2 or later", systemImage: "info.circle")
+                    if privacyVeil.hideNotificationBanners {
+                        Button("Turn off notification hiding") { privacyVeil.hideNotificationBanners = false }
+                            .buttonStyle(QuietButtonStyle())
+                    }
+                    Text("No screen is shared with this filter on older versions.")
+                        .font(.callout).foregroundStyle(Theme.textMuted)
+                }
+                if privacyVeil.hideNotificationBanners {
+                    Text("Remote control stays available unless you also hide another app. PairDesk will stop sharing if Notification Center starts while its filter is unavailable.")
+                        .font(.caption).foregroundStyle(Theme.attention)
+                }
+            }
+            Text("Privacy changes apply to the next share. The active share keeps the filter you approved when it started. PairDesk stops sharing if a protected app opens or closes.")
                 .font(.caption).foregroundStyle(Theme.textMuted).fixedSize(horizontal: false, vertical: true)
             SettingsCard {
                 Label("Browser tabs", systemImage: "safari").font(.headline)
-                Text("macOS shares or excludes windows and apps, not individual browser tabs. Hide the whole browser app, or share a different window. Notification banners can still appear; use a Focus mode to silence them.")
+                Text("macOS shares or excludes windows and apps, not individual browser tabs. Hide the whole browser app, or share a different window.")
                     .font(.callout).foregroundStyle(Theme.textMuted)
             }
             if !rtc.privacyVeilAppNames.isEmpty {
@@ -386,6 +406,13 @@ struct SettingsView: View {
                         .font(.callout).foregroundStyle(Theme.textMuted)
                     Text("Remote control is paused while apps are hidden.")
                         .font(.caption).foregroundStyle(Theme.textMuted)
+                }
+            }
+            if rtc.privacyVeilNotificationsHidden {
+                SettingsCard {
+                    Label("Notification banners hidden", systemImage: "bell.slash.fill").font(.headline)
+                    Text("Notification Center is excluded from this display share on this Mac.")
+                        .font(.callout).foregroundStyle(Theme.textMuted)
                 }
             }
         }

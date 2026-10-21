@@ -201,8 +201,8 @@ final class SystemScreenPicker: NSObject, @preconcurrency SCContentSharingPicker
         }
         guard (source == .display || source == .region), filter.style == .display,
               #available(macOS 15.2, *), let display = filter.includedDisplays.first else {
-            if !preferences.bundleIdentifiers.isEmpty {
-                throw Self.privacyVeilError("App hiding is available only for display shares on macOS 15.2 or later. Choose a window or update macOS.")
+            if !preferences.bundleIdentifiers.isEmpty || preferences.hideNotificationBanners {
+                throw Self.privacyVeilError("Display privacy filters require macOS 15.2 or later. Choose a window only if notification hiding is not required, or update macOS.")
             }
             return []
         }
@@ -211,8 +211,8 @@ final class SystemScreenPicker: NSObject, @preconcurrency SCContentSharingPicker
         // moved onto that display later in the same share.
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
         guard content.displays.contains(where: { $0.displayID == display.displayID }) else {
-            if !preferences.bundleIdentifiers.isEmpty {
-                throw Self.privacyVeilError("macOS did not provide the selected display details needed to apply your hidden-app list. No screen was shared.")
+            if !preferences.bundleIdentifiers.isEmpty || preferences.hideNotificationBanners {
+                throw Self.privacyVeilError("macOS did not provide the selected display details needed to apply privacy filters. No screen was shared.")
             }
             return []
         }
@@ -225,7 +225,19 @@ final class SystemScreenPicker: NSObject, @preconcurrency SCContentSharingPicker
             let names = preferences.applications.filter { missingIDs.contains($0.bundleIdentifier) }.map(\.name).sorted()
             throw Self.privacyVeilError("Open every app in your hidden-app list before sharing a display. PairDesk could not verify: \(names.joined(separator: ", ")).")
         }
-        return try await choosePrivacyVeilApplications(apps)
+        var excludedApplications = try await choosePrivacyVeilApplications(apps)
+        if preferences.hideNotificationBanners {
+            let availableIDs = Set(apps.map(\.bundleIdentifier))
+            guard let notificationIDs = PrivacyVeilSelection.notificationBundleIdentifiersToExclude(
+                hideNotifications: true, availableBundleIDs: availableIDs
+            ), let notificationCenter = apps.first(where: { notificationIDs.contains($0.bundleIdentifier) }) else {
+                throw Self.privacyVeilError("macOS did not expose Notification Center for capture filtering. No screen was shared; turn off notification hiding or try again after restarting Notification Center.")
+            }
+            if !excludedApplications.contains(where: { $0.bundleIdentifier == notificationCenter.bundleIdentifier }) {
+                excludedApplications.append(notificationCenter)
+            }
+        }
+        return excludedApplications
     }
 
     private static func privacyVeilError(_ message: String) -> NSError {
@@ -251,6 +263,7 @@ final class SystemScreenPicker: NSObject, @preconcurrency SCContentSharingPicker
             window.contentViewController = NSHostingController(rootView: PrivacyVeilApplicationPicker(
                 applications: applications,
                 initiallyExcludedBundleIDs: PrivacyVeilPreferences.shared.bundleIdentifiers,
+                hideNotifications: PrivacyVeilPreferences.shared.hideNotificationBanners,
                 onContinue: { [weak self, weak window] selected in
                     PrivacyVeilPreferences.shared.saveShareSelection(selected, visible: applications)
                     self?.finishPrivacyVeil(.success(selected))
@@ -361,14 +374,16 @@ final class SystemScreenPicker: NSObject, @preconcurrency SCContentSharingPicker
 private struct PrivacyVeilApplicationPicker: View {
     let applications: [SCRunningApplication]
     let initiallyExcludedBundleIDs: Set<String>
+    let hideNotifications: Bool
     let onContinue: ([SCRunningApplication]) -> Void
     let onCancel: () -> Void
     @State private var excludedBundleIDs: Set<String>
 
-    init(applications: [SCRunningApplication], initiallyExcludedBundleIDs: Set<String>,
+    init(applications: [SCRunningApplication], initiallyExcludedBundleIDs: Set<String>, hideNotifications: Bool,
          onContinue: @escaping ([SCRunningApplication]) -> Void, onCancel: @escaping () -> Void) {
         self.applications = applications
         self.initiallyExcludedBundleIDs = initiallyExcludedBundleIDs
+        self.hideNotifications = hideNotifications
         self.onContinue = onContinue
         self.onCancel = onCancel
         _excludedBundleIDs = State(initialValue: initiallyExcludedBundleIDs)
@@ -385,8 +400,11 @@ private struct PrivacyVeilApplicationPicker: View {
                 .font(.headline)
             Text("PairDesk will capture only the display you selected and exclude every window owned by the apps you choose. This is optional and can be changed by stopping and sharing again.")
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            Text("macOS notification banners may still appear. Turn on a Focus mode before sharing if you need to silence them.")
-                .font(.caption).foregroundStyle(Theme.attention).fixedSize(horizontal: false, vertical: true)
+            Text(hideNotifications
+                 ? "Notification Center is also excluded from this display share. PairDesk cancels sharing if macOS cannot verify that filter."
+                 : "macOS notification banners may appear. Turn on a Focus mode before sharing if you need to silence them.")
+                .font(.caption).foregroundStyle(hideNotifications ? Theme.textMuted : Theme.attention)
+                .fixedSize(horizontal: false, vertical: true)
             List(uniqueApplications, id: \.bundleIdentifier) { app in
                 Toggle(app.applicationName, isOn: Binding(
                     get: { excludedBundleIDs.contains(app.bundleIdentifier) },
@@ -417,6 +435,13 @@ private final class PrivacyVeilWindowDelegate: NSObject, NSWindowDelegate {
 }
 
 enum PrivacyVeilSelection {
+    static func notificationBundleIdentifiersToExclude(hideNotifications: Bool,
+                                                        availableBundleIDs: Set<String>) -> Set<String>? {
+        guard hideNotifications else { return [] }
+        let available = PrivacyVeilPreferences.notificationCenterBundleIdentifiers.intersection(availableBundleIDs)
+        return available.isEmpty ? nil : available
+    }
+
     static func resolve(_ bundleIDs: Set<String>, from applications: [SCRunningApplication]) -> [SCRunningApplication] {
         let selected = resolve(bundleIDs, availableBundleIDs: applications.map(\.bundleIdentifier))
         return applications.filter { selected.contains($0.bundleIdentifier) }
