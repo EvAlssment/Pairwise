@@ -6,6 +6,77 @@ import XCTest
 
 final class HostCursorIntegrationTests: XCTestCase {
     @MainActor
+    func testSharerRelaysAnIndependentViewerCursorToOtherParticipants() async throws {
+        guard let address = ProcessInfo.processInfo.environment["PAIRDESK_TEST_API"],
+              let password = ProcessInfo.processInfo.environment["PAIRDESK_TEST_PASSWORD"] else {
+            throw XCTSkip("Run scripts/test-call.sh for cursor relay integration")
+        }
+        _ = NSApplication.shared
+        struct LoginBody: Encodable { let email: String; let password: String }
+        struct RoomBody: Encodable { let name: String }
+        let unsigned = try APIClient(server: address)
+        var clients: [APIClient] = []
+        var users: [TeamUser] = []
+        for index in 1...3 {
+            let login: LoginResponse = try await unsigned.post("v1/login", body: LoginBody(
+                email: "integration-\(index)@pairdesk.invalid", password: password))
+            clients.append(try APIClient(server: address, token: login.token))
+            users.append(login.user)
+        }
+        let created: RoomResponse = try await clients[0].post("v1/rooms", body: RoomBody(name: "Independent cursor relay"))
+        let host = RTCService()
+        let viewer = Room()
+        let observer = Room()
+        let relayed = CursorBroadcastReceiver(expectation: expectation(description: "Sharer relays viewer cursor"))
+        observer.add(delegate: relayed)
+        do {
+            let hostJoin: JoinResponse = try await clients[0].post("v1/rooms/\(created.room.id)/join", body: EmptyBody())
+            try await host.connect(url: hostJoin.url, token: hostJoin.token,
+                                   identity: hostJoin.participantIdentity, name: users[0].name)
+            let viewerJoin: JoinResponse = try await clients[1].post("v1/rooms/\(created.room.id)/join", body: EmptyBody())
+            try await viewer.connect(url: viewerJoin.url, token: viewerJoin.token)
+            let observerJoin: JoinResponse = try await clients[2].post("v1/rooms/\(created.room.id)/join", body: EmptyBody())
+            try await observer.connect(url: observerJoin.url, token: observerJoin.token)
+            try await waitFor { host.participants.count == 3 }
+
+            host.debugStartCursorShare(bounds: CGRect(x: 100, y: 100, width: 800, height: 500), session: "relay-share")
+            let panel = try XCTUnwrap(host.debugHostCursorPanel)
+            let content = try XCTUnwrap(panel.contentView as? NSHostingView<SharedCursorLayer>)
+            for sequence in 1...20 {
+                let cursor = RemoteControlMessage(epoch: "relay-share", sequence: UInt64(sequence), kind: .cursor,
+                                                  x: Double(sequence) / 20, y: 0.75, visible: true)
+                try await viewer.localParticipant.publish(data: JSONEncoder().encode(cursor),
+                    options: DataPublishOptions(destinationIdentities: [Participant.Identity(from: hostJoin.participantIdentity)],
+                                                topic: "pairdesk.control.v1", reliable: false))
+                if relayed.message != nil { break }
+                try await Task.sleep(for: .milliseconds(50))
+            }
+            await fulfillment(of: [relayed.expectation], timeout: 5)
+            let broadcast = try XCTUnwrap(relayed.message)
+            XCTAssertEqual(relayed.sender, hostJoin.participantIdentity)
+            XCTAssertEqual(broadcast.kind, .cursorBroadcast)
+            XCTAssertEqual(broadcast.epoch, "relay-share")
+            XCTAssertEqual(broadcast.pointerIdentity, viewerJoin.participantIdentity)
+            XCTAssertEqual(content.rootView.pointers.first?.id, viewerJoin.participantIdentity)
+            XCTAssertFalse(panel.canBecomeKey)
+            XCTAssertTrue(panel.ignoresMouseEvents)
+
+            await viewer.disconnect()
+            try await waitFor { host.remotePointers.isEmpty }
+            XCTAssertTrue(content.rootView.pointers.isEmpty, "The host overlay clears a cursor when its participant disconnects")
+            await host.disconnect()
+            await observer.disconnect()
+        } catch {
+            await host.disconnect()
+            await viewer.disconnect()
+            await observer.disconnect()
+            for client in clients { try? await client.send("v1/rooms/\(created.room.id)/leave", body: EmptyBody()) }
+            throw error
+        }
+        for client in clients { try? await client.send("v1/rooms/\(created.room.id)/leave", body: EmptyBody()) }
+    }
+
+    @MainActor
     func testPrivacyVeilIsReportedToViewersAndBlocksControlRequests() async throws {
         guard let address = ProcessInfo.processInfo.environment["PAIRDESK_TEST_API"],
               let password = ProcessInfo.processInfo.environment["PAIRDESK_TEST_PASSWORD"] else {
@@ -240,6 +311,31 @@ final class HostCursorIntegrationTests: XCTestCase {
             try await Task.sleep(for: .milliseconds(100))
         }
         XCTFail("Host cursor state did not propagate", file: file, line: line)
+    }
+}
+
+private final class CursorBroadcastReceiver: RoomDelegate, @unchecked Sendable {
+    let expectation: XCTestExpectation
+    private let lock = NSLock()
+    private var storedMessage: RemoteControlMessage?
+    private var storedSender: String?
+
+    var message: RemoteControlMessage? { lock.lock(); defer { lock.unlock() }; return storedMessage }
+    var sender: String? { lock.lock(); defer { lock.unlock() }; return storedSender }
+
+    init(expectation: XCTestExpectation) { self.expectation = expectation }
+
+    func room(_ room: Room, participant: RemoteParticipant?, didReceiveData data: Data,
+              forTopic topic: String, encryptionType: EncryptionType) {
+        guard topic == "pairdesk.control.v1", let participant,
+              let decoded = try? JSONDecoder().decode(RemoteControlMessage.self, from: data),
+              decoded.kind == .cursorBroadcast else { return }
+        lock.lock()
+        guard storedMessage == nil else { lock.unlock(); return }
+        storedMessage = decoded
+        storedSender = participant.identity?.stringValue
+        lock.unlock()
+        expectation.fulfill()
     }
 }
 

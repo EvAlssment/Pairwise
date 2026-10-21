@@ -161,43 +161,80 @@ final class CallIntegrationTests: XCTestCase {
             media[0].remove(delegate: clipboardReceiver)
             // Independent hover uses an authenticated, lossy packet addressed
             // only to the sharing Mac, without any control lease.
-            let cursorReceiver = DataReceiver(expectation: expectation(description: "Independent cursor delivered to host"), topic: "pairdesk.control.v1")
+            let cursorReceiver = DataReceiver(expectation: expectation(description: "Independent cursor delivered to host"),
+                                              topic: "pairdesk.control.v1", accepts: {
+                (try? JSONDecoder().decode(RemoteControlMessage.self, from: $0).kind) == .cursor
+            })
             let bystanderExpectation = expectation(description: "Host relays cursor to another viewer")
-            let bystander = DataReceiver(expectation: bystanderExpectation, topic: "pairdesk.control.v1")
+            let bystander = DataReceiver(expectation: bystanderExpectation, topic: "pairdesk.control.v1", accepts: {
+                (try? JSONDecoder().decode(RemoteControlMessage.self, from: $0).kind) == .cursorBroadcast
+            })
             media[0].add(delegate: cursorReceiver)
             media[2].add(delegate: bystander)
             let hostID = try XCTUnwrap(media[0].localParticipant.identity)
             let viewerID = try XCTUnwrap(media[1].localParticipant.identity).stringValue
             let bystanderID = try XCTUnwrap(media[2].localParticipant.identity)
-            let cursor = RemoteControlMessage(epoch: "fixture-share", sequence: 1, kind: .cursor, x: 0.25, y: 0.75, visible: true)
-            try await media[1].localParticipant.publish(data: JSONEncoder().encode(cursor), options: DataPublishOptions(destinationIdentities: [hostID], topic: "pairdesk.control.v1", reliable: false))
+            // Hover samples are intentionally lossy; a single UDP sample may
+            // disappear without indicating a cursor regression. Exercise a
+            // short stream and require that at least one latest-state sample
+            // reaches the host.
+            let cursorSamples = (1...20).map { sequence in
+                RemoteControlMessage(epoch: "fixture-share", sequence: UInt64(sequence), kind: .cursor,
+                                     x: Double(sequence) / 20, y: 0.75, visible: true)
+            }
+            for cursor in cursorSamples {
+                try await media[1].localParticipant.publish(
+                    data: JSONEncoder().encode(cursor),
+                    options: DataPublishOptions(destinationIdentities: [hostID], topic: "pairdesk.control.v1", reliable: false)
+                )
+                if cursorReceiver.received != nil { break }
+                try await Task.sleep(for: .milliseconds(50))
+            }
             await fulfillment(of: [cursorReceiver.expectation], timeout: 5)
             let receivedCursor = try JSONDecoder().decode(RemoteControlMessage.self, from: XCTUnwrap(cursorReceiver.received))
-            XCTAssertEqual(receivedCursor, cursor)
+            XCTAssertTrue(cursorSamples.contains(receivedCursor))
             XCTAssertEqual(cursorReceiver.sender, media[1].localParticipant.identity?.stringValue)
             XCTAssertTrue(IndependentCursorPolicy.accepts(receivedCursor, session: "fixture-share", isParticipant: true, lastSequence: nil))
             let motionExpectation = expectation(description: "Coalesced control motion delivered independently of ordered inputs")
-            let motionReceiver = DataReceiver(expectation: motionExpectation, topic: "pairdesk.control.v1")
+            let motionReceiver = DataReceiver(expectation: motionExpectation, topic: "pairdesk.control.v1", accepts: {
+                (try? JSONDecoder().decode(RemoteControlMessage.self, from: $0).kind) == .pointer
+            })
             media[0].add(delegate: motionReceiver)
-            let motion = RemoteControlMessage(epoch: "fixture-share", sequence: 1,
-                                              kind: .pointer, x: 0.4, y: 0.6)
-            try await media[1].localParticipant.publish(data: JSONEncoder().encode(motion),
-                                                        options: DataPublishOptions(destinationIdentities: [hostID],
-                                                                                    topic: "pairdesk.control.v1", reliable: false))
+            let motionSamples = (1...20).map { sequence in
+                RemoteControlMessage(epoch: "fixture-share", sequence: UInt64(sequence),
+                                     kind: .pointer, x: 0.4, y: 0.6)
+            }
+            for motion in motionSamples {
+                try await media[1].localParticipant.publish(
+                    data: JSONEncoder().encode(motion),
+                    options: DataPublishOptions(destinationIdentities: [hostID], topic: "pairdesk.control.v1", reliable: false)
+                )
+                if motionReceiver.received != nil { break }
+                try await Task.sleep(for: .milliseconds(50))
+            }
             await fulfillment(of: [motionExpectation], timeout: 5)
             let receivedMotion = try JSONDecoder().decode(RemoteControlMessage.self, from: XCTUnwrap(motionReceiver.received))
-            XCTAssertEqual(receivedMotion, motion)
+            XCTAssertTrue(motionSamples.contains(receivedMotion))
             let viewerIdentity = try XCTUnwrap(motionReceiver.sender)
             var motionGate = RemoteControlGate()
             motionGate.grant(identity: viewerIdentity, epoch: "fixture-share", now: 1_000)
             XCTAssertTrue(motionGate.accept(receivedMotion, sender: viewerIdentity, now: 1_000.1))
             media[0].remove(delegate: motionReceiver)
-            let relayed = RemoteControlMessage(epoch: "fixture-share", sequence: 2, kind: .cursorBroadcast,
-                                               x: 0.25, y: 0.75, pointerIdentity: viewerID, visible: true)
-            try await media[0].localParticipant.publish(data: JSONEncoder().encode(relayed), options: DataPublishOptions(destinationIdentities: [bystanderID], topic: "pairdesk.control.v1", reliable: false))
+            let relayedSamples = (1...20).map { sequence in
+                RemoteControlMessage(epoch: "fixture-share", sequence: UInt64(sequence), kind: .cursorBroadcast,
+                                     x: 0.25, y: 0.75, pointerIdentity: viewerID, visible: true)
+            }
+            for relayed in relayedSamples {
+                try await media[0].localParticipant.publish(
+                    data: JSONEncoder().encode(relayed),
+                    options: DataPublishOptions(destinationIdentities: [bystanderID], topic: "pairdesk.control.v1", reliable: false)
+                )
+                if bystander.received != nil { break }
+                try await Task.sleep(for: .milliseconds(50))
+            }
             await fulfillment(of: [bystanderExpectation], timeout: 5)
             let receivedRelay = try JSONDecoder().decode(RemoteControlMessage.self, from: XCTUnwrap(bystander.received))
-            XCTAssertEqual(receivedRelay, relayed)
+            XCTAssertTrue(relayedSamples.contains(receivedRelay))
             XCTAssertEqual(bystander.sender, media[0].localParticipant.identity?.stringValue)
             XCTAssertTrue(IndependentCursorPolicy.acceptsBroadcast(receivedRelay, session: "fixture-share", senderIsSharer: true,
                                                                    pointerIsParticipant: true, viewerIdentity: bystanderID.stringValue, lastSequence: nil))
@@ -500,14 +537,19 @@ private func writeSyntheticBenchmark(_ snapshot: SyntheticVideoReceiver.Snapshot
 private final class DataReceiver: RoomDelegate, @unchecked Sendable {
     let expectation: XCTestExpectation
     private let topic: String
+    private let accepts: (Data) -> Bool
     private let lock = NSLock()
     private var storedData: Data?
     private var storedSender: String?
     var received: Data? { lock.lock(); defer { lock.unlock() }; return storedData }
     var sender: String? { lock.lock(); defer { lock.unlock() }; return storedSender }
-    init(expectation: XCTestExpectation, topic: String = "pairdesk.test") { self.expectation = expectation; self.topic = topic }
+    init(expectation: XCTestExpectation, topic: String = "pairdesk.test", accepts: @escaping (Data) -> Bool = { _ in true }) {
+        self.expectation = expectation
+        self.topic = topic
+        self.accepts = accepts
+    }
     func room(_ room: Room, participant: RemoteParticipant?, didReceiveData data: Data, forTopic topic: String, encryptionType: EncryptionType) {
-        guard topic == self.topic, let participant else { return }
+        guard topic == self.topic, let participant, accepts(data) else { return }
         lock.lock()
         guard storedData == nil else { lock.unlock(); return }
         storedData = data
