@@ -26,10 +26,10 @@ fail() {
 # DEVELOPER_SIGNING_IDENTITY=- to force ad-hoc signing.
 if [ -z "$SIGNING_IDENTITY" ]; then
   AVAILABLE_IDENTITIES=$(security find-identity -p codesigning "$SIGNING_KEYCHAIN" 2>/dev/null | sed -n 's/.*"\(.*\)".*/\1/p')
-  if printf '%s\n' "$AVAILABLE_IDENTITIES" | grep -F 'PairDesk Local Signing ' >/dev/null; then
-    SIGNING_IDENTITY=$(printf '%s\n' "$AVAILABLE_IDENTITIES" | grep -F 'PairDesk Local Signing ' | head -n 1)
-  elif printf '%s\n' "$AVAILABLE_IDENTITIES" | grep -Fx "$LOCAL_SIGNING_IDENTITY" >/dev/null; then
+  if printf '%s\n' "$AVAILABLE_IDENTITIES" | grep -Fx "$LOCAL_SIGNING_IDENTITY" >/dev/null; then
     SIGNING_IDENTITY=$LOCAL_SIGNING_IDENTITY
+  elif printf '%s\n' "$AVAILABLE_IDENTITIES" | grep -F 'PairDesk Local Signing ' >/dev/null; then
+    SIGNING_IDENTITY=$(printf '%s\n' "$AVAILABLE_IDENTITIES" | grep -F 'PairDesk Local Signing ' | head -n 1)
   elif [ "${PAIRDESK_ALLOW_ADHOC:-0}" = "1" ]; then
     SIGNING_IDENTITY=-
     echo "build-app: ad-hoc signing. macOS treats this build as a new app: the saved sign-in asks for the Mac password twice and permissions may need approval again." >&2
