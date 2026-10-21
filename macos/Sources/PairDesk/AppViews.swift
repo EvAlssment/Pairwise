@@ -183,12 +183,12 @@ struct SharedScreenWindow: View {
                     .accessibilityLabel("Choose camera")
                 }
                 Button { showClipboard = true } label: {
-                    Image(systemName: rtc.clipboardSyncEnabled ? "doc.on.clipboard.fill" : "doc.on.clipboard")
+                    Label("Copy & paste", systemImage: rtc.clipboardSyncEnabled ? "doc.on.clipboard.fill" : "doc.on.clipboard")
                 }
                 .buttonStyle(.bordered)
                 .tint(rtc.clipboardSyncEnabled ? Theme.accent : nil)
-                .help(rtc.clipboardSyncEnabled ? "Copied text is shared with this call until you turn sync off" : "Send text to a teammate or paste received text on this Mac")
-                .accessibilityLabel(rtc.clipboardSyncEnabled ? "Clipboard sync on" : "Clipboard")
+                .help(rtc.clipboardSyncEnabled ? "Text copy and paste is synced with this call until the call ends" : "Sync copy and paste for the call, or send text once to a teammate")
+                .accessibilityLabel(rtc.clipboardSyncEnabled ? "Copy and paste sync on" : "Copy and paste options")
                 Menu {
                     if store.availablePeople.isEmpty {
                         Text("No one else is available right now")

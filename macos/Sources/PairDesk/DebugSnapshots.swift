@@ -169,6 +169,16 @@ enum UISnapshots {
         snapshot("window-settings-camera-test", to: directory, size: CGSize(width: 960, height: 660)) {
             SettingsView(store: idle, rtc: idle.rtc, loginItem: loginItem, initialSection: .camera)
         }
+        snapshot("window-clipboard-sharing", to: directory, size: CGSize(width: 520, height: 520)) {
+            ClipboardTransferView(
+                peers: [ClipboardPeer(identity: "harshit", name: "Harshit"), ClipboardPeer(identity: "bharat", name: "Bharat")],
+                incoming: nil,
+                onSend: { _, _ in }, onPaste: {}, onDismiss: {},
+                clipboardSyncEnabled: false, clipboardSyncNotice: nil, onToggleSync: { _ in }
+            )
+            .padding(20)
+            .frame(width: 480)
+        }
         snapshot("window-permissions", to: directory) { PermissionsView() }
         snapshot("window-account", to: directory) { AccountView(store: idle).environmentObject(loginItem) }
         snapshot("window-share-picker", to: directory) { ScreenSharePickerView(store: ringing) }

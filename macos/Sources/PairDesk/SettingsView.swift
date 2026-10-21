@@ -125,7 +125,7 @@ struct SettingsView: View {
     }
 
     private var audioSection: some View {
-        SettingsPage(title: "Audio", subtitle: "Choose the devices used for voice calls. PairDesk never turns on your microphone at launch.") {
+        SettingsPage(title: "Audio", subtitle: "Choose your call devices and check them before a call. PairDesk never turns on your microphone at launch.") {
             SettingsCard {
                 SettingsRow(title: "Microphone", detail: rtc.savedAudioInputUnavailable
                     ? "Saved microphone unavailable; using the system default."
@@ -155,23 +155,28 @@ struct SettingsView: View {
             SettingsCard {
                 HStack {
                     VStack(alignment: .leading, spacing: 5) {
-                        Text("Test microphone").font(.headline)
+                        Label("Microphone check", systemImage: "waveform")
+                            .font(.headline)
                         Text(microphoneTest.isRunning
-                             ? "Speak to check the selected microphone. Samples stay on this Mac and are discarded."
+                             ? "Say a few words and watch the input meter. Audio stays on this Mac and is discarded."
                              : (store.activeRoom == nil
-                                ? "Run a local input test before joining a call."
-                                : "Leave the call to run a separate microphone test."))
+                                ? "Start a local test to confirm your selected microphone is picking up sound."
+                                : "End the call to test your microphone separately."))
                             .font(.callout).foregroundStyle(Theme.textMuted)
                     }
                     Spacer()
-                    GeometryReader { proxy in
-                        Capsule().fill(Theme.surfaceRaised)
-                            .overlay(alignment: .leading) {
-                                Capsule().fill(Theme.online)
-                                    .frame(width: proxy.size.width * min(max(microphoneTest.level, 0), 1))
-                            }
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text(microphoneTest.isRunning ? "INPUT LEVEL" : "TEST OFF")
+                            .font(.system(size: 9, weight: .semibold)).foregroundStyle(Theme.textMuted)
+                        GeometryReader { proxy in
+                            Capsule().fill(Theme.surfaceRaised)
+                                .overlay(alignment: .leading) {
+                                    Capsule().fill(microphoneTest.isRunning ? Theme.online : Theme.textMuted.opacity(0.35))
+                                        .frame(width: proxy.size.width * min(max(microphoneTest.level, 0), 1))
+                                }
+                        }
+                        .frame(width: 130, height: 8)
                     }
-                    .frame(width: 150, height: 8)
                     .accessibilityLabel("Microphone test input level")
                     Button(microphoneTest.isRunning ? "Stop test" : "Test microphone") {
                         toggleMicrophoneTest()
@@ -182,7 +187,7 @@ struct SettingsView: View {
                     Text(message).font(.caption).foregroundStyle(Theme.attention)
                 }
             }
-            Text("The test briefly measures input level without saving or sending audio. Call microphone controls remain separate.")
+            Text("The test checks the selected input locally; it does not record or send audio. Your in-call mute control is separate.")
                 .font(.caption).foregroundStyle(Theme.textMuted)
         }
     }
@@ -218,7 +223,7 @@ struct SettingsView: View {
     }
 
     private var cameraSection: some View {
-        SettingsPage(title: "Camera", subtitle: "Camera sharing is optional and remains off until you turn it on in a call.") {
+        SettingsPage(title: "Camera", subtitle: "Check framing and permission here. Your camera stays off in calls until you turn it on.") {
             SettingsCard {
                 SettingsRow(title: "Preferred camera", detail: rtc.cameraDeviceNotice ?? cameraStatus,
                             symbol: "video") {
@@ -263,14 +268,15 @@ struct SettingsView: View {
                 VStack(alignment: .leading, spacing: 12) {
                     HStack {
                         VStack(alignment: .leading, spacing: 4) {
-                            Text("Test video").font(.headline)
+                            Label("Camera check", systemImage: "video")
+                                .font(.headline)
                             Text(cameraTest.isRunning
-                                 ? "This preview stays on your Mac and is not shared."
-                                 : "Check your selected camera before joining a call.")
+                                 ? "Live preview only. It stays on this Mac and is not shared."
+                                 : "Start a local preview to check your selected camera before a call.")
                                 .font(.callout).foregroundStyle(Theme.textMuted)
                         }
                         Spacer()
-                        Button(cameraTest.isRunning ? "Stop test" : "Test video") {
+                        Button(cameraTest.isRunning ? "Stop preview" : "Test camera") {
                             toggleCameraTest()
                         }
                         .disabled(store.activeRoom != nil || rtc.isCameraEnabled)

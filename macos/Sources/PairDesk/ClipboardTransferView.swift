@@ -26,39 +26,53 @@ struct ClipboardTransferView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Toggle("Sync text clipboard during this call", isOn: Binding(
-                get: { clipboardSyncEnabled },
-                set: onToggleSync
-            ))
-            .font(.callout.weight(.medium))
-            Text("Enable this on both Macs for direct Cmd+C / Cmd+V. Copied plain text is shared with everyone on this call; images and files are not transferred.")
-                .font(.caption).foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 8) {
+                Label("Copy here, paste there", systemImage: "doc.on.clipboard")
+                    .font(.headline)
+                Text("For hands-free copy and paste, turn this on for everyone in the call. Copy text on one Mac, then press ⌘V on another. It turns off when the call ends.")
+                    .font(.caption).foregroundStyle(.secondary)
+                Toggle("Sync text clipboard for this call", isOn: Binding(
+                    get: { clipboardSyncEnabled },
+                    set: onToggleSync
+                ))
+                .font(.callout.weight(.medium))
+                Text("Only plain text is shared. Images and files stay on this Mac. If a teammate hasn't enabled sync, they get a preview and choose when to paste.")
+                    .font(.caption2).foregroundStyle(.secondary)
+            }
+            .padding(12)
+            .background(.quaternary, in: RoundedRectangle(cornerRadius: 10))
 
             if !peers.isEmpty {
-                HStack(spacing: 8) {
-                    Picker("Send to", selection: $selectedPeerIdentity) {
-                        ForEach(peers) { peer in Text(peer.name).tag(peer.identity) }
-                    }
-                    .labelsHidden()
-                    .frame(maxWidth: .infinity)
+                VStack(alignment: .leading, spacing: 8) {
+                    Label("Send text once", systemImage: "paperplane")
+                        .font(.headline)
+                    Text("Send the text currently copied on your Mac to one teammate. They can review it before pasting.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    HStack(spacing: 8) {
+                        Picker("Send to", selection: $selectedPeerIdentity) {
+                            ForEach(peers) { peer in Text(peer.name).tag(peer.identity) }
+                        }
+                        .labelsHidden()
+                        .frame(maxWidth: .infinity)
 
-                    Button {
-                        sendClipboard()
-                    } label: {
-                        Label("Send clipboard", systemImage: "doc.on.clipboard")
+                        Button {
+                            sendClipboard()
+                        } label: {
+                            Label("Send copied text", systemImage: "paperplane.fill")
+                        }
+                        .buttonStyle(PrimaryButtonStyle())
+                        .disabled(selectedPeerIdentity.isEmpty || sending)
                     }
-                    .buttonStyle(PrimaryButtonStyle())
-                    .disabled(selectedPeerIdentity.isEmpty || sending)
                 }
             } else {
-                Text("Join a call with someone to share clipboard text.")
+                Text("Start a call with a teammate to share text.")
                     .font(.caption).foregroundStyle(.secondary)
             }
 
             if let incoming {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("Clipboard text from \(incoming.senderName)")
-                        .font(.caption.weight(.semibold))
+                    Label("Text from \(incoming.senderName)", systemImage: "doc.text")
+                        .font(.callout.weight(.semibold))
                     Text(incoming.message.text)
                         .font(.caption)
                         .lineLimit(3)
@@ -97,12 +111,13 @@ struct ClipboardTransferView: View {
         }
         guard !selectedPeerIdentity.isEmpty else { return }
         let peer = selectedPeerIdentity
+        let peerName = peers.first(where: { $0.identity == peer })?.name ?? "teammate"
         sending = true
         status = "Sending…"
         Task {
             // The status reports the outcome, not the attempt: a clip that
             // exceeds the transport's packet limits fails here, visibly.
-            do { try await onSend(text, peer); status = "Sent clipboard text." }
+            do { try await onSend(text, peer); status = "Sent text to \(peerName)." }
             catch { status = error.localizedDescription }
             sending = false
         }
