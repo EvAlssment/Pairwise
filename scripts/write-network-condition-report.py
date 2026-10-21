@@ -10,6 +10,7 @@ from pathlib import Path
 PIPE_HEADER = re.compile(r"^\s*0*(\d+):")
 COUNTER_ROW = re.compile(r"^\s*\d+\s+udp\s+.*?\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s*$")
 EXPECTED_RULES = {
+    "dummynet in quick inet proto udp from any port 17882:17981 to any pipe 591",
     "dummynet out quick inet proto udp from any port 17882:17981 to any pipe 591",
     "dummynet out quick inet proto udp from any to any port 17882:17981 pipe 592",
 }
@@ -59,7 +60,7 @@ def main() -> int:
         "commit": args.commit,
         "runID": args.run_id,
         "configured": {
-            "interface": "lo0",
+            "interface": "all",
             "udpPortRange": "17882-17981",
             "directionalBandwidthKbitPerSecond": 20_000,
             "delaySequenceMilliseconds": [20, 60, 30, 50],

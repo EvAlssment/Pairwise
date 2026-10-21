@@ -48,9 +48,10 @@ awk -v anchor="$ANCHOR" '
   END { if (!inserted) exit 1 }
 ' /etc/pf.conf > "$TMP_DIR/pf.conf"
 cat > "$TMP_DIR/dummynet.rules" <<EOF
-# The local client/server exchange can leave through different interfaces on
-# virtualized macOS runners. Match service-port source and destination on every
-# egress interface so replies are not lost when they route through a VM bridge.
+# On virtualized macOS runners, requests can egress through a VM bridge while
+# loopback-server replies are observed on ingress. Match both directions by the
+# LiveKit UDP port range without binding either rule to a specific interface.
+dummynet in quick inet proto udp from any port 17882:17981 to any pipe $PIPE_IN
 dummynet out quick inet proto udp from any port 17882:17981 to any pipe $PIPE_IN
 dummynet out quick inet proto udp from any to any port 17882:17981 pipe $PIPE_OUT
 EOF
@@ -83,6 +84,7 @@ JITTER_PID=$!
 
 export PAIRDESK_BENCHMARK_PROFILE=constrained
 export PAIRDESK_NETWORK_CONDITION_ACTIVE=1
+export PAIRDESK_NETWORK_CONDITION_INTERFACE=all
 export PAIRDESK_NETWORK_CONDITION_BANDWIDTH_KBIT=20000
 export PAIRDESK_NETWORK_CONDITION_DELAY_SEQUENCE_MS=20,60,30,50
 export PAIRDESK_NETWORK_CONDITION_PACKET_LOSS_PERCENT=0.5
