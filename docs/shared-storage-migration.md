@@ -30,8 +30,8 @@ using this design for a substantially larger deployment.
    service account is prepared as
    `pairdesk-api-runtime@named-tube-444103-p0.iam.gserviceaccount.com`; it has
    the Cloud SQL Client role and Secret Accessor on this database password
-   secret. It is not yet attached to the production VM. The isolated restore
-   drill used the Cloud SQL Auth Proxy; the production API does not yet use it.
+   secret. It is attached to the production VM with the `cloud-platform` API
+   scope. The production API connects through the Cloud SQL Auth Proxy.
 3. Import the verified snapshot while the API remains stopped. Start only the
    proxy, then run the admin importer against the private backup path:
 
@@ -107,27 +107,28 @@ rollback.
 
 ## Recovery and cutover status
 
-The production instance has been provisioned and its backup/PITR settings
-verified. A manual backup was restored to an isolated temporary clone; a
-sentinel row was read back successfully through the application database role,
-then the probe and clone were removed. The primary instance has deletion
-protection enabled. This proves the Cloud SQL backup/restore path, not recovery
-of Pairwise production accounts: the live API has not been migrated and
-existing-user sign-in after a production data import has not yet been tested.
+The production cutover completed on 2026-10-21. The API VM was stopped, its
+30-GiB boot disk was snapshotted as
+`pairdesk-pre-postgres-cutover-20261021`, and the live JSON state was exported
+to the VM's root-only `/var/backups/pairdesk-pre-cloudsql` directory. The JSON
+was validated and imported into the dedicated `pairdesk-pg` instance through
+the Cloud SQL Auth Proxy. Exporting immediately after import produced an exact
+state match: 8 users, 6 sessions, 1 call, and 0 pending push jobs. The primary
+database retains automated daily backups, 7-day PITR, and deletion protection.
 
-Before cutover, take and verify the JSON-mode backup, then attach the prepared
-service account to the API VM (currently it has no attached service account)
-with the Cloud SQL Client and Secret Accessor roles and the Cloud SQL API
-scope. Attaching an identity requires a VM stop/start and must be scheduled
-with the application maintenance window. Run the proxy configuration helper,
-stop the API, import the JSON snapshot into PostgreSQL, export the database
-state back to a temporary JSON file and compare the complete structures before
-restarting the API in Cloud SQL mode. If import or comparison fails, keep the
-API stopped until the operator chooses recovery; the original JSON snapshot
-remains the rollback source. Then verify health/readiness, existing-user
-login, presence, calls, and push outbox delivery. Do not scale API replicas
-until the PostgreSQL-backed API and push worker pass the two-instance
-concurrency check. The current VM still runs JSON-volume mode.
+After restart, `/readyz` passed both inside the Compose network and through the
+public API hostname. An existing unexpired session successfully read `/v1/me`,
+`/v1/users`, and `/v1/active-calls`. A live state export retained all persistent
+sections and all five presence entries; one presence timestamp refreshed after
+the API resumed, as expected. The root-only JSON export and boot-disk snapshot
+remain available for rollback. The deployment is still one API writer; do not
+scale it until the two-instance database integration tests cover authentication,
+presence, call creation, outbox delivery/retry, and restart/replay together.
+
+The current CI integration test exercises concurrent writes from two stores
+and proves that concurrent workers claim one push job once. It does not yet
+cover the full two-API call lifecycle or restart/replay acceptance, so the
+shared-storage issue remains open.
 
 Cloud Monitoring has one enabled Pairwise readiness alert policy. A temporary
 test policy targeting the configured email channel opened an incident and was
