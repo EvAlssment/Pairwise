@@ -9,7 +9,7 @@ struct ClipboardPeer: Identifiable, Equatable {
 
 /// Embeddable in-call clipboard UI. Reading the local pasteboard only happens
 /// after the sender presses Send; writing it only happens after the receiver
-/// presses Paste on this Mac.
+/// presses Copy to clipboard.
 struct ClipboardTransferView: View {
     let peers: [ClipboardPeer]
     let incoming: (senderName: String, message: ClipboardTransferMessage)?
@@ -80,9 +80,11 @@ struct ClipboardTransferView: View {
                         .lineLimit(3)
                         .textSelection(.enabled)
                     HStack {
-                        Button("Paste here", action: onPaste).buttonStyle(PrimaryButtonStyle())
+                        Button("Copy to clipboard", action: onPaste).buttonStyle(PrimaryButtonStyle())
                         Button("Dismiss", action: onDismiss).buttonStyle(QuietButtonStyle(compact: true))
                     }
+                    Text("Then press ⌘V in the app where you want the text.")
+                        .font(.caption).foregroundStyle(.secondary)
                 }
                 .padding(8)
                 .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))

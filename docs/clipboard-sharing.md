@@ -3,7 +3,7 @@
 Pairwise can move plain text between Macs in the same call. The shared-screen toolbar's **Copy & paste** button makes the main action direct: copy on one Mac with `⌘C`, then paste on another with `⌘V`.
 
 - **Enable for this call** opts that Mac into clipboard sync. Each Mac that should share plain text enables it from its own call toolbar. It turns off when the call ends.
-- **Send copied text to one teammate** is the one-off alternative. The receiver reviews the text and chooses when to paste it.
+- **Send copied text to one teammate** is the one-off alternative. The receiver reviews it, chooses **Copy to clipboard**, then presses `⌘V` in the destination app. Pairwise does not inject a paste keystroke into another app.
 
 Images and files are not transferred. Text is limited to 64 KiB per clip. LiveKit delivers reliable data in packets of at most 15 KiB, so a clip is sent as up to twelve parts (6 KiB of text each) that share an id, and the receiver reassembles them in memory; incomplete clips are dropped after two minutes. Parts go only to current call participants over the call's reliable data channel and are accepted only by their intended recipient. Sync reads the system text clipboard only while its toggle is on; it does not run in the background or outside a call. Turning sync off stops the local clipboard watcher immediately. If a receiver has not opted into sync, incoming text is presented as a reviewable paste offer instead of being written automatically.
 

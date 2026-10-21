@@ -176,8 +176,14 @@ struct SettingsView: View {
                                 }
                         }
                         .frame(width: 130, height: 8)
+                        Text(microphoneTest.isRunning
+                             ? (microphoneTest.level > 0.025 ? "Sound detected" : "Speak to test")
+                             : "Test off")
+                            .font(.caption2).foregroundStyle(Theme.textMuted)
                     }
+                    .accessibilityElement(children: .ignore)
                     .accessibilityLabel("Microphone test input level")
+                    .accessibilityValue(microphoneTest.level > 0.025 ? "Sound detected" : "No sound detected")
                     Button(microphoneTest.isRunning ? "Stop test" : "Test microphone") {
                         toggleMicrophoneTest()
                     }
