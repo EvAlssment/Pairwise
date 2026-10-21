@@ -65,7 +65,8 @@ overlays. Test Retina scaling, multiple displays, full-screen apps, and mixed
 old/new versions.
 Do not treat a rendered fixture or a passing unit test as proof of native input
 delivery. Remote keyboard input was confirmed by the team on 0.3.9; the new cursor
-mode has not yet been accepted between two physical Macs.
+mode has not yet been accepted between two physical Macs. Record its two-Mac
+acceptance using the [physical Mac acceptance record](physical-mac-acceptance.md).
 
 ## Inspiration
 

@@ -41,7 +41,7 @@ Produce a stable signed, notarized, stapled app and DMG from a repeatable releas
 
 ### P1 — Close the real-Mac acceptance gap
 
-Run the complete call with two physical Macs on current macOS: clean install, voice, screen picker, readable shared display, automatic remote control, owner takeover, Stop/Resume, emergency stop, hangup on either side, reconnection, sleep/wake, external display changes, denied/revoked permissions, and restart. Repeat with three or four participants and distant networks. Fix observed failures before calling the feature complete.
+Run the complete call with two physical Macs on current macOS: clean install, voice, screen picker, readable shared display, automatic remote control, owner takeover, Stop/Resume, emergency stop, hangup on either side, reconnection, sleep/wake, external display changes, denied/revoked permissions, and restart. Repeat with three or four participants and distant networks. Record the results in the [physical Mac acceptance record](physical-mac-acceptance.md). Fix observed failures before calling the feature complete.
 
 ### P1 — Make permission onboarding capability-based
 
