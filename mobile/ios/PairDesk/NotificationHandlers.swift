@@ -9,6 +9,7 @@ import UserNotifications
     private static weak var current: PairDeskAppDelegate?
     private let callProvider: CXProvider
     private var pushRegistry: PKPushRegistry?
+    private var isCheckingNotificationAuthorization = false
     private var invitationByCallUUID: [UUID: String] = [:]
     private var acceptedElsewhereFirstSeen: [UUID: Date] = [:]
 
@@ -57,12 +58,44 @@ import UserNotifications
         current.acceptedElsewhereFirstSeen.removeAll()
     }
 
+    static func requestNotificationAuthorizationAfterAuthentication() {
+        current?.requestNotificationAuthorization()
+    }
+
+    private func requestNotificationAuthorization() {
+        guard !isCheckingNotificationAuthorization else { return }
+        isCheckingNotificationAuthorization = true
+        let center = UNUserNotificationCenter.current()
+        center.getNotificationSettings { [weak self] settings in
+            switch settings.authorizationStatus {
+            case .notDetermined:
+                center.requestAuthorization(options: [.alert, .sound, .badge]) { [weak self] granted, _ in
+                    DispatchQueue.main.async {
+                        self?.isCheckingNotificationAuthorization = false
+                        guard granted else { return }
+                        self?.registerForRemoteNotificationsIfNeeded()
+                    }
+                }
+            case .authorized, .provisional, .ephemeral:
+                DispatchQueue.main.async {
+                    self?.isCheckingNotificationAuthorization = false
+                    self?.registerForRemoteNotificationsIfNeeded()
+                }
+            case .denied:
+                DispatchQueue.main.async { self?.isCheckingNotificationAuthorization = false }
+            @unknown default:
+                DispatchQueue.main.async { self?.isCheckingNotificationAuthorization = false }
+            }
+        }
+    }
+
+    private func registerForRemoteNotificationsIfNeeded() {
+        guard !UIApplication.shared.isRegisteredForRemoteNotifications else { return }
+        UIApplication.shared.registerForRemoteNotifications()
+    }
+
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
         UNUserNotificationCenter.current().delegate = self
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, _ in
-            guard granted else { return }
-            DispatchQueue.main.async { application.registerForRemoteNotifications() }
-        }
         let registry = PKPushRegistry(queue: .main)
         registry.delegate = self
         registry.desiredPushTypes = [.voIP]

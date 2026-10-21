@@ -39,6 +39,7 @@ import Security
             let client = try APIClient(server: server)
             let result: LoginResponse = try await client.post("v1/login", body: Body(email: email.trimmingCharacters(in: .whitespacesAndNewlines), password: password))
             token = result.token; user = result.user; Keychain.write(result.token, key: "pairdesk.session")
+            PairDeskAppDelegate.requestNotificationAuthorizationAfterAuthentication()
             pushRegistrationAPI = PairDeskDeviceRegistration(client: try APIClient(server: server, token: result.token), deviceID: DeviceInstallation.id)
             await registerPushTokensIfReady()
             UserDefaults.standard.set(server, forKey: "pairdesk.server")
@@ -49,6 +50,7 @@ import Security
         do {
             let me: MeResponse = try await api.get("v1/me")
             user = me.user
+            PairDeskAppDelegate.requestNotificationAuthorizationAfterAuthentication()
             pushRegistrationAPI = PairDeskDeviceRegistration(client: try api, deviceID: DeviceInstallation.id)
             await registerPushTokensIfReady()
             startPolling()

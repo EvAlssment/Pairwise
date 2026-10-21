@@ -29,6 +29,10 @@ struct RootView: View {
             }
         }
         .tint(.indigo)
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
+            guard model.user != nil else { return }
+            PairDeskAppDelegate.requestNotificationAuthorizationAfterAuthentication()
+        }
         .alert("PairDesk", isPresented: Binding(get: { model.error != nil }, set: { if !$0 { model.error = nil } })) {
             Button("OK") { model.error = nil }
         } message: { Text(model.error ?? "") }
