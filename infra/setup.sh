@@ -11,5 +11,6 @@ set -a
 . ./.env
 set +a
 umask 077
-sed "s/API_KEY_PLACEHOLDER/$LIVEKIT_API_KEY/g; s/API_SECRET_PLACEHOLDER/$LIVEKIT_API_SECRET/g" livekit.yaml.template > livekit.yaml
+LIVEKIT_NODE_IP=${PAIRDESK_LIVEKIT_NODE_IP:-127.0.0.1}
+sed "s/API_KEY_PLACEHOLDER/$LIVEKIT_API_KEY/g; s/API_SECRET_PLACEHOLDER/$LIVEKIT_API_SECRET/g; s/NODE_IP_PLACEHOLDER/$LIVEKIT_NODE_IP/g" livekit.yaml.template > livekit.yaml
 echo "Generated development secrets and LiveKit config. Keep .env and livekit.yaml private."

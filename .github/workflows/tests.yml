@@ -67,7 +67,10 @@ jobs:
           PAIRDESK_TEST_FILTER: CallIntegrationTests/testOneToOneSyntheticScreenQualityProfile|CallIntegrationTests/testFourNativeClientsCameraPublicationAndExclusiveScreenPermission|HostCursorIntegrationTests/testSharerRelaysAnIndependentViewerCursorToOtherParticipants|HostCursorIntegrationTests/testAuthenticatedCursorPacketsShowNamesOnHostAndClearWithTheShare
         run: |
           set -eu
-          sh infra/setup.sh
+          NODE_INTERFACE=$(route -n get default | awk '/interface:/{print $2; exit}')
+          NODE_IP=$(ipconfig getifaddr "$NODE_INTERFACE")
+          test -n "$NODE_IP"
+          PAIRDESK_LIVEKIT_NODE_IP="$NODE_IP" sh infra/setup.sh
           "$RUNNER_TEMP/livekit-bin/server" --config infra/livekit.yaml > "$RUNNER_TEMP/livekit.log" 2>&1 &
           MEDIA_PID=$!
           trap 'kill "$MEDIA_PID" 2>/dev/null || true' EXIT

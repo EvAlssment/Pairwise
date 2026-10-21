@@ -3,7 +3,7 @@ rtc:
   tcp_port: 17881
   port_range_start: 17882
   port_range_end: 17981
-  node_ip: 127.0.0.1
+  node_ip: NODE_IP_PLACEHOLDER
   use_external_ip: false
 keys:
   API_KEY_PLACEHOLDER: API_SECRET_PLACEHOLDER
