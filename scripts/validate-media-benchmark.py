@@ -4,6 +4,7 @@
 import json
 import sys
 import argparse
+import math
 from pathlib import Path
 
 
@@ -26,6 +27,7 @@ ALLOWED_FIELDS = {
     "syntheticSenderPauseRecoveryMilliseconds",
     "packetLossPercent",
     "selectedPathRTTMilliseconds",
+    "harnessProcessCPUPercent",
     "unmeasured",
 }
 ALWAYS_UNMEASURED = {
@@ -38,12 +40,37 @@ MEASUREMENTS = {
     "receivedBitrateKilobitsPerSecond": (0, 100_000),
     "packetLossPercent": (0, 100),
     "selectedPathRTTMilliseconds": (0, 120_000),
+    "harnessProcessCPUPercent": (0, 2_000),
 }
+CURSOR_FIELDS = {
+    "schemaVersion",
+    "classification",
+    "networkProfile",
+    "commit",
+    "runID",
+    "generatedAt",
+    "participantCount",
+    "sampleCount",
+    "p50PublishToOverlayRenderMilliseconds",
+    "p95PublishToOverlayRenderMilliseconds",
+    "measurement",
+    "limitations",
+}
+CURSOR_LIMITATIONS = [
+    "single-host LiveKit loopback",
+    "no physical display scanout",
+    "not a cross-region one-way latency",
+]
+
+
+def finite_number(value: object) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("reports", nargs="+")
+    parser.add_argument("--cursor-reports", nargs="+", required=True)
     parser.add_argument("--conditioner")
     args = parser.parse_args()
     observed_profiles = set()
@@ -104,10 +131,10 @@ def main() -> int:
         commits.add(report["commit"])
         run_ids.add(report["runID"])
         participants = report["participantCount"]
-        if report["source"] != "synthetic-screen-track" or participants not in (2, 4):
+        if report["source"] != "synthetic-screen-track" or type(participants) is not int or participants not in (2, 4):
             raise ValueError(f"{name}: unexpected benchmark source or participant profile")
         observed_profiles.add((profile, participants))
-        if report["framesReceived"] <= 0:
+        if type(report["framesReceived"]) is not int or report["framesReceived"] <= 0:
             raise ValueError(f"{name}: benchmark did not receive video frames")
         unmeasured = report["unmeasured"]
         if not isinstance(unmeasured, list) or len(unmeasured) != len(set(unmeasured)):
@@ -116,17 +143,20 @@ def main() -> int:
             raise ValueError(f"{name}: pointer latency, CPU, and readability must remain explicitly unmeasured")
         for field, (minimum, maximum) in MEASUREMENTS.items():
             value = report.get(field)
-            if not isinstance(value, (int, float)) or not minimum <= value <= maximum:
+            if (
+                not finite_number(value)
+                or not minimum <= value <= maximum
+            ):
                 raise ValueError(f"{name}: missing or invalid measured field: {field}")
         if report["receivedBitrateKilobitsPerSecond"] <= 0:
             raise ValueError(f"{name}: received bitrate must be a positive measured value")
         if profile == "constrained" and report["selectedPathRTTMilliseconds"] < 20:
             raise ValueError(f"{name}: constrained profile did not measurably increase selected-path RTT")
         for field in ("width", "height", "observedFramesPerSecond", "timeToFirstFrameMilliseconds"):
-            if not isinstance(report.get(field), (int, float)) or report[field] <= 0:
+            if not finite_number(report.get(field)) or report[field] <= 0:
                 raise ValueError(f"{name}: missing or invalid measured field: {field}")
         recovery = report.get("syntheticSenderPauseRecoveryMilliseconds")
-        if not isinstance(recovery, (int, float)) or recovery <= 0:
+        if not finite_number(recovery) or recovery <= 0:
             raise ValueError(f"{name}: missing or invalid sender-pause recovery measurement")
         print(
             f"{profile} {participants}p: selected RTT {report['selectedPathRTTMilliseconds']:.1f} ms, "
@@ -140,6 +170,41 @@ def main() -> int:
         raise ValueError("benchmark artifacts must include both network conditions")
     if len(commits) != 1 or len(run_ids) != 1:
         raise ValueError("benchmark profiles must come from the same commit and workflow run")
+    cursor_profiles = set()
+    for name in args.cursor_reports:
+        report = json.loads(Path(name).read_text(encoding="utf-8"))
+        if not isinstance(report, dict) or set(report) != CURSOR_FIELDS:
+            raise ValueError(f"{name}: cursor benchmark contains unknown or missing fields")
+        if report["schemaVersion"] != 1 or report["classification"] != "synthetic-local-cursor-ci":
+            raise ValueError(f"{name}: unexpected cursor benchmark schema or classification")
+        profile = report["networkProfile"]
+        participants = report["participantCount"]
+        if profile not in ("baseline", "constrained") or type(participants) is not int or participants not in (2, 3):
+            raise ValueError(f"{name}: unsupported cursor benchmark profile")
+        cursor_profiles.add((profile, participants))
+        if not isinstance(report["commit"], str) or not report["commit"]:
+            raise ValueError(f"{name}: commit SHA is required")
+        if not isinstance(report["runID"], str) or not report["runID"]:
+            raise ValueError(f"{name}: workflow run ID is required")
+        commits.add(report["commit"])
+        run_ids.add(report["runID"])
+        if type(report["sampleCount"]) is not int or report["sampleCount"] < 30:
+            raise ValueError(f"{name}: at least 30 cursor samples are required")
+        p50 = report["p50PublishToOverlayRenderMilliseconds"]
+        p95 = report["p95PublishToOverlayRenderMilliseconds"]
+        if not finite_number(p50) or not 0 <= p50 <= 6_000:
+            raise ValueError(f"{name}: invalid p50 cursor render latency")
+        if not finite_number(p95) or not p50 <= p95 <= 6_000:
+            raise ValueError(f"{name}: invalid p95 cursor render latency")
+        if report["measurement"] != "sender publish call to the sharer's native overlay view render pass":
+            raise ValueError(f"{name}: unexpected cursor latency measurement boundary")
+        if report["limitations"] != CURSOR_LIMITATIONS:
+            raise ValueError(f"{name}: cursor benchmark limitations must remain explicit")
+        print(f"{profile} {participants}p cursor: p50 {p50:.1f} ms, p95 {p95:.1f} ms (synthetic loopback)")
+    if cursor_profiles != {("baseline", 2), ("baseline", 3), ("constrained", 2), ("constrained", 3)}:
+        raise ValueError("cursor artifacts must include baseline and constrained 2-person/3-person profiles")
+    if len(commits) != 1 or len(run_ids) != 1:
+        raise ValueError("media and cursor profiles must come from the same commit and workflow run")
     if args.conditioner:
         conditioner_path = Path(args.conditioner)
         conditioner = json.loads(conditioner_path.read_text(encoding="utf-8"))
@@ -189,7 +254,7 @@ def main() -> int:
             f"dummynet: {observed['packets']} packets, {observed['bytes']} bytes, "
             f"{observed['droppedPackets']} dropped across reported pipes"
         )
-    print("All four synthetic baseline/constrained benchmark profiles passed schema, network, and privacy validation.")
+    print("Synthetic screen and cursor profiles passed schema, network, and privacy validation.")
     return 0
 
 

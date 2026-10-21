@@ -1,6 +1,7 @@
 import Foundation
 import XCTest
 import CoreVideo
+import Darwin
 @preconcurrency import LiveKit
 @testable import PairDesk
 
@@ -59,12 +60,14 @@ final class CallIntegrationTests: XCTestCase {
                     try? await Task.sleep(for: .milliseconds(33))
                 }
             }
+            let processCPUStart = ProcessCPUProbe.capture()
             let publication = try await media[0].localParticipant.publish(videoTrack: track,
                 options: VideoPublishOptions(screenShareEncoding: VideoEncoding(maxBitrate: 5_000_000, maxFps: 30),
                                              simulcast: false))
             await fulfillment(of: [receiver.expectation], timeout: 15)
             try await Task.sleep(for: .seconds(3))
             let metrics = try XCTUnwrap(receiver.snapshot(), "1:1 profile must receive measurable frames")
+            let processCPUPercent = ProcessCPUProbe.capture().percent(since: processCPUStart)
             frameTask?.cancel()
             await frameTask?.value
             frameTask = nil
@@ -81,7 +84,8 @@ final class CallIntegrationTests: XCTestCase {
                 }
             }
             try await receiver.waitForRecovery(timeout: 10)
-            try writeSyntheticBenchmark(metrics, recoveryMilliseconds: receiver.recoveryMilliseconds, participantCount: media.count)
+            try writeSyntheticBenchmark(metrics, recoveryMilliseconds: receiver.recoveryMilliseconds,
+                                        processCPUPercent: processCPUPercent, participantCount: media.count)
             frameTask?.cancel()
             await frameTask?.value
             frameTask = nil
@@ -265,6 +269,7 @@ final class CallIntegrationTests: XCTestCase {
                     try? await Task.sleep(for: .milliseconds(33))
                 }
             }
+            let processCPUStart = ProcessCPUProbe.capture()
             let publication = try await media[0].localParticipant.publish(
                 videoTrack: track,
                 options: VideoPublishOptions(screenShareEncoding: VideoEncoding(maxBitrate: 5_000_000, maxFps: 30),
@@ -273,6 +278,7 @@ final class CallIntegrationTests: XCTestCase {
             XCTAssertTrue(videoReceiver.receivedFrame)
             try await Task.sleep(for: .seconds(3))
             let videoMetrics = videoReceiver.snapshot()
+            let processCPUPercent = ProcessCPUProbe.capture().percent(since: processCPUStart)
             frameTask?.cancel()
             await frameTask?.value
             frameTask = nil
@@ -289,7 +295,8 @@ final class CallIntegrationTests: XCTestCase {
             try await videoReceiver.waitForRecovery(timeout: 10)
             let recoveryMilliseconds = videoReceiver.recoveryMilliseconds
             if let metrics = videoMetrics {
-                try writeSyntheticBenchmark(metrics, recoveryMilliseconds: recoveryMilliseconds, participantCount: media.count)
+                try writeSyntheticBenchmark(metrics, recoveryMilliseconds: recoveryMilliseconds,
+                                            processCPUPercent: processCPUPercent, participantCount: media.count)
             }
             frameTask?.cancel()
             await frameTask?.value
@@ -477,7 +484,29 @@ private struct SyntheticMediaBenchmark: Encodable {
     let syntheticSenderPauseRecoveryMilliseconds: Double?
     let packetLossPercent: Double?
     let selectedPathRTTMilliseconds: Double?
+    let harnessProcessCPUPercent: Double?
     let unmeasured: [String]
+}
+
+private struct ProcessCPUProbe {
+    let wallTime: TimeInterval
+    let cpuTime: TimeInterval
+
+    static func capture() -> Self {
+        var usage = rusage()
+        guard getrusage(RUSAGE_SELF, &usage) == 0 else {
+            return Self(wallTime: ProcessInfo.processInfo.systemUptime, cpuTime: 0)
+        }
+        let user = Double(usage.ru_utime.tv_sec) + Double(usage.ru_utime.tv_usec) / 1_000_000
+        let system = Double(usage.ru_stime.tv_sec) + Double(usage.ru_stime.tv_usec) / 1_000_000
+        return Self(wallTime: ProcessInfo.processInfo.systemUptime, cpuTime: user + system)
+    }
+
+    func percent(since earlier: Self) -> Double? {
+        let elapsed = wallTime - earlier.wallTime
+        guard elapsed > 0 else { return nil }
+        return max(0, (cpuTime - earlier.cpuTime) / elapsed * 100)
+    }
 }
 
 private struct SyntheticNetworkProfile: Encodable {
@@ -488,7 +517,8 @@ private struct SyntheticNetworkProfile: Encodable {
 }
 
 private func writeSyntheticBenchmark(_ snapshot: SyntheticVideoReceiver.Snapshot,
-                                    recoveryMilliseconds: Double?, participantCount: Int) throws {
+                                    recoveryMilliseconds: Double?, processCPUPercent: Double?,
+                                    participantCount: Int) throws {
     guard let path = ProcessInfo.processInfo.environment["PAIRDESK_MEDIA_BENCHMARK_OUTPUT"] else { return }
     let profile = ProcessInfo.processInfo.environment["PAIRDESK_BENCHMARK_PROFILE"] ?? "baseline"
     guard profile == "baseline" || profile == "constrained" else {
@@ -523,6 +553,7 @@ private func writeSyntheticBenchmark(_ snapshot: SyntheticVideoReceiver.Snapshot
         syntheticSenderPauseRecoveryMilliseconds: recoveryMilliseconds,
         packetLossPercent: snapshot.packetLossPercent,
         selectedPathRTTMilliseconds: snapshot.selectedPathRTTMilliseconds,
+        harnessProcessCPUPercent: processCPUPercent,
         unmeasured: ["pointer_to_render_latency", "sender_cpu", "receiver_cpu", "readability"])
     let encoder = JSONEncoder()
     encoder.outputFormatting = [.prettyPrinted, .sortedKeys]

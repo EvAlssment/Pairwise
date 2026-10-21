@@ -38,7 +38,29 @@ def benchmark(profile: str, participants: int) -> dict:
         "syntheticSenderPauseRecoveryMilliseconds": 35.0,
         "packetLossPercent": 0.0,
         "selectedPathRTTMilliseconds": 40.0 if constrained else 2.0,
+        "harnessProcessCPUPercent": 65.0,
         "unmeasured": ["pointer_to_render_latency", "sender_cpu", "receiver_cpu", "readability"],
+    }
+
+
+def cursor_benchmark(profile: str, participants: int) -> dict:
+    return {
+        "schemaVersion": 1,
+        "classification": "synthetic-local-cursor-ci",
+        "networkProfile": profile,
+        "commit": "test-commit",
+        "runID": "test-run",
+        "generatedAt": "2026-10-20T00:00:00Z",
+        "participantCount": participants,
+        "sampleCount": 30,
+        "p50PublishToOverlayRenderMilliseconds": 4.0,
+        "p95PublishToOverlayRenderMilliseconds": 12.0,
+        "measurement": "sender publish call to the sharer's native overlay view render pass",
+        "limitations": [
+            "single-host LiveKit loopback",
+            "no physical display scanout",
+            "not a cross-region one-way latency",
+        ],
     }
 
 
@@ -68,7 +90,12 @@ def conditioner() -> dict:
 
 
 class MediaBenchmarkValidatorTests(unittest.TestCase):
-    def run_validator(self, zero_bitrate: bool = False, zero_drops: bool = False) -> subprocess.CompletedProcess[str]:
+    def run_validator(
+        self,
+        zero_bitrate: bool = False,
+        zero_drops: bool = False,
+        negative_rtt: bool = False,
+    ) -> subprocess.CompletedProcess[str]:
         with tempfile.TemporaryDirectory(prefix="pairwise-benchmark-validator-") as temporary:
             reports = []
             for profile in ("baseline", "constrained"):
@@ -76,6 +103,8 @@ class MediaBenchmarkValidatorTests(unittest.TestCase):
                     report = benchmark(profile, participants)
                     if zero_bitrate:
                         report["receivedBitrateKilobitsPerSecond"] = 0
+                    if negative_rtt and profile == "baseline" and participants == 2:
+                        report["selectedPathRTTMilliseconds"] = -1
                     path = Path(temporary) / f"{profile}-{participants}p.json"
                     path.write_text(json.dumps(report), encoding="utf-8")
                     reports.append(str(path))
@@ -85,8 +114,15 @@ class MediaBenchmarkValidatorTests(unittest.TestCase):
                 conditioner_report["observed"]["droppedPackets"] = 0
                 conditioner_report["observed"]["pipes"]["592"]["drops"] = 0
             conditioner_path.write_text(json.dumps(conditioner_report), encoding="utf-8")
+            cursor_reports = []
+            for profile in ("baseline", "constrained"):
+                for participants in (2, 3):
+                    path = Path(temporary) / f"cursor-{profile}-{participants}p.json"
+                    path.write_text(json.dumps(cursor_benchmark(profile, participants)), encoding="utf-8")
+                    cursor_reports.append(str(path))
             return subprocess.run(
-                [sys.executable, str(VALIDATOR), *reports, "--conditioner", str(conditioner_path)],
+                [sys.executable, str(VALIDATOR), *reports, "--cursor-reports", *cursor_reports,
+                 "--conditioner", str(conditioner_path)],
                 check=False,
                 capture_output=True,
                 text=True,
@@ -98,6 +134,11 @@ class MediaBenchmarkValidatorTests(unittest.TestCase):
         self.assertIn("received bitrate 850 kbit/s", result.stdout)
         self.assertIn("dummynet: 693 packets, 166721 bytes, 2 dropped", result.stdout)
 
+    def test_cursor_latency_is_reported_with_explicit_loopback_limits(self) -> None:
+        result = self.run_validator()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("baseline 2p cursor: p50 4.0 ms, p95 12.0 ms", result.stdout)
+
     def test_rejects_unmeasured_zero_bitrate(self) -> None:
         result = self.run_validator(zero_bitrate=True)
         self.assertNotEqual(result.returncode, 0)
@@ -107,6 +148,11 @@ class MediaBenchmarkValidatorTests(unittest.TestCase):
         result = self.run_validator(zero_drops=True)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("did not observe packet drops", result.stderr)
+
+    def test_rejects_negative_measurements(self) -> None:
+        result = self.run_validator(negative_rtt=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("missing or invalid measured field: selectedPathRTTMilliseconds", result.stderr)
 
 
 if __name__ == "__main__":

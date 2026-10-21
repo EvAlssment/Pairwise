@@ -42,15 +42,9 @@ final class HostCursorIntegrationTests: XCTestCase {
             host.debugStartCursorShare(bounds: CGRect(x: 100, y: 100, width: 800, height: 500), session: "relay-share")
             let panel = try XCTUnwrap(host.debugHostCursorPanel)
             let content = try XCTUnwrap(panel.contentView as? NSHostingView<SharedCursorLayer>)
-            for sequence in 1...20 {
-                let cursor = RemoteControlMessage(epoch: "relay-share", sequence: UInt64(sequence), kind: .cursor,
-                                                  x: Double(sequence) / 20, y: 0.75, visible: true)
-                try await viewer.localParticipant.publish(data: JSONEncoder().encode(cursor),
-                    options: DataPublishOptions(destinationIdentities: [Participant.Identity(from: hostJoin.participantIdentity)],
-                                                topic: "pairdesk.control.v1", reliable: false))
-                if relayed.message != nil { break }
-                try await Task.sleep(for: .milliseconds(50))
-            }
+            let cursorLatencies = try await measureCursorToOverlayRender(
+                viewer: viewer, host: host, hostIdentity: hostJoin.participantIdentity,
+                session: "relay-share", startingSequence: 1, samples: 30, panel: panel, content: content)
             await fulfillment(of: [relayed.expectation], timeout: 5)
             let broadcast = try XCTUnwrap(relayed.message)
             XCTAssertEqual(relayed.sender, hostJoin.participantIdentity)
@@ -60,6 +54,7 @@ final class HostCursorIntegrationTests: XCTestCase {
             XCTAssertEqual(content.rootView.pointers.first?.id, viewerJoin.participantIdentity)
             XCTAssertFalse(panel.canBecomeKey)
             XCTAssertTrue(panel.ignoresMouseEvents)
+            try writeSyntheticCursorBenchmark(cursorLatencies, participantCount: 3)
 
             await viewer.disconnect()
             try await waitFor { host.remotePointers.isEmpty }
@@ -268,14 +263,21 @@ final class HostCursorIntegrationTests: XCTestCase {
             XCTAssertEqual(content.rootView.pointers.first?.id, viewerID)
             XCTAssertFalse(panel.canBecomeKey)
             XCTAssertTrue(panel.ignoresMouseEvents)
-            try await send(2, x: 0.8, y: 0.2)
+            let cursorLatencies = try await measureCursorToOverlayRender(
+                viewer: viewer, host: host, hostIdentity: hostJoin.participantIdentity,
+                session: "share-one", startingSequence: 2, samples: 30, panel: panel, content: content)
+            try writeSyntheticCursorBenchmark(cursorLatencies, participantCount: 2)
+            // The benchmark's retry sequence advances past 241; use larger
+            // values here so the production monotonic-sequence guard accepts
+            // the follow-up lifecycle assertions.
+            try await send(250, x: 0.8, y: 0.2)
             try await waitFor { host.remotePointers.first?.x == 0.8 }
             XCTAssertEqual(host.remotePointers.count, 1)
             XCTAssertEqual(content.rootView.pointers.first?.y, 0.2)
-            try await send(3, visible: false)
+            try await send(251, visible: false)
             try await waitFor { host.remotePointers.isEmpty }
             XCTAssertFalse(panel.isVisible)
-            try await send(4)
+            try await send(252)
             try await waitFor { !host.remotePointers.isEmpty }
             try await waitFor { host.remotePointers.isEmpty }
             XCTAssertFalse(panel.isVisible, "A silent viewer's stale cursor must expire")
@@ -312,6 +314,101 @@ final class HostCursorIntegrationTests: XCTestCase {
         }
         XCTFail("Host cursor state did not propagate", file: file, line: line)
     }
+}
+
+@MainActor
+private func measureCursorToOverlayRender(viewer: Room, host: RTCService, hostIdentity: String,
+                                          session: String, startingSequence: UInt64, samples: Int,
+                                          panel: NSPanel,
+                                          content: NSHostingView<SharedCursorLayer>) async throws -> [Double] {
+    var latencies: [Double] = []
+    for index in 0..<samples {
+        let x = 0.12 + Double(index % 20) * 0.025
+        let y = 0.18 + Double((index * 7) % 60) * 0.01
+        let previousUpdate = host.remotePointers.first?.updatedAt ?? .distantPast
+        let startedAt = ProcessInfo.processInfo.systemUptime
+        var rendered = false
+
+        for attempt in 0..<8 where !rendered {
+            let sequence = startingSequence + UInt64(index * 8 + attempt)
+            let cursor = RemoteControlMessage(epoch: session, sequence: sequence, kind: .cursor,
+                                              x: x, y: y, visible: true)
+            try await viewer.localParticipant.publish(data: JSONEncoder().encode(cursor),
+                options: DataPublishOptions(destinationIdentities: [Participant.Identity(from: hostIdentity)],
+                                            topic: "pairdesk.control.v1", reliable: false))
+            let deadline = ProcessInfo.processInfo.systemUptime + 0.75
+            while ProcessInfo.processInfo.systemUptime < deadline {
+                if let pointer = host.remotePointers.first,
+                   pointer.x == x, pointer.y == y, pointer.updatedAt > previousUpdate {
+                    panel.displayIfNeeded()
+                    content.needsDisplay = true
+                    content.displayIfNeeded()
+                    guard let bitmap = content.bitmapImageRepForCachingDisplay(in: content.bounds) else {
+                        throw NSError(domain: "PairDesk.MediaBenchmark", code: 1,
+                                      userInfo: [NSLocalizedDescriptionKey: "Cursor overlay render could not be sampled."])
+                    }
+                    content.cacheDisplay(in: content.bounds, to: bitmap)
+                    rendered = true
+                    break
+                }
+                try await Task.sleep(for: .milliseconds(2))
+            }
+        }
+
+        guard rendered else {
+            throw NSError(domain: "PairDesk.MediaBenchmark", code: 2,
+                          userInfo: [NSLocalizedDescriptionKey: "Cursor sample did not reach the host overlay after retries."])
+        }
+        latencies.append(max(0, (ProcessInfo.processInfo.systemUptime - startedAt) * 1_000))
+    }
+    return latencies
+}
+
+private struct SyntheticCursorBenchmark: Encodable {
+    let schemaVersion = 1
+    let classification: String
+    let networkProfile: String
+    let commit: String?
+    let runID: String?
+    let generatedAt: String
+    let participantCount: Int
+    let sampleCount: Int
+    let p50PublishToOverlayRenderMilliseconds: Double
+    let p95PublishToOverlayRenderMilliseconds: Double
+    let measurement: String
+    let limitations: [String]
+}
+
+private func writeSyntheticCursorBenchmark(_ samples: [Double], participantCount: Int) throws {
+    guard !samples.isEmpty,
+          let path = ProcessInfo.processInfo.environment["PAIRDESK_MEDIA_BENCHMARK_OUTPUT"] else { return }
+    let profile = ProcessInfo.processInfo.environment["PAIRDESK_BENCHMARK_PROFILE"] ?? "baseline"
+    guard profile == "baseline" || profile == "constrained" else {
+        throw NSError(domain: "PairDesk.MediaBenchmark", code: 3,
+                      userInfo: [NSLocalizedDescriptionKey: "Unknown cursor benchmark profile: \(profile)"])
+    }
+    let sorted = samples.sorted()
+    func percentile(_ fraction: Double) -> Double {
+        let index = min(sorted.count - 1, max(0, Int(ceil(Double(sorted.count) * fraction)) - 1))
+        return sorted[index]
+    }
+    let formatter = ISO8601DateFormatter()
+    let report = SyntheticCursorBenchmark(
+        classification: "synthetic-local-cursor-ci", networkProfile: profile,
+        commit: ProcessInfo.processInfo.environment["PAIRDESK_BENCHMARK_COMMIT"],
+        runID: ProcessInfo.processInfo.environment["PAIRDESK_BENCHMARK_RUN_ID"],
+        generatedAt: formatter.string(from: Date()), participantCount: participantCount,
+        sampleCount: samples.count, p50PublishToOverlayRenderMilliseconds: percentile(0.50),
+        p95PublishToOverlayRenderMilliseconds: percentile(0.95),
+        measurement: "sender publish call to the sharer's native overlay view render pass",
+        limitations: ["single-host LiveKit loopback", "no physical display scanout", "not a cross-region one-way latency"])
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+    let requestedOutput = URL(fileURLWithPath: path)
+    let outputName = "pairwise-cursor-benchmark-\(profile)-\(participantCount)p.json"
+    let output = requestedOutput.deletingLastPathComponent().appendingPathComponent(outputName)
+    try FileManager.default.createDirectory(at: output.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try encoder.encode(report).write(to: output, options: .atomic)
 }
 
 private final class CursorBroadcastReceiver: RoomDelegate, @unchecked Sendable {

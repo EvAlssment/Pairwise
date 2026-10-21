@@ -64,7 +64,7 @@ jobs:
           PAIRDESK_NETWORK_CONDITION_REPORT: ${{ github.workspace }}/media-benchmark-output/network-conditioner.json
           PAIRDESK_BENCHMARK_COMMIT: ${{ github.sha }}
           PAIRDESK_BENCHMARK_RUN_ID: ${{ github.run_id }}
-          PAIRDESK_TEST_FILTER: CallIntegrationTests/testOneToOneSyntheticScreenQualityProfile|CallIntegrationTests/testFourNativeClientsCameraPublicationAndExclusiveScreenPermission
+          PAIRDESK_TEST_FILTER: CallIntegrationTests/testOneToOneSyntheticScreenQualityProfile|CallIntegrationTests/testFourNativeClientsCameraPublicationAndExclusiveScreenPermission|HostCursorIntegrationTests/testSharerRelaysAnIndependentViewerCursorToOtherParticipants|HostCursorIntegrationTests/testAuthenticatedCursorPacketsShowNamesOnHostAndClearWithTheShare
         run: |
           set -eu
           sh infra/setup.sh
@@ -85,11 +85,20 @@ jobs:
           test -s media-benchmark-output/pairwise-media-benchmark-baseline-4p.json
           test -s media-benchmark-output/pairwise-media-benchmark-constrained-2p.json
           test -s media-benchmark-output/pairwise-media-benchmark-constrained-4p.json
+          test -s media-benchmark-output/pairwise-cursor-benchmark-baseline-2p.json
+          test -s media-benchmark-output/pairwise-cursor-benchmark-baseline-3p.json
+          test -s media-benchmark-output/pairwise-cursor-benchmark-constrained-2p.json
+          test -s media-benchmark-output/pairwise-cursor-benchmark-constrained-3p.json
           python3 scripts/validate-media-benchmark.py \
             media-benchmark-output/pairwise-media-benchmark-baseline-2p.json \
             media-benchmark-output/pairwise-media-benchmark-baseline-4p.json \
             media-benchmark-output/pairwise-media-benchmark-constrained-2p.json \
             media-benchmark-output/pairwise-media-benchmark-constrained-4p.json \
+            --cursor-reports \
+            media-benchmark-output/pairwise-cursor-benchmark-baseline-2p.json \
+            media-benchmark-output/pairwise-cursor-benchmark-baseline-3p.json \
+            media-benchmark-output/pairwise-cursor-benchmark-constrained-2p.json \
+            media-benchmark-output/pairwise-cursor-benchmark-constrained-3p.json \
             --conditioner media-benchmark-output/network-conditioner.json
       - name: Archive synthetic media benchmark
         if: always()
