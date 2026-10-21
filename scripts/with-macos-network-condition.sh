@@ -48,11 +48,11 @@ awk -v anchor="$ANCHOR" '
   END { if (!inserted) exit 1 }
 ' /etc/pf.conf > "$TMP_DIR/pf.conf"
 cat > "$TMP_DIR/dummynet.rules" <<EOF
-# Both directions of a local client/server exchange leave the local socket via
-# lo0's outbound filter. Match the server-side port as the source for replies;
-# the client-to-server rule below matches it as the destination.
-dummynet out quick on lo0 inet proto udp from any port 17882:17981 to any pipe $PIPE_IN
-dummynet out quick on lo0 inet proto udp from any to any port 17882:17981 pipe $PIPE_OUT
+# The local client/server exchange can leave through different interfaces on
+# virtualized macOS runners. Match service-port source and destination on every
+# egress interface so replies are not lost when they route through a VM bridge.
+dummynet out quick inet proto udp from any port 17882:17981 to any pipe $PIPE_IN
+dummynet out quick inet proto udp from any to any port 17882:17981 pipe $PIPE_OUT
 EOF
 
 sudo -n dnctl pipe "$PIPE_IN" config bw 20000Kbit/s delay 40ms plr 0.005
