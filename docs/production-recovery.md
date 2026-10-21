@@ -30,9 +30,28 @@ state payloads in tickets or logs.
 ## Exercise backup restore and PITR safely
 
 Run recovery drills by restoring into a disposable Cloud SQL instance. Do not
-restore over `pairdesk-pg` to test the procedure. For a PITR drill, select a
-UTC time within the configured seven-day window and before the present, then
-clone the source:
+restore over `pairdesk-pg` to test the procedure. For a backup drill, create a
+fresh on-demand backup, create a temporary PostgreSQL target with no backup
+retention, and restore the selected backup to that target:
+
+```sh
+gcloud sql backups create --instance=pairdesk-pg \
+  --description='PairDesk isolated recovery drill' \
+  --project=named-tube-444103-p0
+gcloud sql backups list --instance=pairdesk-pg \
+  --project=named-tube-444103-p0 --limit=5
+gcloud sql instances create pairdesk-restore-drill-YYYYMMDD \
+  --database-version=POSTGRES_16 --region=us-central1 --tier=db-g1-small \
+  --storage-type=SSD --storage-size=10 --assign-ip --no-backup \
+  --no-deletion-protection --project=named-tube-444103-p0
+gcloud sql backups restore BACKUP_ID \
+  --restore-instance=pairdesk-restore-drill-YYYYMMDD \
+  --backup-instance=pairdesk-pg --project=named-tube-444103-p0
+```
+
+Replace `BACKUP_ID` with the successful backup ID from the list. For a PITR
+drill, select a UTC time within the configured seven-day window and before the
+present, then clone the source:
 
 ```sh
 gcloud sql instances clone pairdesk-pg pairdesk-pitr-drill-YYYYMMDD \
