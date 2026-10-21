@@ -189,6 +189,20 @@ struct SharedScreenWindow: View {
                 .tint(rtc.clipboardSyncEnabled ? Theme.accent : nil)
                 .help(rtc.clipboardSyncEnabled ? "Text copy and paste is synced with this call until the call ends" : "Sync copy and paste for the call, or send text once to a teammate")
                 .accessibilityLabel(rtc.clipboardSyncEnabled ? "Copy and paste sync on" : "Copy and paste options")
+                .popover(isPresented: $showClipboard, arrowEdge: .bottom) {
+                    ClipboardTransferView(
+                        peers: rtc.participants.filter { !$0.isLocal }.map { ClipboardPeer(identity: $0.identity, name: $0.name) },
+                        incoming: rtc.incomingClipboardTransfer,
+                        onSend: { text, identity in try await rtc.sendClipboard(text: text, to: identity) },
+                        onPaste: { rtc.pasteIncomingClipboardTransfer() },
+                        onDismiss: { rtc.dismissIncomingClipboardTransfer() },
+                        clipboardSyncEnabled: rtc.clipboardSyncEnabled,
+                        clipboardSyncNotice: rtc.clipboardSyncNotice,
+                        onToggleSync: { rtc.setClipboardSyncEnabled($0) }
+                    )
+                    .padding(16)
+                    .frame(width: 420)
+                }
                 Menu {
                     if store.availablePeople.isEmpty {
                         Text("No one else is available right now")
@@ -323,20 +337,6 @@ struct SharedScreenWindow: View {
         }
         .sheet(isPresented: $permissions) { PermissionsView() }
         .sheet(isPresented: $sourcePicker) { ScreenSharePickerView(store: store) }
-        .sheet(isPresented: $showClipboard) {
-            ClipboardTransferView(
-                peers: rtc.participants.filter { !$0.isLocal }.map { ClipboardPeer(identity: $0.identity, name: $0.name) },
-                incoming: rtc.incomingClipboardTransfer,
-                onSend: { text, identity in try await rtc.sendClipboard(text: text, to: identity) },
-                onPaste: { rtc.pasteIncomingClipboardTransfer() },
-                onDismiss: { rtc.dismissIncomingClipboardTransfer() },
-                clipboardSyncEnabled: rtc.clipboardSyncEnabled,
-                clipboardSyncNotice: rtc.clipboardSyncNotice,
-                onToggleSync: { rtc.setClipboardSyncEnabled($0) }
-            )
-            .padding(20)
-            .frame(width: 460)
-        }
         .alert("PairDesk", isPresented: Binding(get: { store.error != nil }, set: { if !$0 { store.error = nil } })) { Button("OK") { store.error = nil } } message: { Text(store.error ?? "") }
     }
 
