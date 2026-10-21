@@ -70,6 +70,10 @@ struct SettingsView: View {
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             permissions.refresh()
         }
+        .onChange(of: permissions.camera) { _, isAuthorized in
+            guard isAuthorized else { return }
+            Task { await rtc.refreshCameraDevices() }
+        }
         .onDisappear {
             microphoneTest.stop()
             cameraTest.stop()
@@ -237,7 +241,9 @@ struct SettingsView: View {
                         get: { rtc.selectedCameraID ?? "" },
                         set: { id in if !id.isEmpty { Task { await rtc.selectCamera(id) } } }
                     )) {
-                        if rtc.cameraDevices.isEmpty { Text("No camera found").tag("") }
+                        if rtc.cameraDevices.isEmpty {
+                            Text(permissions.camera ? "No camera found" : "Allow camera access to list devices").tag("")
+                        }
                         ForEach(rtc.cameraDevices) { device in Text(device.name).tag(device.id) }
                     }
                     .labelsHidden().frame(maxWidth: 250)
@@ -448,6 +454,9 @@ struct SettingsView: View {
     }
 
     private var cameraStatus: String {
+        if !permissions.camera {
+            return "Allow camera access to list devices. PairDesk only turns the camera on when you start a local preview or video."
+        }
         if rtc.cameraDevices.isEmpty { return "No camera found. Voice and screen sharing remain available." }
         return rtc.isCameraEnabled ? "Camera is on for this call." : "Camera is off. Turn it on from the call controls."
     }

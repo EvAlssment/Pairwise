@@ -231,6 +231,10 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
                 Task { @MainActor [weak self] in await self?.refreshCameraDevices() }
             })
         }
+        Task { @MainActor [weak self] in
+            guard AVCaptureDevice.authorizationStatus(for: .video) == .authorized else { return }
+            await self?.refreshCameraDevices()
+        }
         notificationTokens.append(appCenter.addObserver(forName: NSApplication.didResignActiveNotification, object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor [weak self] in
                 guard let self, !self.isSharing else { return }
@@ -434,7 +438,7 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
         cameraDeviceNotice = nil
     }
 
-    private func refreshCameraDevices() async {
+    func refreshCameraDevices() async {
         guard AVCaptureDevice.authorizationStatus(for: .video) == .authorized else { return }
         do {
             let devices = try await CameraCapturer.captureDevices()
