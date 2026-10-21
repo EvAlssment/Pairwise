@@ -4,6 +4,30 @@ import Combine
 import ApplicationServices
 import SwiftUI
 
+enum ServerAddressPolicy {
+    struct InitialAddress {
+        let value: String
+        let shouldPersist: Bool
+    }
+
+    static func initialAddress(saved: String?, packaged: String?, fallback: String) -> InitialAddress {
+        if let packaged, isLoopback(saved) {
+            return InitialAddress(value: packaged, shouldPersist: true)
+        }
+        return InitialAddress(value: saved ?? packaged ?? fallback, shouldPersist: false)
+    }
+
+    static func shouldDiscardSession(savedServer: String, packaged: String?) -> Bool {
+        guard let packaged, savedServer != packaged else { return false }
+        return isLoopback(savedServer)
+    }
+
+    private static func isLoopback(_ address: String?) -> Bool {
+        guard let address, let host = URLComponents(string: address)?.host?.lowercased() else { return false }
+        return ["localhost", "127.0.0.1", "::1"].contains(host.trimmingCharacters(in: CharacterSet(charactersIn: "[]")))
+    }
+}
+
 @MainActor
 final class AppStore: ObservableObject {
     @Published var user: TeamUser? { didSet { updateCallAudio() } }
@@ -22,7 +46,7 @@ final class AppStore: ObservableObject {
     @Published var busy = false
     @Published var error: String?
     @Published var directoryStatus = "Connecting…"
-    @Published var serverAddress = UserDefaults.standard.string(forKey: "serverAddress") ?? (Bundle.main.object(forInfoDictionaryKey: "PairDeskServerURL") as? String) ?? "http://127.0.0.1:18080"
+    @Published var serverAddress: String
     @Published var startCallsMuted = UserDefaults.standard.bool(forKey: "startCallsMuted") {
         didSet { UserDefaults.standard.set(startCallsMuted, forKey: "startCallsMuted") }
     }
@@ -75,6 +99,16 @@ final class AppStore: ObservableObject {
     var api: APIClient { get throws { try APIClient(server: serverAddress, token: token) } }
 
     init(callAudio: CallAudioFeedback? = nil) {
+        let packagedServer = Bundle.main.object(forInfoDictionaryKey: "PairDeskServerURL") as? String
+        let initialServer = ServerAddressPolicy.initialAddress(
+            saved: UserDefaults.standard.string(forKey: "serverAddress"),
+            packaged: packagedServer,
+            fallback: "http://127.0.0.1:18080"
+        )
+        _serverAddress = Published(initialValue: initialServer.value)
+        if initialServer.shouldPersist {
+            UserDefaults.standard.set(initialServer.value, forKey: "serverAddress")
+        }
         self.callAudio = callAudio ?? CallAudioFeedback()
         rtc.onProtectedPrivacyAppChanged = { [weak self] appName in
             Task { @MainActor [weak self] in
@@ -157,6 +191,18 @@ final class AppStore: ObservableObject {
         busy = true
         defer { busy = false; restoringSession = false }
         guard let saved = await Task.detached(priority: .userInitiated, operation: { SessionVault.read() }).value else { return }
+        let packagedServer = Bundle.main.object(forInfoDictionaryKey: "PairDeskServerURL") as? String
+        if ServerAddressPolicy.shouldDiscardSession(savedServer: saved.server, packaged: packagedServer),
+           let packagedServer {
+            // A packaged team build can be installed over a local/debug build.
+            // Never send that build's saved token to the packaged team server;
+            // require a fresh sign-in against the intended deployment.
+            clearSavedSession()
+            token = nil
+            serverAddress = packagedServer
+            UserDefaults.standard.set(packagedServer, forKey: "serverAddress")
+            return
+        }
         serverAddress = saved.server
         token = saved.token
         do {

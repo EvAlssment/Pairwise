@@ -43,6 +43,33 @@ final class AppTests: XCTestCase {
         XCTAssertNoThrow(try APIClient(server: "http://127.0.0.1:8080"))
         XCTAssertNoThrow(try APIClient(server: "https://pair.example.com"))
     }
+    func testPackagedServerReplacesStaleLocalhostPreference() {
+        let packaged = "https://api.team.example"
+        for local in ["http://localhost:18080", "http://127.0.0.1:18080", "http://[::1]:18080"] {
+            let initial = ServerAddressPolicy.initialAddress(saved: local, packaged: packaged, fallback: "fallback")
+            XCTAssertEqual(initial.value, packaged)
+            XCTAssertTrue(initial.shouldPersist)
+            XCTAssertTrue(ServerAddressPolicy.shouldDiscardSession(savedServer: local, packaged: packaged))
+        }
+    }
+    func testPackagedServerPreservesExplicitRemoteServerOverride() {
+        let initial = ServerAddressPolicy.initialAddress(
+            saved: "https://pair.other-team.example", packaged: "https://api.team.example", fallback: "fallback"
+        )
+        XCTAssertEqual(initial.value, "https://pair.other-team.example")
+        XCTAssertFalse(initial.shouldPersist)
+        XCTAssertFalse(ServerAddressPolicy.shouldDiscardSession(
+            savedServer: "https://pair.other-team.example", packaged: "https://api.team.example"
+        ))
+    }
+    func testLocalDevelopmentWithoutPackagedServerKeepsLoopback() {
+        let initial = ServerAddressPolicy.initialAddress(
+            saved: "http://localhost:18080", packaged: nil, fallback: "http://127.0.0.1:18080"
+        )
+        XCTAssertEqual(initial.value, "http://localhost:18080")
+        XCTAssertFalse(initial.shouldPersist)
+        XCTAssertFalse(ServerAddressPolicy.shouldDiscardSession(savedServer: initial.value, packaged: nil))
+    }
     func testPortraitLetterboxRejectsOutsideClicks() {
         let box = CGRect(x: 0, y: 0, width: 1000, height: 600)
         let screen = CGSize(width: 600, height: 1000)
