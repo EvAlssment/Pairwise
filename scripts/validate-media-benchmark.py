@@ -19,6 +19,7 @@ ALLOWED_FIELDS = {
     "width",
     "height",
     "observedFramesPerSecond",
+    "receivedBitrateKilobitsPerSecond",
     "framesReceived",
     "timeToFirstFrameMilliseconds",
     "syntheticSenderPauseRecoveryMilliseconds",
@@ -33,6 +34,7 @@ ALWAYS_UNMEASURED = {
     "readability",
 }
 MEASUREMENTS = {
+    "receivedBitrateKilobitsPerSecond": (0, 100_000),
     "packetLossPercent": (0, 100),
     "selectedPathRTTMilliseconds": (0, 120_000),
 }
@@ -61,7 +63,7 @@ def main() -> int:
         }
         if not required.issubset(report):
             raise ValueError(f"{name}: benchmark is missing a required field")
-        if report["schemaVersion"] != 2:
+        if report["schemaVersion"] != 3:
             raise ValueError(f"{name}: unexpected benchmark schema or classification")
         profile = report["networkProfile"]
         if profile not in ("baseline", "constrained"):
@@ -114,6 +116,8 @@ def main() -> int:
             value = report.get(field)
             if not isinstance(value, (int, float)) or not minimum <= value <= maximum:
                 raise ValueError(f"{name}: missing or invalid measured field: {field}")
+        if report["receivedBitrateKilobitsPerSecond"] <= 0:
+            raise ValueError(f"{name}: received bitrate must be a positive measured value")
         if profile == "constrained" and report["selectedPathRTTMilliseconds"] < 20:
             raise ValueError(f"{name}: constrained profile did not measurably increase selected-path RTT")
         for field in ("width", "height", "observedFramesPerSecond", "timeToFirstFrameMilliseconds"):
@@ -125,7 +129,8 @@ def main() -> int:
         print(
             f"{profile} {participants}p: selected RTT {report['selectedPathRTTMilliseconds']:.1f} ms, "
             f"packet loss {report['packetLossPercent']:.2f}%, "
-            f"observed FPS {report['observedFramesPerSecond']:.1f}"
+            f"observed FPS {report['observedFramesPerSecond']:.1f}, "
+            f"received bitrate {report['receivedBitrateKilobitsPerSecond']:.0f} kbit/s"
         )
     if observed_profiles != {("baseline", 2), ("baseline", 4), ("constrained", 2), ("constrained", 4)}:
         raise ValueError("benchmark artifacts must include baseline and constrained 2-person/4-person profiles")

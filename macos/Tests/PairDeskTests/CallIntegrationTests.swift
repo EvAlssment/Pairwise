@@ -323,6 +323,7 @@ private final class SyntheticVideoReceiver: NSObject, RoomDelegate, VideoRendere
         let height: Int?
         let frameCount: Int
         let observedFramesPerSecond: Double?
+        let receivedBitrateKilobitsPerSecond: Double?
         let timeToFirstFrameMilliseconds: Double?
         let packetLossPercent: Double?
         let selectedPathRTTMilliseconds: Double?
@@ -392,8 +393,13 @@ private final class SyntheticVideoReceiver: NSObject, RoomDelegate, VideoRendere
         let selectedPairID = stats?.transportStats?.selectedCandidatePairId
         let selectedPair = stats?.iceCandidatePair.first(where: { $0.id == selectedPairID })
         let rtt = selectedPair?.currentRoundTripTime.map { $0 * 1_000 }
+        let bitrate = videoStats?.bytesReceived.flatMap { bytesReceived -> Double? in
+            guard elapsed > 0, bytesReceived > 0 else { return nil }
+            return Double(bytesReceived) * 8 / elapsed / 1_000
+        }
         return Snapshot(width: measuredWidth, height: measuredHeight, frameCount: measuredFrameCount,
-                        observedFramesPerSecond: fps, timeToFirstFrameMilliseconds: firstFrameMilliseconds,
+                        observedFramesPerSecond: fps, receivedBitrateKilobitsPerSecond: bitrate,
+                        timeToFirstFrameMilliseconds: firstFrameMilliseconds,
                         packetLossPercent: packetLoss, selectedPathRTTMilliseconds: rtt)
     }
 
@@ -416,7 +422,7 @@ private final class SyntheticVideoReceiver: NSObject, RoomDelegate, VideoRendere
 }
 
 private struct SyntheticMediaBenchmark: Encodable {
-    let schemaVersion = 2
+    let schemaVersion = 3
     let classification: String
     let networkProfile: String
     let configuredNetwork: SyntheticNetworkProfile
@@ -428,6 +434,7 @@ private struct SyntheticMediaBenchmark: Encodable {
     let width: Int?
     let height: Int?
     let observedFramesPerSecond: Double?
+    let receivedBitrateKilobitsPerSecond: Double?
     let framesReceived: Int
     let timeToFirstFrameMilliseconds: Double?
     let syntheticSenderPauseRecoveryMilliseconds: Double?
@@ -472,7 +479,9 @@ private func writeSyntheticBenchmark(_ snapshot: SyntheticVideoReceiver.Snapshot
         runID: ProcessInfo.processInfo.environment["PAIRDESK_BENCHMARK_RUN_ID"],
         generatedAt: formatter.string(from: Date()), participantCount: participantCount,
         source: "synthetic-screen-track", width: snapshot.width, height: snapshot.height,
-        observedFramesPerSecond: snapshot.observedFramesPerSecond, framesReceived: snapshot.frameCount,
+        observedFramesPerSecond: snapshot.observedFramesPerSecond,
+        receivedBitrateKilobitsPerSecond: snapshot.receivedBitrateKilobitsPerSecond,
+        framesReceived: snapshot.frameCount,
         timeToFirstFrameMilliseconds: snapshot.timeToFirstFrameMilliseconds,
         syntheticSenderPauseRecoveryMilliseconds: recoveryMilliseconds,
         packetLossPercent: snapshot.packetLossPercent,

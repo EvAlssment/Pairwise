@@ -79,6 +79,7 @@ jobs:
       - name: Validate synthetic media benchmark
         if: always()
         run: |
+          python3 scripts/tests/test_validate_media_benchmark.py
           test -s media-benchmark-output/pairwise-media-benchmark-baseline-2p.json
           test -s media-benchmark-output/pairwise-media-benchmark-baseline-4p.json
           test -s media-benchmark-output/pairwise-media-benchmark-constrained-2p.json
