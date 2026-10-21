@@ -98,6 +98,23 @@ final class AppTests: XCTestCase {
         XCTAssertEqual(AppCopyLocation.classify(bundleURL: URL(fileURLWithPath: "/Volumes/PairDesk/PairDesk.app"), homeDirectory: home), .diskImage)
         XCTAssertEqual(AppCopyLocation.classify(bundleURL: URL(fileURLWithPath: "/tmp/PairDesk.app"), homeDirectory: home), .other("/tmp/PairDesk.app"))
     }
+    func testDuplicateAppCopyDiagnosticsIgnoreCurrentProcessAndOtherBundles() {
+        let current = RunningAppCopy(processIdentifier: 10, bundleIdentifier: "app.internal.pairdesk",
+                                     bundleURL: URL(fileURLWithPath: "/Applications/PairDesk.app"))
+        let duplicate = RunningAppCopy(processIdentifier: 11, bundleIdentifier: "app.internal.pairdesk",
+                                       bundleURL: URL(fileURLWithPath: "/tmp/PairDesk.app"))
+        let unrelated = RunningAppCopy(processIdentifier: 12, bundleIdentifier: "com.example.other",
+                                       bundleURL: URL(fileURLWithPath: "/Applications/Other.app"))
+        XCTAssertEqual(RunningAppCopyDiagnostics.otherCopyPaths(
+            bundleIdentifier: "app.internal.pairdesk", currentProcessIdentifier: 10,
+            runningApplications: [current, duplicate, unrelated]), ["/tmp/PairDesk.app"])
+        XCTAssertEqual(RunningAppCopyDiagnostics.otherCopyPaths(
+            bundleIdentifier: "app.internal.pairdesk", currentProcessIdentifier: 10,
+            runningApplications: [current]), [])
+        XCTAssertEqual(RunningAppCopyDiagnostics.otherCopyPaths(
+            bundleIdentifier: nil, currentProcessIdentifier: 10,
+            runningApplications: [current, duplicate]), [])
+    }
     func testBackendWireContractsDecode() throws {
         let data = Data(#"{"room":{"id":"abc","name":"Debugging","participantCount":1,"participants":[{"id":"u1","name":"Sam","email":"sam@example.com"}]},"url":"wss://rtc.example.com","token":"opaque","participantIdentity":"u1"}"#.utf8)
         let join = try JSONDecoder().decode(JoinResponse.self, from: data)

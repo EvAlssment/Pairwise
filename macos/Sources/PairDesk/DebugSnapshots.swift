@@ -180,6 +180,19 @@ enum UISnapshots {
             .frame(width: 480)
         }
         snapshot("window-permissions", to: directory) { PermissionsView() }
+        snapshot("window-permissions-duplicate-copies", to: directory) {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Privacy and access").font(.title2.bold())
+                Text("This copy: /Applications/PairDesk.app")
+                    .font(.caption).foregroundStyle(.secondary)
+                DuplicateAppCopyWarning(paths: [
+                    "/Volumes/PairDesk/PairDesk.app",
+                    "/Users/teammate/Downloads/PairDesk.app"
+                ])
+            }
+            .padding(26)
+            .frame(width: 490)
+        }
         snapshot("window-account", to: directory) { AccountView(store: idle).environmentObject(loginItem) }
         snapshot("window-share-picker", to: directory) { ScreenSharePickerView(store: ringing) }
         snapshot("window-shared-screen", to: directory, size: CGSize(width: 1000, height: 620)) {

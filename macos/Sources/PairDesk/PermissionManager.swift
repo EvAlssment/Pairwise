@@ -34,6 +34,47 @@ enum AppCopyLocation: Equatable {
     }
 }
 
+struct RunningAppCopy: Equatable {
+    let processIdentifier: Int32
+    let bundleIdentifier: String?
+    let bundleURL: URL?
+}
+
+enum RunningAppCopyDiagnostics {
+    /// Returns the paths of other processes using this app's bundle identifier.
+    /// The check is local to the permission screen and never terminates them.
+    static func otherCopyPaths(bundleIdentifier: String?, currentProcessIdentifier: Int32,
+                               runningApplications: [RunningAppCopy]) -> [String] {
+        guard let bundleIdentifier, !bundleIdentifier.isEmpty else { return [] }
+        let currentPID = currentProcessIdentifier
+        let paths = runningApplications.compactMap { app -> String? in
+            guard app.processIdentifier != currentPID,
+                  app.bundleIdentifier == bundleIdentifier,
+                  let url = app.bundleURL else { return nil }
+            return url.resolvingSymlinksInPath().standardizedFileURL.path
+        }
+        return Array(Set(paths)).sorted()
+    }
+}
+
+struct DuplicateAppCopyWarning: View {
+    let paths: [String]
+
+    @ViewBuilder var body: some View {
+        if !paths.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
+                Label("Another PairDesk process is running", systemImage: "exclamationmark.triangle.fill")
+                    .font(.callout.weight(.semibold)).foregroundStyle(.orange)
+                Text("Permissions apply to the exact copy shown above. Quit the extra PairDesk process and reopen the copy in Applications to avoid duplicate menu bar items or stale permission state.")
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                ForEach(paths, id: \.self) { path in
+                    Text(path).font(.caption.monospaced()).textSelection(.enabled)
+                }
+            }
+        }
+    }
+}
+
 @MainActor
 final class PermissionManager: ObservableObject {
     static let shared = PermissionManager()
@@ -80,6 +121,7 @@ final class PermissionManager: ObservableObject {
 struct PermissionsView: View {
     @ObservedObject private var permissions = PermissionManager.shared
     @Environment(\.dismiss) private var dismiss
+    @State private var otherCopyPaths: [String] = []
     private var appCopyLocation: AppCopyLocation {
         AppCopyLocation.classify(bundleURL: Bundle.main.bundleURL, homeDirectory: FileManager.default.homeDirectoryForCurrentUser)
     }
@@ -115,10 +157,13 @@ struct PermissionsView: View {
                 }
             }
             row("Remote control", detail: "Optional, and needed only on the Mac being shared. Lets a teammate use your mouse and keyboard. Stop it from the menu bar or press Control–Option–Escape at any time.", ready: permissions.accessibility) { if permissions.accessibility { permissions.open("Privacy_Accessibility") } else { permissions.requestAccessibility() } }
+            Text("Running copy: \(Bundle.main.bundleURL.path) · \(appCopyLocation.guidance)")
+                .font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
             if !permissions.accessibility {
                 Text("macOS checks Accessibility for the exact app copy and signing identity shown here. Current copy: \(Bundle.main.bundleURL.path)")
                     .font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
             }
+            DuplicateAppCopyWarning(paths: otherCopyPaths)
             DisclosureGroup("Troubleshooting") {
                 VStack(alignment: .leading, spacing: 10) {
                     Text("If you enable Accessibility while sharing a display, return to PairDesk; control becomes available automatically.")
@@ -134,10 +179,25 @@ struct PermissionsView: View {
         .task {
             while !Task.isCancelled {
                 permissions.refresh()
+                refreshOtherCopies()
                 do { try await Task.sleep(for: .seconds(2)) } catch { break }
             }
         }
-        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in permissions.refresh() }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            permissions.refresh()
+            refreshOtherCopies()
+        }
+    }
+    private func refreshOtherCopies() {
+        let applications = NSWorkspace.shared.runningApplications.map {
+            RunningAppCopy(processIdentifier: $0.processIdentifier,
+                           bundleIdentifier: $0.bundleIdentifier,
+                           bundleURL: $0.bundleURL)
+        }
+        otherCopyPaths = RunningAppCopyDiagnostics.otherCopyPaths(
+            bundleIdentifier: Bundle.main.bundleIdentifier,
+            currentProcessIdentifier: ProcessInfo.processInfo.processIdentifier,
+            runningApplications: applications)
     }
     private func row(_ title: String, detail: String, ready: Bool, action: @escaping () -> Void) -> some View {
         HStack(alignment: .top, spacing: 14) {
