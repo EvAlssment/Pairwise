@@ -10,7 +10,7 @@ from pathlib import Path
 PIPE_HEADER = re.compile(r"^\s*0*(\d+):")
 COUNTER_ROW = re.compile(r"^\s*\d+\s+udp\s+.*?\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s*$")
 EXPECTED_RULES = {
-    "dummynet in quick on lo0 inet proto udp from any port 17882:17981 to any pipe 591",
+    "dummynet out quick on lo0 inet proto udp from any port 17882:17981 to any pipe 591",
     "dummynet out quick on lo0 inet proto udp from any to any port 17882:17981 pipe 592",
 }
 

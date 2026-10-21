@@ -20,7 +20,7 @@ class NetworkConditionReportTests(unittest.TestCase):
         counters = root / "counters.txt"
         output = root / "network-conditioner.json"
         rules.write_text(
-            "dummynet in quick on lo0 inet proto udp from any port 17882:17981 to any pipe 591\n"
+            "dummynet out quick on lo0 inet proto udp from any port 17882:17981 to any pipe 591\n"
             "dummynet out quick on lo0 inet proto udp from any to any port 17882:17981 pipe 592\n",
             encoding="utf-8",
         )
