@@ -53,9 +53,11 @@ using this design for a substantially larger deployment.
 4. Start one API instance with the same DSN. Verify `/healthz`, `/readyz`,
    existing-user login, presence, call creation, and outbox delivery before
    enabling additional replicas.
-5. Run the two-instance integration check against a disposable database with
-   `PAIRDESK_TEST_DATABASE_URL=... go test ./internal/app -run
-   TestPostgresConcurrentWorkersLeasePushOnce -count=1`.
+5. Run the PostgreSQL integration checks against a disposable database with
+   `PAIRDESK_TEST_DATABASE_URL=... go test -race ./internal/app -run
+   '^TestPostgres' -count=1`. The suite exercises independent store/API
+   instances, call creation and outbox atomicity, concurrent claims, and
+   restart/replay behavior.
 
 Only after the import comparison passes should the API be started in Cloud SQL
 mode with `bash infra/production/manage.sh up`. If import or comparison fails,
@@ -125,10 +127,19 @@ remain available for rollback. The deployment is still one API writer; do not
 scale it until the two-instance database integration tests cover authentication,
 presence, call creation, outbox delivery/retry, and restart/replay together.
 
-The current CI integration test exercises concurrent writes from two stores
-and proves that concurrent workers claim one push job once. It does not yet
-cover the full two-API call lifecycle or restart/replay acceptance, so the
-shared-storage issue remains open.
+The merged PostgreSQL lifecycle integration test exercises two independent
+stores and API handlers, verifies shared sessions and presence, races two call
+requests for the same teammate, and simulates restart with new stores and API
+handlers. It verifies persisted retry state, successful replay, and no second
+delivery after completion. CI runs this test against disposable PostgreSQL.
+Production remains configured as one API writer; the test does not validate
+live APNs/FCM delivery or the behavior of multiple deployed VM replicas.
+
+The pre-cutover isolated-clone restore and sentinel readback verified the
+Cloud SQL restore path. The production migration itself was validated by an
+exact state export comparison and post-restart API checks, not by restoring a
+post-cutover production backup. Run and record that restore drill before
+closing this issue or scaling the API.
 
 Cloud Monitoring has one enabled Pairwise readiness alert policy. A temporary
 test policy targeting the configured email channel opened an incident and was
