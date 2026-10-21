@@ -24,6 +24,18 @@ final class AppWindows {
         show("account") { Self.hosted(AccountView(store: store).environmentObject(loginItem), title: "PairDesk account") }
     }
 
+    func showSettings(store: AppStore, loginItem: LoginItemManager) {
+        show("settings") {
+            let window = Self.hosted(SettingsView(store: store, rtc: store.rtc, loginItem: loginItem),
+                                     title: "PairDesk Settings", fixedSize: false)
+            window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
+            window.contentMinSize = NSSize(width: 850, height: 580)
+            window.setContentSize(NSSize(width: 960, height: 660))
+            window.center()
+            return window
+        }
+    }
+
     func showSharePicker(store: AppStore) {
         show("share") { Self.hosted(ScreenSharePickerView(store: store), title: "Share your screen") }
     }

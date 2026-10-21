@@ -76,6 +76,13 @@ final class AppStore: ObservableObject {
 
     init(callAudio: CallAudioFeedback? = nil) {
         self.callAudio = callAudio ?? CallAudioFeedback()
+        rtc.onProtectedPrivacyAppChanged = { [weak self] appName in
+            Task { @MainActor [weak self] in
+                guard let self, self.rtc.isSharing else { return }
+                self.error = "Screen sharing stopped because hidden app \(appName) changed state. Start a new share to continue."
+                await self.stopSharing()
+            }
+        }
         rtc.$connected.combineLatest(rtc.$participants).sink { [weak self] connected, participants in
             guard let self else { return }
             self.mediaCallConnected = connected && participants.contains { !$0.isLocal }
@@ -539,7 +546,8 @@ final class AppStore: ObservableObject {
             try await api.send("v1/rooms/\(room.id)/share", body: Body(enabled: true))
             screenClaimRoomID = room.id
             try await rtc.startScreenShare(contentFilter: selection.filter, sourceRect: selection.sourceRect,
-                                           excludingApplications: selection.excludedApplications)
+                                           excludingApplications: selection.excludedApplications,
+                                           protectingBundleIDs: PrivacyVeilPreferences.shared.bundleIdentifiers)
         } catch {
             try? await releaseScreenClaim()
             if (error as? CocoaError)?.code != .userCancelled { self.error = error.localizedDescription }
@@ -556,7 +564,8 @@ final class AppStore: ObservableObject {
             await rtc.stopScreenShare()
             guard !rtc.isSharing else { throw APIError(status: 0, message: "The current screen share could not be stopped safely.") }
             try await rtc.startScreenShare(contentFilter: selection.filter, sourceRect: selection.sourceRect,
-                                           excludingApplications: selection.excludedApplications)
+                                           excludingApplications: selection.excludedApplications,
+                                           protectingBundleIDs: PrivacyVeilPreferences.shared.bundleIdentifiers)
             screenClaimRoomID = room.id
         } catch {
             if (error as? CocoaError)?.code != .userCancelled {

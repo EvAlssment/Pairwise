@@ -31,8 +31,11 @@ struct PairDeskApp: App {
         }
         .windowStyle(.hiddenTitleBar).windowResizability(.contentSize)
         .commands {
-            CommandGroup(after: .appSettings) {
-                Toggle("Start at login", isOn: Binding(get: { loginItem.enabled }, set: { loginItem.setEnabled($0) }))
+            CommandGroup(replacing: .appSettings) {
+                Button("Settings…") {
+                    AppWindows.shared.showSettings(store: store, loginItem: loginItem)
+                }
+                .keyboardShortcut(",", modifiers: .command)
             }
             CommandGroup(after: .newItem) {
                 Button("Stop Remote Control") { store.rtc.revokeControl() }.keyboardShortcut(.escape, modifiers: [.control, .option])
@@ -65,6 +68,11 @@ final class PairDeskDelegate: NSObject, NSApplicationDelegate {
         #if DEBUG
         if ProcessInfo.processInfo.environment["PAIRDESK_PANEL_CHECK"] != nil, let statusBar {
             PanelCheck.run(store: store, statusBar: statusBar)
+            return
+        }
+        if ProcessInfo.processInfo.environment["PAIRDESK_SETTINGS_CHECK"] != nil ||
+            ProcessInfo.processInfo.arguments.contains("--settings-preview") {
+            AppWindows.shared.showSettings(store: store, loginItem: AppRuntime.shared.loginItem)
             return
         }
         #endif

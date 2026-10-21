@@ -20,6 +20,10 @@ The ZIP contains the tracked source code and documentation. It is not an install
 
 Pairwise uses Apple's native ScreenCaptureKit content-sharing picker. A person chooses a display in the macOS picker, and the app receives a capture filter for that selected display and session. Pairwise does not enumerate the desktop or ask for the broad Screen Recording permission. The picker still requires the person to choose what to share each time.
 
+The menu-bar gear opens a dedicated Settings window with General, Audio, Screen Sharing, Camera, Privacy, and Permissions sections. Audio device choices, start-muted and call-sound preferences, adaptive screen quality, camera device and 360p/720p/1080p camera quality are available there. Camera and microphone capture remain off until enabled in a call.
+
+On macOS 15.2 and later, Privacy settings can keep selected applications out of display or region shares. Configure hidden applications before sharing; Pairwise verifies those apps are available to ScreenCaptureKit and refuses the share if it cannot apply the exclusions. A hidden app that launches or exits during a share stops sharing. App exclusions hide every window of an app; macOS does not let Pairwise hide one browser tab independently. Sharing one window is available through the system picker, and Pairwise blocks sharing a window owned by a hidden app.
+
 Remote mouse and keyboard input is optional. macOS requires the person at the shared Mac to grant Pairwise Accessibility access before input can be injected. Voice uses the microphone and camera video uses the camera only after the person enables each during a call. The app never starts capture, microphone, camera, or transcription just by launching.
 
 The microphone menu lists **System default** separately from individual microphones and speakers, so the default-route alias does not repeat a hardware name. Devices are identified by their stable IDs. The screen-share menu offers **Entire display**, **Region**, and **Window**; each opens the matching macOS picker, and Region then opens the crop selector.

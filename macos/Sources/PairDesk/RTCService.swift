@@ -46,6 +46,7 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
     @Published private(set) var isCameraEnabled = false
     @Published private(set) var cameraDevices: [CameraDeviceChoice] = []
     @Published private(set) var selectedCameraID: String?
+    @Published private(set) var cameraVideoQuality = CameraVideoQuality.load()
     @Published private(set) var cameraDeviceNotice: String?
     @Published private(set) var isSharing = false {
         didSet {
@@ -53,6 +54,7 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
                 sharingIndicator.hide()
                 hostCursorOverlay.hide()
                 privacyVeilAppNames = []
+                privacyVeilProtectedBundleIDs = []
             }
             else { updateHostCursors() }
         }
@@ -71,6 +73,9 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
     @Published private(set) var automaticControlEnabled = false
     /// Local-only labels; never included in control-availability or call data.
     @Published private(set) var privacyVeilAppNames: [String] = []
+    private var privacyVeilProtectedBundleIDs = Set<String>()
+    private var privacyVeilStopRequested = false
+    var onProtectedPrivacyAppChanged: ((String) -> Void)?
     @Published private(set) var remotePointers: [RemotePointer] = [] { didSet { updateHostCursors() } }
     @Published private(set) var cursorSessionID: String?
     @Published private(set) var localCursorPosition: CGPoint?
@@ -118,6 +123,8 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
     private let sharingIndicator = ScreenShareIndicator()
     private let hostCursorOverlay = HostCursorOverlay()
     private var accessibilityMonitorTask: Task<Void, Never>?
+    private var privacyVeilLaunchObserver: NSObjectProtocol?
+    private var privacyVeilTerminationObserver: NSObjectProtocol?
     private var remoteControlManuallyPaused = false
     private var resumeControlAfterReconnect = false
     private var shareBounds: CGRect?
@@ -195,6 +202,16 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
         super.init()
         AudioManager.shared.onDeviceUpdate = { [weak self] manager in
             Task { @MainActor [weak self] in self?.refreshAudioDevices(using: manager) }
+        }
+        privacyVeilLaunchObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didLaunchApplicationNotification, object: nil, queue: .main
+        ) { [weak self] notification in
+            Task { @MainActor [weak self] in self?.handlePrivacyVeilApplicationChange(notification) }
+        }
+        privacyVeilTerminationObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didTerminateApplicationNotification, object: nil, queue: .main
+        ) { [weak self] notification in
+            Task { @MainActor [weak self] in self?.handlePrivacyVeilApplicationChange(notification) }
         }
         refreshAudioDevices()
         inputMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.keyDown, .leftMouseDown, .rightMouseDown, .otherMouseDown, .mouseMoved, .leftMouseDragged, .rightMouseDragged, .otherMouseDragged, .scrollWheel]) { [weak self] event in
@@ -363,8 +380,13 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
         do {
             _ = try await room.localParticipant.setCamera(
                 enabled: enabled,
-                captureOptions: CameraCaptureOptions(device: selectedCameraID.flatMap { cameraCaptureDevices[$0] }),
-                publishOptions: VideoPublishOptions(name: "pairdesk.camera", simulcast: false)
+                captureOptions: CameraCaptureOptions(device: selectedCameraID.flatMap { cameraCaptureDevices[$0] },
+                                                    dimensions: cameraVideoQuality.dimensions,
+                                                    fps: cameraVideoQuality.framesPerSecond),
+                publishOptions: VideoPublishOptions(name: "pairdesk.camera",
+                                                    encoding: VideoEncoding(maxBitrate: cameraVideoQuality.maxBitrate,
+                                                                            maxFps: cameraVideoQuality.framesPerSecond),
+                                                    simulcast: false)
             )
             isCameraEnabled = enabled
             if enabled, let identity = room.localParticipant.identity?.stringValue,
@@ -377,6 +399,17 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
         } catch {
             self.error = "Camera could not be \(enabled ? "enabled" : "disabled"): \(error.localizedDescription)"
             throw error
+        }
+    }
+
+    func setCameraVideoQuality(_ quality: CameraVideoQuality) {
+        guard cameraVideoQuality != quality else { return }
+        cameraVideoQuality = quality
+        quality.persist()
+        if isCameraEnabled {
+            cameraDeviceNotice = "Camera quality changed. Turn video off and on to apply it."
+        } else {
+            cameraDeviceNotice = nil
         }
     }
 
@@ -426,7 +459,11 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
                let track = publication.track as? LocalVideoTrack,
                let capturer = track.capturer as? CameraCapturer,
                let device = cameraCaptureDevices[deviceID] {
-                do { _ = try await capturer.set(options: CameraCaptureOptions(device: device)) }
+                do {
+                    _ = try await capturer.set(options: CameraCaptureOptions(device: device,
+                                                                             dimensions: cameraVideoQuality.dimensions,
+                                                                             fps: cameraVideoQuality.framesPerSecond))
+                }
                 catch { cameraDeviceNotice = "The camera disconnected. Turn video off and on to retry." }
             }
         } catch {
@@ -672,9 +709,12 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
     }
 
     func startScreenShare(contentFilter: SCContentFilter, sourceRect: CGRect = .zero,
-                          excludingApplications: [SCRunningApplication] = []) async throws {
+                          excludingApplications: [SCRunningApplication] = [],
+                          protectingBundleIDs: Set<String> = []) async throws {
         guard !isSharing, !isStartingShare else { throw LiveKitError(.invalidState, message: "Screen sharing is already active or starting.") }
         isStartingShare = true
+        privacyVeilProtectedBundleIDs = protectingBundleIDs
+        privacyVeilStopRequested = false
         defer { isStartingShare = false }
         guard let room, connected else { throw LiveKitError(.invalidState, message: "Not connected") }
         guard room.participantCount <= 4 else { throw LiveKitError(.invalidState, message: "This room is limited to four participants.") }
@@ -746,6 +786,10 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
                                                                           options: captureOptions,
                                                                           reportStatistics: true)
             pendingTrack = track
+            guard !privacyVeilStopRequested else {
+                _ = try? await track.capturer.stopCapture()
+                throw LiveKitError(.invalidState, message: "A hidden app opened while sharing was starting. No screen was shared; try again after closing it.")
+            }
             let publishOptions = VideoPublishOptions(name: trackName,
                                                      screenShareEncoding: VideoEncoding(maxBitrate: quality.maxBitrate,
                                                                                          maxFps: quality.framesPerSecond),
@@ -799,6 +843,7 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
             if let pendingTrack { _ = try? await pendingTrack.capturer.stopCapture() }
             hostCursorOverlay.hide()
             privacyVeilAppNames = []
+            privacyVeilProtectedBundleIDs = []
             self.error = "Screen sharing failed: \(error.localizedDescription)"
             throw error
         }
@@ -839,6 +884,7 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
             catch { return }
         }
         shareTrack = nil
+        privacyVeilProtectedBundleIDs = []
         screenTrack = nil
         shareBounds = nil
         remoteControlAvailable = false
@@ -849,6 +895,20 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
         if activeSharerIdentity == localIdentity { activeSharerIdentity = nil }
         controlState = .viewer
         status = "Screen sharing stopped"
+    }
+
+    private func handlePrivacyVeilApplicationChange(_ notification: Notification) {
+        guard let application = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
+              let bundleIdentifier = application.bundleIdentifier else { return }
+        handlePrivacyVeilApplicationChange(bundleIdentifier: bundleIdentifier,
+                                           name: application.localizedName ?? bundleIdentifier)
+    }
+
+    private func handlePrivacyVeilApplicationChange(bundleIdentifier: String, name: String) {
+        guard privacyVeilProtectedBundleIDs.contains(bundleIdentifier), !privacyVeilStopRequested else { return }
+        privacyVeilStopRequested = true
+        guard isSharing || isStartingShare else { return }
+        onProtectedPrivacyAppChanged?(name)
     }
 
     nonisolated func capturer(_ capturer: VideoCapturer, didUpdate state: VideoCapturer.CapturerState) {

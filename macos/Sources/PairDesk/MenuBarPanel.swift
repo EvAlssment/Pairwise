@@ -55,33 +55,13 @@ struct MenuBarPanel: View {
             Text("PairDesk").font(.system(size: 15, weight: .semibold))
             Spacer()
             if let user = store.user { PersonAvatar(name: user.name, id: user.id, size: 26).help(user.name) }
-            Menu {
-                Button("Permissions…") { show("permissions") }
-                if store.user != nil { Button("Account settings…") { show("account") } }
-                Toggle("Start at login", isOn: Binding(get: { loginItem.enabled }, set: { loginItem.setEnabled($0) }))
-                Toggle("Start calls muted", isOn: $store.startCallsMuted)
-                Toggle("Play call sounds", isOn: $store.playCallSounds)
-                Toggle("Adapt screen quality to network", isOn: Binding(
-                    get: { rtc.adaptiveQualityEnabled },
-                    set: { rtc.setAdaptiveQualityEnabled($0) }
-                ))
-                Menu("Maximum screen quality · \(rtc.screenShareQuality.title)") {
-                    ForEach(ScreenShareQuality.allCases) { quality in
-                        Button { rtc.setScreenShareQuality(quality) } label: {
-                            if rtc.screenShareQuality == quality { Label(quality.title, systemImage: "checkmark") }
-                            else { Text(quality.title) }
-                        }
-                    }
-                    Text("Maximum resolution · adaptive floor 1080p at 30 fps")
-                }
-                if loginItem.needsApproval { Button("Approve automatic startup…") { loginItem.openSettings() } }
-                Divider()
-                Button("Quit PairDesk") { NSApp.terminate(nil) }
+            Button {
+                AppWindows.shared.showSettings(store: store, loginItem: loginItem)
             } label: {
                 Image(systemName: "gearshape").font(.system(size: 14)).foregroundStyle(Theme.textMuted)
                     .frame(width: 26, height: 26).contentShape(Rectangle())
             }
-            .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+            .buttonStyle(.plain)
             .help("Settings").accessibilityLabel("Settings")
         }
     }

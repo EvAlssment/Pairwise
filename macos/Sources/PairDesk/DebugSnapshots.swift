@@ -157,6 +157,9 @@ enum UISnapshots {
         snapshot("window-incoming-call", to: directory) { IncomingCallView(store: incoming) }
         snapshot("window-sign-in", to: directory) { RootView(store: signedOut).environmentObject(loginItem) }
         snapshot("window-signed-in", to: directory) { RootView(store: idle).environmentObject(loginItem) }
+        snapshot("window-settings", to: directory, size: CGSize(width: 960, height: 660)) {
+            SettingsView(store: idle, rtc: idle.rtc, loginItem: loginItem)
+        }
         snapshot("window-permissions", to: directory) { PermissionsView() }
         snapshot("window-account", to: directory) { AccountView(store: idle).environmentObject(loginItem) }
         snapshot("window-share-picker", to: directory) { ScreenSharePickerView(store: ringing) }
