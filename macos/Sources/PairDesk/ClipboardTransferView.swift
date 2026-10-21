@@ -26,43 +26,45 @@ struct ClipboardTransferView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            VStack(alignment: .leading, spacing: 8) {
-                Label("Copy here, paste there", systemImage: "doc.on.clipboard")
+            VStack(alignment: .leading, spacing: 10) {
+                Label("Copy & paste between Macs", systemImage: "doc.on.clipboard")
                     .font(.headline)
-                Text("For hands-free copy and paste, turn this on for everyone in the call. Copy text on one Mac, then press ⌘V on another. It turns off when the call ends.")
-                    .font(.caption).foregroundStyle(.secondary)
-                Toggle("Sync text clipboard for this call", isOn: Binding(
+                HStack(spacing: 8) {
+                    Text("⌘C  Copy here")
+                    Image(systemName: "arrow.right").foregroundStyle(.secondary)
+                    Text("⌘V  Paste there")
+                }
+                .font(.callout.weight(.medium))
+                Toggle("Enable for this call", isOn: Binding(
                     get: { clipboardSyncEnabled },
                     set: onToggleSync
                 ))
                 .font(.callout.weight(.medium))
-                Text("Only plain text is shared. Images and files stay on this Mac. If a teammate hasn't enabled sync, they get a preview and choose when to paste.")
-                    .font(.caption2).foregroundStyle(.secondary)
+                Text(clipboardSyncEnabled
+                     ? "Each teammate turns this on from their own Copy & paste button. Plain text only; it turns off when the call ends."
+                     : "Turn this on here and on each Mac that should share plain text. No images or files.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
             .padding(12)
             .background(.quaternary, in: RoundedRectangle(cornerRadius: 10))
 
             if !peers.isEmpty {
-                VStack(alignment: .leading, spacing: 8) {
-                    Label("Send text once", systemImage: "paperplane")
-                        .font(.headline)
-                    Text("Send the text currently copied on your Mac to one teammate. They can review it before pasting.")
-                        .font(.caption).foregroundStyle(.secondary)
+                DisclosureGroup {
                     HStack(spacing: 8) {
                         Picker("Send to", selection: $selectedPeerIdentity) {
                             ForEach(peers) { peer in Text(peer.name).tag(peer.identity) }
                         }
-                        .labelsHidden()
                         .frame(maxWidth: .infinity)
 
-                        Button {
-                            sendClipboard()
-                        } label: {
-                            Label("Send copied text", systemImage: "paperplane.fill")
-                        }
-                        .buttonStyle(PrimaryButtonStyle())
-                        .disabled(selectedPeerIdentity.isEmpty || sending)
+                        Button("Send") { sendClipboard() }
+                            .buttonStyle(PrimaryButtonStyle())
+                            .disabled(selectedPeerIdentity.isEmpty || sending)
                     }
+                    Text("They review the text and choose when to paste it.")
+                        .font(.caption).foregroundStyle(.secondary)
+                } label: {
+                    Label("Send copied text to one teammate", systemImage: "paperplane")
+                        .font(.callout.weight(.medium))
                 }
             } else {
                 Text("Start a call with a teammate to share text.")
@@ -78,7 +80,7 @@ struct ClipboardTransferView: View {
                         .lineLimit(3)
                         .textSelection(.enabled)
                     HStack {
-                        Button("Paste on this Mac", action: onPaste).buttonStyle(PrimaryButtonStyle())
+                        Button("Paste here", action: onPaste).buttonStyle(PrimaryButtonStyle())
                         Button("Dismiss", action: onDismiss).buttonStyle(QuietButtonStyle(compact: true))
                     }
                 }

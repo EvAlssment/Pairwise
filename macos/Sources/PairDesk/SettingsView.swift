@@ -255,7 +255,7 @@ struct SettingsView: View {
                         .foregroundStyle(permissions.camera ? Theme.online : Theme.textMuted)
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Camera access").font(.headline)
-                        Text("Permission is requested only when you turn video on.")
+                        Text("Permission is requested when you start a local preview or turn video on in a call.")
                             .font(.callout).foregroundStyle(Theme.textMuted)
                     }
                     Spacer()
