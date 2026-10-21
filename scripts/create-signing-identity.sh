@@ -24,6 +24,18 @@ if security find-identity -p codesigning "$KEYCHAIN" | grep -F "\"$NAME\"" >/dev
   echo "Signing identity \"$NAME\" already exists in $KEYCHAIN."
   exit 0
 fi
+if security find-identity -p codesigning "$KEYCHAIN" | grep -F '"PairDesk Local Signing ' >/dev/null; then
+  echo "A usable PairDesk local signing identity already exists in $KEYCHAIN."
+  exit 0
+fi
+
+# A certificate can remain in Keychain after its private key is lost. In that
+# case it is absent from the matching identity list, so a fresh unique label
+# avoids confusing the orphaned certificate with the new signing identity.
+if security find-certificate -a -c "$NAME" "$KEYCHAIN" >/dev/null 2>&1; then
+  NAME="$NAME $(date +%Y%m%d%H%M%S)"
+  echo "Found a stale certificate without a usable private key; creating '$NAME'."
+fi
 
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT HUP INT TERM

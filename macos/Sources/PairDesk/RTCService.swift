@@ -972,6 +972,8 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
         guard isSharing, automaticControlEnabled, !shareIsWindow else { return }
         guard AXIsProcessTrusted() else {
             error = "Enable PairDesk in System Settings → Privacy & Security → Accessibility to continue remote control."
+            remoteControlAvailable = false
+            remoteControlUnavailableReason = .accessibility
             pauseRemoteControl(userInitiated: false)
             return
         }
@@ -1095,6 +1097,7 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
             sendControlAvailability()
         } else if !trusted && remoteControlAvailable {
             remoteControlAvailable = false
+            remoteControlUnavailableReason = .accessibility
             pauseRemoteControl(userInitiated: false)
             status = "Sharing display · enable PairDesk in Accessibility to allow control"
         }

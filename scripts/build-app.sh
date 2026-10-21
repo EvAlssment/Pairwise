@@ -8,6 +8,7 @@ OUTPUT=${PAIRDESK_APP_OUTPUT:-"$ROOT/dist/PairDesk.app"}
 STAGING="$ROOT/dist/.PairDesk.app.staging.$$"
 SIGNING_IDENTITY=${DEVELOPER_SIGNING_IDENTITY:-}
 LOCAL_SIGNING_IDENTITY="PairDesk Local Signing"
+SIGNING_KEYCHAIN=${PAIRDESK_SIGNING_KEYCHAIN:-"$HOME/Library/Keychains/login.keychain-db"}
 WHISPER_RUNTIME="$ROOT/.cache/whisper/runtime"
 BUILD_PATH=${PAIRDESK_BUILD_PATH:-"$MACOS/.build"}
 FRAMEWORKS_SOURCE="$BUILD_PATH/artifacts"
@@ -18,15 +19,16 @@ fail() {
   exit 1
 }
 
-if [ -e "$OUTPUT" ]; then
-  fail "$OUTPUT already exists; move or remove it before packaging another build"
-fi
-
 # Prefer a stable identity: macOS ties keychain and privacy approvals to the
-# signature, and an ad-hoc signature changes with every build. Set
+# signature, and an ad-hoc signature changes with every build. The local
+# self-signed identity appears in the matching list even when macOS does not
+# trust its certificate chain for Gatekeeper. Set
 # DEVELOPER_SIGNING_IDENTITY=- to force ad-hoc signing.
 if [ -z "$SIGNING_IDENTITY" ]; then
-  if security find-identity -p codesigning | grep -F "\"$LOCAL_SIGNING_IDENTITY\"" >/dev/null; then
+  AVAILABLE_IDENTITIES=$(security find-identity -p codesigning "$SIGNING_KEYCHAIN" 2>/dev/null | sed -n 's/.*"\(.*\)".*/\1/p')
+  if printf '%s\n' "$AVAILABLE_IDENTITIES" | grep -F 'PairDesk Local Signing ' >/dev/null; then
+    SIGNING_IDENTITY=$(printf '%s\n' "$AVAILABLE_IDENTITIES" | grep -F 'PairDesk Local Signing ' | head -n 1)
+  elif printf '%s\n' "$AVAILABLE_IDENTITIES" | grep -Fx "$LOCAL_SIGNING_IDENTITY" >/dev/null; then
     SIGNING_IDENTITY=$LOCAL_SIGNING_IDENTITY
   elif [ "${PAIRDESK_ALLOW_ADHOC:-0}" = "1" ]; then
     SIGNING_IDENTITY=-
@@ -54,6 +56,7 @@ mkdir -p "$ROOT/dist"
 mkdir -p "$STAGING/Contents/MacOS" "$STAGING/Contents/Frameworks" "$STAGING/Contents/Resources/whisper" "$STAGING/Contents/Resources/ThirdPartyNotices"
 cleanup() {
   if [ -d "$STAGING" ]; then rm -rf "$STAGING"; fi
+  if [ -n "${BACKUP:-}" ] && [ -e "$BACKUP" ] && [ ! -e "$OUTPUT" ]; then mv "$BACKUP" "$OUTPUT"; fi
 }
 trap cleanup EXIT HUP INT TERM
 
@@ -178,7 +181,22 @@ codesign --force --sign "$SIGNING_IDENTITY" "$CONTENTS/MacOS/pairdesk-agent-mcp"
 codesign --force --deep --sign "$SIGNING_IDENTITY" "$STAGING"
 codesign --verify --deep --strict --verbose=2 "$STAGING"
 
-# Do not expose a partially packaged app; publish only after validation/signing.
-mv "$STAGING" "$OUTPUT"
+# Publish only after validation/signing. Replace the prior build in place so
+# local packaging does not require manually deleting the previous app bundle.
+mkdir -p "$(dirname "$OUTPUT")"
+if [ -e "$OUTPUT" ]; then
+  BACKUP="$OUTPUT.previous.$$"
+  mv "$OUTPUT" "$BACKUP"
+  if mv "$STAGING" "$OUTPUT"; then
+    rm -rf "$BACKUP"
+    BACKUP=""
+  else
+    mv "$BACKUP" "$OUTPUT"
+    BACKUP=""
+    fail "could not replace the existing app bundle"
+  fi
+else
+  mv "$STAGING" "$OUTPUT"
+fi
 trap - EXIT HUP INT TERM
 echo "Packaged $OUTPUT ($CONFIGURATION, $ARCHS); signing identity: $SIGNING_IDENTITY"

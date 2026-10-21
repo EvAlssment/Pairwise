@@ -71,6 +71,17 @@ enum RemoteControlUnavailableReason: String, Codable, Equatable {
         case .displayGeometry: "the selected display could not be mapped safely for remote control"
         }
     }
+
+    var sharerDescription: String {
+        switch self {
+        case .accessibility: "Accessibility permission is off for this PairDesk copy"
+        case .paused: "Remote control is paused"
+        case .windowShare: "Window sharing is view only"
+        case .privacyVeil: "Remote control is disabled while apps are hidden"
+        case .ownerActive: "Your mouse or keyboard is active; control will resume shortly"
+        case .displayGeometry: "PairDesk could not map the shared display for control"
+        }
+    }
 }
 
 /// What the sharing Mac tells viewers. Viewers otherwise can only guess from

@@ -142,6 +142,13 @@ final class RemoteControlTests: XCTestCase {
         XCTAssertTrue(ready.available); XCTAssertNil(ready.reason)
     }
 
+    func testSharerStatusExplainsAccessibilityAndPausedControl() {
+        XCTAssertEqual(RemoteControlUnavailableReason.accessibility.sharerDescription,
+                       "Accessibility permission is off for this PairDesk copy")
+        XCTAssertEqual(RemoteControlUnavailableReason.paused.sharerDescription,
+                       "Remote control is paused")
+    }
+
     private func message(epoch: String, seq: UInt64, kind: RemoteControlMessage.Kind = .pointer) -> RemoteControlMessage {
         RemoteControlMessage(epoch: epoch, sequence: seq, kind: kind, x: 0.5, y: 0.5)
     }

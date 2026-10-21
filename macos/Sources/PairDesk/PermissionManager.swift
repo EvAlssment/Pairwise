@@ -94,7 +94,9 @@ struct PermissionsView: View {
         if let team = values[kSecCodeInfoTeamIdentifier as String] as? String {
             return "\(identifier) · Apple team \(team)"
         }
-        return "\(identifier) · no Apple Developer team"
+        let certificates = values[kSecCodeInfoCertificates as String] as? [Any] ?? []
+        if !certificates.isEmpty { return "\(identifier) · self-signed local identity" }
+        return "\(identifier) · ad-hoc signature; macOS may reset permissions after a rebuild"
     }
     var body: some View {
         // One row per capability; the long troubleshooting copy is collapsed so
@@ -113,6 +115,10 @@ struct PermissionsView: View {
                 }
             }
             row("Remote control", detail: "Optional, and needed only on the Mac being shared. Lets a teammate use your mouse and keyboard. Stop it from the menu bar or press Control–Option–Escape at any time.", ready: permissions.accessibility) { if permissions.accessibility { permissions.open("Privacy_Accessibility") } else { permissions.requestAccessibility() } }
+            if !permissions.accessibility {
+                Text("macOS checks Accessibility for the exact app copy and signing identity shown here. Current copy: \(Bundle.main.bundleURL.path)")
+                    .font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+            }
             DisclosureGroup("Troubleshooting") {
                 VStack(alignment: .leading, spacing: 10) {
                     Text("If you enable Accessibility while sharing a display, return to PairDesk; control becomes available automatically.")

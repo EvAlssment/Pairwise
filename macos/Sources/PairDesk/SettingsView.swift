@@ -390,6 +390,10 @@ struct SettingsView: View {
                 Divider()
                 permissionRow("Accessibility", detail: "Optional remote mouse and keyboard control on your Mac.", granted: permissions.accessibility,
                               allow: { permissions.requestAccessibility() }, settings: { permissions.open("Privacy_Accessibility") })
+                if !permissions.accessibility {
+                    Text("macOS applies this permission to the exact PairDesk copy. Current copy: \(Bundle.main.bundleURL.path)")
+                        .font(.caption).foregroundStyle(Theme.textMuted).textSelection(.enabled)
+                }
                 Divider()
                 SettingsRow(title: "Screen sharing", detail: "Choose a display or window in Apple's picker each time. No separate broad screen-recording permission is used.", symbol: "display") {
                     Text("Per share").font(.callout).foregroundStyle(Theme.textMuted)

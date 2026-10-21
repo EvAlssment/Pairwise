@@ -82,7 +82,9 @@ struct SharedScreenWindow: View {
             if let reason = rtc.remoteControlUnavailableReason { return "Viewing \(host) · \(reason.viewerDescription(host: host))" }
             return "Viewing \(host) · view only"
         case .host:
-            return "You are sharing your display"
+            if rtc.automaticControlEnabled { return "Sharing display · remote control ready" }
+            if let reason = rtc.remoteControlUnavailableReason { return "Sharing display · \(reason.sharerDescription)" }
+            return "Sharing display · remote control paused"
         case .unavailable:
             return "Shared screen · view only"
         }
@@ -99,6 +101,11 @@ struct SharedScreenWindow: View {
                     Label(shareStatus, systemImage: rtc.controlState.isGranted ? "cursorarrow.motionlines" : "display")
                         .font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail)
                         .layoutPriority(1)
+                }
+                if rtc.isSharing && !rtc.remoteControlAvailable && rtc.remoteControlUnavailableReason == .accessibility {
+                    Button("Fix") { PermissionWindowController.shared.show() }
+                        .buttonStyle(.borderless)
+                        .help("Check Accessibility permission for this exact PairDesk copy")
                 }
                 Spacer(minLength: 0)
                 if rtc.screenTrack != nil && !rtc.isSharing {
