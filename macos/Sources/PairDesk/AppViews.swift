@@ -347,6 +347,7 @@ struct SharedScreenWindow: View {
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                             .overlay {
                                 if let dimensions = track.dimensions {
+                                    // Keep this layer interactive so draw/laser gestures reach the input view.
                                     GeometryReader { geometry in
                                         let contentSize = CGSize(width: Int(dimensions.width), height: Int(dimensions.height))
                                         ZStack {
@@ -364,6 +365,7 @@ struct SharedScreenWindow: View {
                                                 let pointers = rtc.remotePointers + localPointer
                                                 let names = Dictionary(uniqueKeysWithValues: rtc.participants.map { ($0.identity, $0.name) })
                                                 SharedCursorLayer(pointers: pointers, names: names, contentSize: contentSize)
+                                                    .allowsHitTesting(false)
                                             } else {
                                                 ForEach(rtc.remotePointers) { pointer in
                                                     if let point = ScreenCoordinateMapper.displayedPoint(
@@ -375,12 +377,12 @@ struct SharedScreenWindow: View {
                                                             .position(x: min(max(point.x + 54, 54), geometry.size.width - 54),
                                                                       y: min(max(point.y + 14, 14), geometry.size.height - 14))
                                                             .transition(.opacity)
+                                                            .allowsHitTesting(false)
                                                     }
                                                 }
                                             }
                                         }
                                     }
-                                    .allowsHitTesting(false)
                                 }
                             }
                     } else {
