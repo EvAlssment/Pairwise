@@ -33,6 +33,9 @@ final class AppTests: XCTestCase {
     func testSupportDiagnosticsOmitIPAddressesFromAPIHost() {
         XCTAssertEqual(SupportDiagnostics.safeAPIHost("136.80.31.73"), "IP address omitted")
         XCTAssertEqual(SupportDiagnostics.safeAPIHost("2001:db8::1"), "IP address omitted")
+        XCTAssertEqual(SupportDiagnostics.safeAPIHost("api.136-80-31-73.sslip.io"), "IP address omitted")
+        XCTAssertEqual(SupportDiagnostics.safeAPIHost("136.80.31.73.nip.io"), "IP address omitted")
+        XCTAssertEqual(SupportDiagnostics.safeAPIHost("api-192-168-4-12.futurepath.ai"), "IP address omitted")
         XCTAssertEqual(SupportDiagnostics.safeAPIHost("pair.example.test"), "pair.example.test")
         XCTAssertEqual(SupportDiagnostics.safeAPIHost(nil), "unavailable")
     }

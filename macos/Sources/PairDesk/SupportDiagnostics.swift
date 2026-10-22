@@ -62,14 +62,35 @@ enum SupportDiagnostics {
     }
 
     static func safeAPIHost(_ host: String?) -> String {
-        guard let host, !host.isEmpty else { return "unavailable" }
-        if host.contains(":") { return "IP address omitted" }
-        let octets = host.split(separator: ".")
-        if octets.count == 4,
-           octets.allSatisfy({ UInt8($0) != nil }) {
+        guard let host else { return "unavailable" }
+        let normalized = host.trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .trimmingCharacters(in: CharacterSet(charactersIn: "."))
+        guard !normalized.isEmpty else { return "unavailable" }
+
+        // Some wildcard DNS providers encode the address into the hostname,
+        // for example 136-80-31-73.sslip.io. Treat these as IPs even though
+        // URLComponents reports them as ordinary DNS names.
+        let addressEncodingSuffixes = ["sslip.io", "nip.io", "traefik.me", "xip.io"]
+        if addressEncodingSuffixes.contains(where: {
+            normalized == $0 || normalized.hasSuffix("." + $0)
+        }) {
             return "IP address omitted"
         }
-        return host
+
+        // Redact literal IPv6 and any hostname containing four consecutive
+        // IPv4 octets separated by dots or hyphens. This also covers common
+        // wildcard-DNS encodings without depending on a particular provider.
+        if normalized.contains(":") { return "IP address omitted" }
+        let addressParts = normalized.split { $0 == "." || $0 == "-" }
+        if addressParts.count >= 4 {
+            for start in 0...(addressParts.count - 4) {
+                if addressParts[start..<(start + 4)].allSatisfy({ UInt8($0) != nil }) {
+                    return "IP address omitted"
+                }
+            }
+        }
+        return normalized
     }
 
     private static func candidateDescription(_ candidate: IceCandidateStatistics) -> String {
