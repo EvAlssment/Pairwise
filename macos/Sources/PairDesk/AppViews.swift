@@ -383,6 +383,7 @@ struct SharedScreenWindow: View {
                                             }
                                         }
                                     }
+                                    .allowsHitTesting((annotationMode || laserMode) && rtc.canAnnotateScreen)
                                 }
                             }
                     } else {
