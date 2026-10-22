@@ -98,7 +98,10 @@ final class AppTests: XCTestCase {
         let home = URL(fileURLWithPath: "/Users/example", isDirectory: true)
         XCTAssertEqual(AppCopyLocation.classify(bundleURL: URL(fileURLWithPath: "/Applications/PairDesk.app"), homeDirectory: home), .applications)
         XCTAssertEqual(AppCopyLocation.classify(bundleURL: URL(fileURLWithPath: "/Users/example/Applications/PairDesk.app"), homeDirectory: home), .applications)
-        XCTAssertEqual(AppCopyLocation.classify(bundleURL: URL(fileURLWithPath: "/Volumes/PairDesk/PairDesk.app"), homeDirectory: home), .diskImage)
+        XCTAssertEqual(AppCopyLocation.classify(bundleURL: URL(fileURLWithPath: "/Volumes/PairDesk/PairDesk.app"),
+                                                  homeDirectory: home,
+                                                  diskImageMountPoints: [URL(fileURLWithPath: "/Volumes/PairDesk", isDirectory: true)]),
+                       .diskImage)
         XCTAssertEqual(AppCopyLocation.classify(bundleURL: URL(fileURLWithPath: "/tmp/PairDesk.app"), homeDirectory: home), .other("/tmp/PairDesk.app"))
     }
     func testDuplicateAppCopyDiagnosticsIgnoreCurrentProcessAndOtherBundles() {
