@@ -12,6 +12,7 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
 
     private let store: AppStore
     private let rtc: RTCService
+    private let loginItem: LoginItemManager
     private let item: NSStatusItem
     private var muteItem: NSStatusItem?
     private let popover = NSPopover()
@@ -21,10 +22,14 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
     init(store: AppStore, rtc: RTCService, loginItem: LoginItemManager) {
         self.store = store
         self.rtc = rtc
+        self.loginItem = loginItem
         item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         super.init()
         item.button?.target = self
-        item.button?.action = #selector(togglePopover)
+        item.button?.action = #selector(statusItemClicked)
+        // Right clicks reach the action too, so the status menu (and Quit)
+        // is available before sign-in, as in every menu bar app.
+        item.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
         item.button?.toolTip = "PairDesk"
 
         let content = NSHostingController(rootView: MenuBarPanel(store: store, rtc: rtc, loginItem: loginItem))
@@ -54,9 +59,51 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
 
     func closePopover() { popover.performClose(nil) }
 
-    @objc private func togglePopover() {
+    private func togglePopover() {
         if popover.isShown { closePopover() } else { showPopover() }
     }
+
+    /// A left click toggles the popover. A right click or Control-click shows
+    /// the status menu instead; without it there is no way to quit before
+    /// signing in, since the app has no Dock icon outside a call.
+    @objc private func statusItemClicked() {
+        if Self.opensMenu(NSApp.currentEvent) { showMenu() } else { togglePopover() }
+    }
+
+    /// Right clicks and Control-clicks ask for the menu; anything else, and a
+    /// code-driven open with no event, is the popover.
+    nonisolated static func opensMenu(_ event: NSEvent?) -> Bool {
+        guard let event else { return false }
+        return event.type == .rightMouseUp || event.modifierFlags.contains(.control)
+    }
+
+    private func showMenu() {
+        closePopover()
+        let menu = NSMenu()
+        menu.addItem(menuItem("Open PairDesk", action: #selector(openFromMenu)))
+        menu.addItem(menuItem("Settings…", action: #selector(showSettings), key: ","))
+        menu.addItem(.separator())
+        menu.addItem(menuItem("Quit PairDesk", action: #selector(quit), key: "q"))
+        // A status item with a menu shows it in place of sending its action,
+        // so attach the menu for this click only; a plain click afterwards
+        // opens the popover again.
+        item.menu = menu
+        item.button?.performClick(nil)
+        item.menu = nil
+    }
+
+    private func menuItem(_ title: String, action: Selector, key: String = "") -> NSMenuItem {
+        let menuItem = NSMenuItem(title: title, action: action, keyEquivalent: key)
+        menuItem.target = self
+        return menuItem
+    }
+
+    @objc private func openFromMenu() { showPopover() }
+
+    @objc private func showSettings() { AppWindows.shared.showSettings(store: store, loginItem: loginItem) }
+
+    /// Goes through applicationShouldTerminate, which leaves an active call first.
+    @objc private func quit() { NSApp.terminate(nil) }
 
     @objc private func toggleMute() {
         let enable = !rtc.isMicrophoneEnabled
