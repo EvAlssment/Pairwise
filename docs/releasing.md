@@ -17,6 +17,8 @@ Configure this repository variable:
 
 - `PAIRDESK_SERVER_URL`: the HTTPS API origin embedded in the release app, with no path or credentials.
 
+Before packaging, the workflow runs the same baseline/constrained media and cursor regression gate as the regular macOS test workflow and archives its metadata-only reports. A missing or invalid report blocks publication. These synthetic loopback measurements are not hardware performance budgets; see [media quality benchmark status](media-quality-benchmarks.md) for current limits and the physical reference procedure.
+
 The workflow imports the signing certificate into a temporary keychain, stores notarization credentials in that keychain, and deletes the keychain and certificate after the job. Do not commit signing material or put it in workflow logs. Limit access to release secrets and protect the `v*` tag pattern with repository rules.
 
 ## Creating a release

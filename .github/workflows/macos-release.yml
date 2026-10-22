@@ -16,19 +16,11 @@ jobs:
   release:
     runs-on: macos-15
     timeout-minutes: 90
-    env:
-      DEVELOPER_SIGNING_IDENTITY: ${{ secrets.DEVELOPER_SIGNING_IDENTITY }}
-      DEVELOPER_ID_CERTIFICATE_BASE64: ${{ secrets.DEVELOPER_ID_CERTIFICATE_BASE64 }}
-      DEVELOPER_ID_CERTIFICATE_PASSWORD: ${{ secrets.DEVELOPER_ID_CERTIFICATE_PASSWORD }}
-      APPLE_ID: ${{ secrets.APPLE_ID }}
-      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-      APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-      PAIRDESK_SERVER_URL: ${{ vars.PAIRDESK_SERVER_URL }}
-      PAIRDESK_NOTARY_PROFILE: pairdesk-release-notary
-      GH_TOKEN: ${{ github.token }}
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-go@v5
         with:
@@ -37,6 +29,14 @@ jobs:
 
       - name: Validate release configuration
         shell: bash
+        env:
+          DEVELOPER_SIGNING_IDENTITY: ${{ secrets.DEVELOPER_SIGNING_IDENTITY }}
+          DEVELOPER_ID_CERTIFICATE_BASE64: ${{ secrets.DEVELOPER_ID_CERTIFICATE_BASE64 }}
+          DEVELOPER_ID_CERTIFICATE_PASSWORD: ${{ secrets.DEVELOPER_ID_CERTIFICATE_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          PAIRDESK_SERVER_URL: ${{ vars.PAIRDESK_SERVER_URL }}
         run: |
           set -euo pipefail
           for name in DEVELOPER_SIGNING_IDENTITY DEVELOPER_ID_CERTIFICATE_BASE64 DEVELOPER_ID_CERTIFICATE_PASSWORD APPLE_ID APPLE_TEAM_ID APPLE_APP_SPECIFIC_PASSWORD PAIRDESK_SERVER_URL; do
@@ -56,8 +56,38 @@ jobs:
             exit 1
           }
 
+      - name: Build universal Whisper runtime
+        run: sh scripts/prepare-whisper.sh
+
+      - name: Run macOS tests
+        working-directory: macos
+        run: swift test -j 4
+
+      - name: Run media quality regression gate
+        env:
+          PAIRDESK_MEDIA_BENCHMARK_DIR: ${{ runner.temp }}/pairdesk-media-quality
+          PAIRDESK_BENCHMARK_COMMIT: ${{ github.sha }}
+          PAIRDESK_BENCHMARK_RUN_ID: ${{ github.run_id }}
+        run: sh scripts/ci-media-quality.sh
+
+      - name: Archive release media-quality measurements
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-media-quality-${{ github.sha }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/pairdesk-media-quality/*.json
+          if-no-files-found: warn
+
       - name: Import Developer ID certificate and store notarization credentials
         shell: bash
+        env:
+          DEVELOPER_SIGNING_IDENTITY: ${{ secrets.DEVELOPER_SIGNING_IDENTITY }}
+          DEVELOPER_ID_CERTIFICATE_BASE64: ${{ secrets.DEVELOPER_ID_CERTIFICATE_BASE64 }}
+          DEVELOPER_ID_CERTIFICATE_PASSWORD: ${{ secrets.DEVELOPER_ID_CERTIFICATE_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          PAIRDESK_NOTARY_PROFILE: pairdesk-release-notary
         run: |
           set -euo pipefail
           KEYCHAIN_PATH="$RUNNER_TEMP/pairdesk-release.keychain-db"
@@ -80,23 +110,23 @@ jobs:
           echo "PAIRDESK_KEYCHAIN_PASSWORD=$KEYCHAIN_PASSWORD" >> "$GITHUB_ENV"
           echo "PAIRDESK_CERTIFICATE_PATH=$CERTIFICATE_PATH" >> "$GITHUB_ENV"
 
-      - name: Build universal Whisper runtime
-        run: sh scripts/prepare-whisper.sh
-
-      - name: Run macOS tests
-        working-directory: macos
-        run: swift test -j 4
-
       - name: Build app bundle
+        env:
+          DEVELOPER_SIGNING_IDENTITY: ${{ secrets.DEVELOPER_SIGNING_IDENTITY }}
+          PAIRDESK_DEFAULT_SERVER: ${{ vars.PAIRDESK_SERVER_URL }}
         run: sh scripts/build-app.sh
 
       - name: Sign, notarize, package, and assess
         env:
+          DEVELOPER_SIGNING_IDENTITY: ${{ secrets.DEVELOPER_SIGNING_IDENTITY }}
+          PAIRDESK_SERVER_URL: ${{ vars.PAIRDESK_SERVER_URL }}
+          PAIRDESK_NOTARY_PROFILE: pairdesk-release-notary
           PAIRDESK_RELEASE_OUTPUT: ${{ runner.temp }}/pairdesk-release
         run: sh scripts/release-app.sh
 
       - name: Publish GitHub release
         env:
+          GH_TOKEN: ${{ github.token }}
           PAIRDESK_RELEASE_OUTPUT: ${{ runner.temp }}/pairdesk-release
         run: |
           gh release create "$GITHUB_REF_NAME" \

@@ -12,6 +12,8 @@ The artifact also includes `network-conditioner.json`, containing aggregate pack
 
 The report validator requires receiver-side packet loss, RTP bitrate, selected-path RTT, and harness-process CPU for both participant counts and both network profiles; CI fails if these WebRTC stats are unavailable, if measured bitrate is nonpositive, or if the constrained profile does not raise selected-path RTT. Separate cursor artifacts capture 30 sequential samples from the sender's publish call through the sharer's native cursor-overlay render pass for two- and three-participant calls under baseline and constrained loopback profiles. The cursor timing does not include display scanout or cross-device clock alignment. Sender/receiver CPU and readable-content quality remain explicitly unmeasured. CI archives the measurements but does not yet set release budgets or fail on a performance threshold.
 
+The tagged macOS release workflow runs the same synthetic media/cursor gate before building and publishing a release. Publication therefore stops if the profiles fail, required measurements are unavailable, or artifacts fail schema/condition validation. Each release run also archives its benchmark reports. This is a data-integrity and basic regression gate, not a hardware-derived performance threshold; no release is rejected based on FPS, bitrate, RTT, CPU, or cursor-latency values until repeated supported-Mac reference data exists.
+
 Do not treat CI results as evidence of readable 4K text, production internet quality, separate sender/receiver CPU cost, physical pointer-to-visible latency, or a supported-hardware performance baseline. No performance budget should be set until a repeatable baseline is captured on supported Macs.
 
 ## Two-Mac reference run

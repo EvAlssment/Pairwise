@@ -54,35 +54,12 @@ jobs:
       - name: Native macOS tests
         working-directory: macos
         run: swift test -j 4
-      - name: Build pinned LiveKit test server
-        run: GOBIN="$RUNNER_TEMP/livekit-bin" go install github.com/livekit/livekit-server/cmd/server@v1.8.4
-      - name: App call and media end-to-end tests
+      - name: Run media quality regression gate
         env:
-          PAIRDESK_TEST_MEDIA_URL: ws://127.0.0.1:7880
-          PAIRDESK_TEST_MEDIA_API_URL: http://127.0.0.1:7880
-          PAIRDESK_MEDIA_BENCHMARK_OUTPUT: ${{ github.workspace }}/media-benchmark-output/pairwise-media-benchmark.json
-          PAIRDESK_NETWORK_CONDITION_REPORT: ${{ github.workspace }}/media-benchmark-output/network-conditioner.json
+          PAIRDESK_MEDIA_BENCHMARK_DIR: ${{ github.workspace }}/media-benchmark-output
           PAIRDESK_BENCHMARK_COMMIT: ${{ github.sha }}
           PAIRDESK_BENCHMARK_RUN_ID: ${{ github.run_id }}
-          PAIRDESK_TEST_FILTER: CallIntegrationTests/testOneToOneSyntheticScreenQualityProfile|CallIntegrationTests/testFourNativeClientsCameraPublicationAndExclusiveScreenPermission|HostCursorIntegrationTests/testSharerRelaysAnIndependentViewerCursorToOtherParticipants|HostCursorIntegrationTests/testAuthenticatedCursorPacketsShowNamesOnHostAndClearWithTheShare
-        run: |
-          set -eu
-          NODE_INTERFACE=$(route -n get default | awk '/interface:/{print $2; exit}')
-          NODE_IP=$(ipconfig getifaddr "$NODE_INTERFACE")
-          test -n "$NODE_IP"
-          PAIRDESK_LIVEKIT_NODE_IP="$NODE_IP" sh infra/setup.sh
-          "$RUNNER_TEMP/livekit-bin/server" --config infra/livekit.yaml > "$RUNNER_TEMP/livekit.log" 2>&1 &
-          MEDIA_PID=$!
-          trap 'kill "$MEDIA_PID" 2>/dev/null || true' EXIT
-          for i in $(seq 1 30); do
-            if curl -fsS http://127.0.0.1:7880 > /dev/null; then break; fi
-            sleep 1
-          done
-          PAIRDESK_BENCHMARK_PROFILE=baseline sh scripts/test-call.sh
-          # Camera publication is verified above without impairment. Keep the
-          # constrained profile focused on screen quality and cursor behavior;
-          # camera frame delivery under 1% packet loss is nondeterministic on CI.
-          PAIRDESK_SKIP_CAMERA_PUBLICATION_TEST=1 sh scripts/with-macos-network-condition.sh sh scripts/test-call.sh
+        run: sh scripts/ci-media-quality.sh
       - name: Validate synthetic media benchmark
         if: always()
         run: |
