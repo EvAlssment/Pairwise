@@ -31,4 +31,61 @@ final class AudioDeviceChoiceTests: XCTestCase {
         XCTAssertEqual(builtIn.title, headphones.title)
         XCTAssertTrue(AudioDeviceChoice.unique([]).isEmpty)
     }
+
+    func testSavedAudioDeviceFallsBackAndRestoresAcrossHotPlugSnapshots() {
+        let attached = SavedAudioDeviceSelection.resolve(
+            savedDeviceID: "usb-headset",
+            availableDeviceIDs: ["system-default", "usb-headset"],
+            currentDeviceID: "system-default",
+            systemDefaultDeviceID: "system-default"
+        )
+        XCTAssertEqual(attached, SavedAudioDeviceSelection(selectedDeviceID: "usb-headset",
+                                                           savedDeviceUnavailable: false,
+                                                           shouldApplyDevice: true))
+
+        let removed = SavedAudioDeviceSelection.resolve(
+            savedDeviceID: "usb-headset",
+            availableDeviceIDs: ["system-default"],
+            currentDeviceID: "usb-headset",
+            systemDefaultDeviceID: "system-default"
+        )
+        XCTAssertEqual(removed, SavedAudioDeviceSelection(selectedDeviceID: "system-default",
+                                                          savedDeviceUnavailable: true,
+                                                          shouldApplyDevice: true))
+
+        let restored = SavedAudioDeviceSelection.resolve(
+            savedDeviceID: "usb-headset",
+            availableDeviceIDs: ["system-default", "usb-headset"],
+            currentDeviceID: "system-default",
+            systemDefaultDeviceID: "system-default"
+        )
+        XCTAssertEqual(restored, attached)
+    }
+
+    func testNoSavedAudioDeviceLeavesTheCurrentSystemRouteAlone() {
+        XCTAssertEqual(SavedAudioDeviceSelection.resolve(savedDeviceID: nil,
+                                                         availableDeviceIDs: ["system-default"],
+                                                         currentDeviceID: "system-default",
+                                                         systemDefaultDeviceID: "system-default"),
+                       SavedAudioDeviceSelection(selectedDeviceID: "system-default",
+                                                 savedDeviceUnavailable: false,
+                                                 shouldApplyDevice: false))
+    }
+
+    func testStaleCurrentRouteFallsBackToSystemDefaultOrAnAvailableDevice() {
+        let defaultRoute = SavedAudioDeviceSelection.resolve(savedDeviceID: nil,
+                                                              availableDeviceIDs: ["system-default"],
+                                                              currentDeviceID: "removed-device",
+                                                              systemDefaultDeviceID: "system-default")
+        XCTAssertEqual(defaultRoute, SavedAudioDeviceSelection(selectedDeviceID: "system-default",
+                                                               savedDeviceUnavailable: false,
+                                                               shouldApplyDevice: true))
+
+        let firstAvailable = SavedAudioDeviceSelection.resolve(savedDeviceID: nil,
+                                                                availableDeviceIDs: ["usb-speaker"],
+                                                                currentDeviceID: "removed-device",
+                                                                systemDefaultDeviceID: "also-removed")
+        XCTAssertEqual(firstAvailable.selectedDeviceID, "usb-speaker")
+        XCTAssertTrue(firstAvailable.shouldApplyDevice)
+    }
 }

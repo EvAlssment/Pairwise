@@ -500,22 +500,29 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
     private func refreshAudioDevices(using manager: AudioManager = .shared) {
         let inputs = manager.inputDevices
         let outputs = manager.outputDevices
-        if let savedID = UserDefaults.standard.string(forKey: "audioInputDeviceID") {
-            if let savedDevice = inputs.first(where: { $0.deviceId == savedID }) {
-                if manager.inputDevice.deviceId != savedID { manager.inputDevice = savedDevice }
-                savedAudioInputUnavailable = false
-            } else {
-                savedAudioInputUnavailable = true
-            }
+        let inputResolution = SavedAudioDeviceSelection.resolve(
+            savedDeviceID: UserDefaults.standard.string(forKey: "audioInputDeviceID"),
+            availableDeviceIDs: inputs.map(\.deviceId),
+            currentDeviceID: manager.inputDevice.deviceId,
+            systemDefaultDeviceID: manager.defaultInputDevice.deviceId
+        )
+        if inputResolution.shouldApplyDevice,
+           let device = inputs.first(where: { $0.deviceId == inputResolution.selectedDeviceID }) {
+            manager.inputDevice = device
         }
-        if let savedID = UserDefaults.standard.string(forKey: "audioOutputDeviceID") {
-            if let savedDevice = outputs.first(where: { $0.deviceId == savedID }) {
-                if manager.outputDevice.deviceId != savedID { manager.outputDevice = savedDevice }
-                savedAudioOutputUnavailable = false
-            } else {
-                savedAudioOutputUnavailable = true
-            }
+        savedAudioInputUnavailable = inputResolution.savedDeviceUnavailable
+
+        let outputResolution = SavedAudioDeviceSelection.resolve(
+            savedDeviceID: UserDefaults.standard.string(forKey: "audioOutputDeviceID"),
+            availableDeviceIDs: outputs.map(\.deviceId),
+            currentDeviceID: manager.outputDevice.deviceId,
+            systemDefaultDeviceID: manager.defaultOutputDevice.deviceId
+        )
+        if outputResolution.shouldApplyDevice,
+           let device = outputs.first(where: { $0.deviceId == outputResolution.selectedDeviceID }) {
+            manager.outputDevice = device
         }
+        savedAudioOutputUnavailable = outputResolution.savedDeviceUnavailable
         audioInputDevices = Self.audioDeviceChoices(inputs)
         audioOutputDevices = Self.audioDeviceChoices(outputs)
         selectedAudioInputID = manager.inputDevice.deviceId
