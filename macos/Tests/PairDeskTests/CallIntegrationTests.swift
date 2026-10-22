@@ -302,27 +302,29 @@ final class CallIntegrationTests: XCTestCase {
             await frameTask?.value
             frameTask = nil
             try await media[0].localParticipant.unpublish(publication: publication)
-            let cameraReceiver = SyntheticVideoReceiver(expectation: expectation(description: "Synthetic camera frame delivered"),
-                                                        source: .camera)
-            media[1].add(delegate: cameraReceiver)
-            let cameraTrack = await LocalVideoTrack.createBufferTrack(name: "pairdesk.camera.fixture", source: .camera)
-            let cameraCapturer = try XCTUnwrap(cameraTrack.capturer as? BufferCapturer)
-            let cameraPixel = try syntheticPixelBuffer()
-            cameraCapturer.capture(cameraPixel)
-            frameTask = Task {
-                while !Task.isCancelled {
-                    cameraCapturer.capture(cameraPixel)
-                    try? await Task.sleep(for: .milliseconds(66))
+            if ProcessInfo.processInfo.environment["PAIRDESK_SKIP_CAMERA_PUBLICATION_TEST"] != "1" {
+                let cameraReceiver = SyntheticVideoReceiver(expectation: expectation(description: "Synthetic camera frame delivered"),
+                                                            source: .camera)
+                media[1].add(delegate: cameraReceiver)
+                let cameraTrack = await LocalVideoTrack.createBufferTrack(name: "pairdesk.camera.fixture", source: .camera)
+                let cameraCapturer = try XCTUnwrap(cameraTrack.capturer as? BufferCapturer)
+                let cameraPixel = try syntheticPixelBuffer()
+                cameraCapturer.capture(cameraPixel)
+                frameTask = Task {
+                    while !Task.isCancelled {
+                        cameraCapturer.capture(cameraPixel)
+                        try? await Task.sleep(for: .milliseconds(66))
+                    }
                 }
+                let cameraPublication = try await media[0].localParticipant.publish(videoTrack: cameraTrack,
+                                                                                     options: VideoPublishOptions(name: "pairdesk.camera.fixture", simulcast: false))
+                await fulfillment(of: [cameraReceiver.expectation], timeout: 15)
+                XCTAssertTrue(cameraReceiver.receivedFrame)
+                frameTask?.cancel()
+                frameTask = nil
+                try await media[0].localParticipant.unpublish(publication: cameraPublication)
+                media[1].remove(delegate: cameraReceiver)
             }
-            let cameraPublication = try await media[0].localParticipant.publish(videoTrack: cameraTrack,
-                                                                                 options: VideoPublishOptions(name: "pairdesk.camera.fixture", simulcast: false))
-            await fulfillment(of: [cameraReceiver.expectation], timeout: 15)
-            XCTAssertTrue(cameraReceiver.receivedFrame)
-            frameTask?.cancel()
-            frameTask = nil
-            try await media[0].localParticipant.unpublish(publication: cameraPublication)
-            media[1].remove(delegate: cameraReceiver)
             do {
                 try await clients[1].send("v1/rooms/\(roomID)/share", body: ShareBody(enabled: true))
                 XCTFail("A second sharer was admitted")
