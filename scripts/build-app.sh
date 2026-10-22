@@ -157,6 +157,7 @@ copy_notice "$ROOT/THIRD_PARTY_NOTICES.md" "THIRD_PARTY_NOTICES.md"
 plutil -lint "$CONTENTS/Info.plist"
 /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$CONTENTS/Info.plist" | grep -Fx 'app.internal.pairdesk' >/dev/null
 /usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$CONTENTS/Info.plist" | grep -Fx '14.0' >/dev/null
+/usr/libexec/PlistBuddy -c 'Print :LSMultipleInstancesProhibited' "$CONTENTS/Info.plist" | grep -Fx 'true' >/dev/null || fail "Launch Services must prevent duplicate PairDesk processes"
 /usr/libexec/PlistBuddy -c 'Print :CFBundleIconFile' "$CONTENTS/Info.plist" | grep -Fx 'PairDesk' >/dev/null
 /usr/libexec/PlistBuddy -c 'Print :NSCameraUsageDescription' "$CONTENTS/Info.plist" | grep -F 'turn on video during a call' >/dev/null || fail "camera usage description is missing or unclear"
 ARCHS=$(lipo -archs "$APP_EXECUTABLE")

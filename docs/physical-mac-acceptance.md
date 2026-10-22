@@ -65,6 +65,7 @@ note. A failure must be fixed and the entire affected scenario repeated.
 | Accessibility revoked during sharing | Input stops, held keys/buttons are released, the call/view remains usable, and the UI identifies remote control as unavailable. | Not run |
 | Network loss and recovery | Reconnection releases input safely, clears stale cursors, and restores call/control state without duplicate calls. | Not run |
 | Sleep/wake and app termination | Sleep/wake, force quit, and relaunch leave no stuck input, busy roster state, duplicate session, or stale cursor. | Not run |
+| Launch another PairDesk copy | Launching a copy from Applications while the installed app is running does not create another process, menu-bar item, API session, or presence heartbeat. The existing instance remains usable. Repeat from a mounted test DMG. | Not run |
 | Hang up either side of a 1:1 call | Both clients become available; either person can immediately start another call. Repeat with each side ending. | Not run |
 | Three- and four-person call | Join/leave requests work; one participant leaving does not strand the remaining pair; presence and cursors clear for the leaver. | Not run |
 | Two networks | Repeat the four-person scenario with participants on at least two networks and record direct/relay route and measured RTT. | Not run |

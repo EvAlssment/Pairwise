@@ -7,8 +7,22 @@ final class AppRuntime {
     static let shared = AppRuntime()
     let store = AppStore()
     let loginItem = LoginItemManager()
+    private let instanceLock = PairDeskInstanceLock()
     private var started = false
     var suppressInitialWindow = true
+
+    func acquireSingleInstance() -> PairDeskInstanceLock.Acquisition {
+        let acquisition = instanceLock.acquire()
+        guard case .acquired = acquisition else { return acquisition }
+        let bundleIdentifier = Bundle.main.bundleIdentifier ?? "app.internal.pairdesk"
+        let processIdentifier = ProcessInfo.processInfo.processIdentifier
+        let anotherInstanceIsRunning = NSRunningApplication.runningApplications(withBundleIdentifier: bundleIdentifier)
+            .contains { $0.processIdentifier != processIdentifier }
+        guard anotherInstanceIsRunning else { return .acquired }
+        instanceLock.release()
+        return .alreadyRunning
+    }
+
     func start() {
         guard !started else { return }
         started = true
@@ -52,6 +66,26 @@ final class PairDeskDelegate: NSObject, NSApplicationDelegate {
     private var shownIncomingCallID: String?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        if !isAutomationLaunch {
+            switch AppRuntime.shared.acquireSingleInstance() {
+            case .acquired:
+                break
+            case .alreadyRunning:
+                NSLog("PairDesk is already running; leaving the existing menu-bar instance active.")
+                NSApp.terminate(nil)
+                return
+            case .failed(let error):
+                NSLog("PairDesk could not acquire its single-instance lock: %@", error.localizedDescription)
+                let alert = NSAlert()
+                alert.alertStyle = .critical
+                alert.messageText = "PairDesk couldn’t start"
+                alert.informativeText = "PairDesk could not establish its single-instance lock. Check that your user account can write to Application Support, then try again."
+                alert.runModal()
+                NSApp.terminate(nil)
+                return
+            }
+        }
+
         // Accessory mode and LSUIElement keep calling in the menu bar. Like
         // Tuple, the Dock icon appears only while a call is active, so the
         // call is reachable with Cmd-Tab and the icon is a reminder it's on.
@@ -99,6 +133,18 @@ final class PairDeskDelegate: NSObject, NSApplicationDelegate {
             }
         }.store(in: &subscriptions)
         AppRuntime.shared.start()
+    }
+
+    private var isAutomationLaunch: Bool {
+        #if DEBUG
+        let environment = ProcessInfo.processInfo.environment
+        return environment["PAIRDESK_SNAPSHOT_DIR"] != nil ||
+            environment["PAIRDESK_PANEL_CHECK"] != nil ||
+            environment["PAIRDESK_SETTINGS_CHECK"] != nil ||
+            ProcessInfo.processInfo.arguments.contains("--settings-preview")
+        #else
+        return false
+        #endif
     }
 
     private func syncIncomingCallWindow() {
