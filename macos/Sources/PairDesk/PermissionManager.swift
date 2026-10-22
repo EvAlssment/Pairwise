@@ -4,22 +4,29 @@ import ApplicationServices
 import Security
 import SwiftUI
 
-enum AppCopyLocation: Equatable {
+enum AppCopyLocation: Equatable, Sendable {
     case applications
     case diskImage
     case other(String)
 
-    static func classify(bundleURL: URL, homeDirectory: URL) -> AppCopyLocation {
+    static func classify(bundleURL: URL, homeDirectory: URL,
+                         diskImageMountPoints: [URL] = []) -> AppCopyLocation {
         let bundlePath = bundleURL.standardizedFileURL.path
-        if bundlePath.hasPrefix("/Volumes/") { return .diskImage }
+        if diskImageMountPoints.contains(where: { isAtOrBelow(bundlePath, mountPoint: $0.standardizedFileURL.path) }) {
+            return .diskImage
+        }
         let roots = [
             URL(fileURLWithPath: "/Applications", isDirectory: true),
             homeDirectory.appendingPathComponent("Applications", isDirectory: true)
         ]
-        if roots.contains(where: { bundlePath.hasPrefix($0.standardizedFileURL.path + "/") }) {
+        if roots.contains(where: { isAtOrBelow(bundlePath, mountPoint: $0.standardizedFileURL.path) && bundlePath != $0.standardizedFileURL.path }) {
             return .applications
         }
         return .other(bundlePath)
+    }
+
+    private static func isAtOrBelow(_ path: String, mountPoint: String) -> Bool {
+        path == mountPoint || path.hasPrefix(mountPoint.hasSuffix("/") ? mountPoint : mountPoint + "/")
     }
 
     var guidance: String {
@@ -31,6 +38,32 @@ enum AppCopyLocation: Equatable {
         case .other(let path):
             return "This copy is outside Applications: \(path). For normal team use, keep one copy in Applications and open that copy."
         }
+    }
+}
+
+enum MountedDiskImageDiagnostics {
+    static func currentMountPoints() -> [URL] {
+        let process = Process()
+        let output = Pipe()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/hdiutil")
+        process.arguments = ["info", "-plist"]
+        process.standardOutput = output
+        process.standardError = FileHandle.nullDevice
+        do { try process.run() } catch { return [] }
+        let data = output.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else { return [] }
+        return mountPoints(in: data)
+    }
+
+    static func mountPoints(in propertyList: Data) -> [URL] {
+        guard let root = try? PropertyListSerialization.propertyList(from: propertyList, options: [], format: nil) as? [String: Any],
+              let images = root["images"] as? [[String: Any]] else { return [] }
+        let paths = images.flatMap { image -> [String] in
+            (image["system-entities"] as? [[String: Any]] ?? []).compactMap { $0["mount-point"] as? String }
+        }
+        return Array(Set(paths.map { URL(fileURLWithPath: $0, isDirectory: true).standardizedFileURL }))
+            .sorted { $0.path.localizedStandardCompare($1.path) == .orderedAscending }
     }
 }
 
@@ -122,9 +155,7 @@ struct PermissionsView: View {
     @ObservedObject private var permissions = PermissionManager.shared
     @Environment(\.dismiss) private var dismiss
     @State private var otherCopyPaths: [String] = []
-    private var appCopyLocation: AppCopyLocation {
-        AppCopyLocation.classify(bundleURL: Bundle.main.bundleURL, homeDirectory: FileManager.default.homeDirectoryForCurrentUser)
-    }
+    @State private var appCopyLocation: AppCopyLocation = .other(Bundle.main.bundleURL.standardizedFileURL.path)
     private var signingSummary: String {
         var code: SecStaticCode?
         guard SecStaticCodeCreateWithPath(Bundle.main.bundleURL as CFURL, [], &code) == errSecSuccess,
@@ -177,6 +208,15 @@ struct PermissionsView: View {
             HStack { Button("Check again") { permissions.refresh() }; Spacer(); Button("Done") { PermissionWindowController.shared.close(); dismiss() } }
         }.padding(26).frame(width: 490)
         .task {
+            let bundleURL = Bundle.main.bundleURL
+            let homeDirectory = FileManager.default.homeDirectoryForCurrentUser
+            let diskImageMountPoints = await Task.detached(priority: .utility) {
+                MountedDiskImageDiagnostics.currentMountPoints()
+            }.value
+            guard !Task.isCancelled else { return }
+            appCopyLocation = AppCopyLocation.classify(bundleURL: bundleURL,
+                                                       homeDirectory: homeDirectory,
+                                                       diskImageMountPoints: diskImageMountPoints)
             while !Task.isCancelled {
                 permissions.refresh()
                 refreshOtherCopies()
