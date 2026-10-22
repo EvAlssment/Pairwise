@@ -158,6 +158,8 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
     private var scrollFlushTask: Task<Void, Never>?
     private var lastQualityFeedbackSentAt: TimeInterval = 0
     private var qualityFeedbackSequence: UInt64 = 0
+    private var qualityFeedbackRevision: UInt64 = 0
+    private var lastQualityFeedbackRevisionAt: TimeInterval = 0
     private var viewerQualityFeedback: [String: ViewerQualityFeedback] = [:]
     private var cursorExpiryTask: Task<Void, Never>?
     private var cursorSequenceBySender: [String: UInt64] = [:]
@@ -568,7 +570,7 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
         guard !isSharing, connected, let room, let sharer = activeSharerIdentity,
               let session = cursorSessionID else { return }
         let now = ProcessInfo.processInfo.systemUptime
-        guard now - lastQualityFeedbackSentAt >= 3 else { return }
+        guard now - lastQualityFeedbackSentAt >= 1 else { return }
         let rtt: Int?
         switch screenNetworkQuality {
         case .measuring: rtt = nil
@@ -687,7 +689,8 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
             bandwidthLimited: outbound?.qualityLimitationReason == .bandwidth,
             cpuLimited: outbound?.qualityLimitationReason == .cpu,
             receiverLimited: receiverLimited,
-            receiversHealthy: receiversHealthy
+            receiversHealthy: receiversHealthy,
+            receiverFeedbackRevision: qualityFeedbackRevision
         )
         guard let next = controller.observe(signal) else {
             adaptiveShareController = controller
@@ -1628,6 +1631,11 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
                 roundTripMilliseconds: message.roundTripMilliseconds,
                 receivedAtUptime: ProcessInfo.processInfo.systemUptime
             )
+            let feedbackAt = ProcessInfo.processInfo.systemUptime
+            if feedbackAt - lastQualityFeedbackRevisionAt >= 1 {
+                qualityFeedbackRevision &+= 1
+                lastQualityFeedbackRevisionAt = feedbackAt
+            }
             return
         case .request:
             guard isSharing, sender != localIdentity else { return }
@@ -2048,6 +2056,8 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
         annotationRateLimiter.reset()
         annotationsAllowed = isSharing
         viewerQualityFeedback.removeAll()
+        qualityFeedbackRevision = 0
+        lastQualityFeedbackRevisionAt = 0
         cursorSequenceBySender.removeAll()
         independentCursorParticipants.removeAll()
         ownerActivityTask?.cancel(); ownerActivityTask = nil

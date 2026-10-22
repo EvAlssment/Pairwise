@@ -114,6 +114,36 @@ final class ScreenShareQualityTests: XCTestCase {
         XCTAssertNil(controller.observe(roomy), "10.5 Mbps is above 4K's step-down threshold, so it stays")
     }
 
+    func testAdaptiveQualityCountsEachReceiverFeedbackReportOnlyOnce() {
+        var controller = AdaptiveShareController(maximum: .sharp)
+        let firstPoorReport = AdaptiveShareSignal(availableOutgoingBitrate: nil,
+                                                  bandwidthLimited: false,
+                                                  cpuLimited: false,
+                                                  receiverLimited: true,
+                                                  receiverFeedbackRevision: 1)
+
+        XCTAssertNil(controller.observe(firstPoorReport))
+        for _ in 0..<10 { XCTAssertNil(controller.observe(firstPoorReport)) }
+        XCTAssertEqual(controller.poorSamples, 1, "polling one stale report must not multiply its weight")
+        XCTAssertEqual(controller.current, .fourK)
+
+        let secondPoorReport = AdaptiveShareSignal(availableOutgoingBitrate: nil,
+                                                   bandwidthLimited: false,
+                                                   cpuLimited: false,
+                                                   receiverLimited: true,
+                                                   receiverFeedbackRevision: 2)
+        XCTAssertNil(controller.observe(secondPoorReport))
+        XCTAssertNil(controller.observe(secondPoorReport))
+        XCTAssertEqual(controller.poorSamples, 2)
+
+        let thirdPoorReport = AdaptiveShareSignal(availableOutgoingBitrate: nil,
+                                                  bandwidthLimited: false,
+                                                  cpuLimited: false,
+                                                  receiverLimited: true,
+                                                  receiverFeedbackRevision: 3)
+        XCTAssertEqual(controller.observe(thirdPoorReport), .q1440)
+    }
+
     func testAdaptiveQualityNeverFallsBelow1080p30AndNeverExceedsFourK30() {
         let balanced = AdaptiveShareController(maximum: .balanced)
         XCTAssertEqual(balanced.current, .q1440)

@@ -53,6 +53,9 @@ struct AdaptiveShareSignal: Equatable {
     let cpuLimited: Bool
     var receiverLimited = false
     var receiversHealthy = false
+    /// Monotonic revision of receiver feedback. Re-reading the same report on
+    /// each sender polling tick must not count as multiple bad/good samples.
+    var receiverFeedbackRevision: UInt64?
 }
 
 /// Hysteretic quality controller: three consecutive constrained samples step
@@ -64,6 +67,7 @@ struct AdaptiveShareController {
     private(set) var tierIndex = 0
     private(set) var poorSamples = 0
     private(set) var healthySamples = 0
+    private(set) var lastReceiverFeedbackRevision: UInt64?
     let tiers: [AdaptiveShareTier]
 
     init(maximum: ScreenShareQuality) {
@@ -75,17 +79,33 @@ struct AdaptiveShareController {
     var next: AdaptiveShareTier { tiers[max(tierIndex - 1, 0)] }
 
     mutating func observe(_ signal: AdaptiveShareSignal) -> AdaptiveShareTier? {
+        let hasNewReceiverFeedback: Bool
+        if let revision = signal.receiverFeedbackRevision {
+            hasNewReceiverFeedback = revision != lastReceiverFeedbackRevision
+            if hasNewReceiverFeedback { lastReceiverFeedbackRevision = revision }
+        } else {
+            // Preserve the simple signal behavior used when receiver feedback
+            // is not revisioned (for example, direct controller tests).
+            hasNewReceiverFeedback = true
+        }
         let capacityIsConstrained = signal.availableOutgoingBitrate.map {
             $0 < current.bitrateBudget * 1.15
         } ?? false
-        if signal.bandwidthLimited || signal.cpuLimited || signal.receiverLimited || capacityIsConstrained {
+        let receiverConstraint = hasNewReceiverFeedback && signal.receiverLimited
+        let receiverHealthy = hasNewReceiverFeedback && signal.receiversHealthy
+        if signal.bandwidthLimited || signal.cpuLimited || receiverConstraint || capacityIsConstrained {
             poorSamples += 1
             healthySamples = 0
         } else if !signal.bandwidthLimited, !signal.cpuLimited, !signal.receiverLimited,
-                  signal.receiversHealthy,
+                  receiverHealthy,
                   signal.availableOutgoingBitrate.map({ $0 >= next.bitrateBudget * 1.3 }) ?? true {
             healthySamples += 1
             poorSamples = 0
+        } else if signal.receiverFeedbackRevision != nil && !hasNewReceiverFeedback,
+                  !signal.bandwidthLimited, !signal.cpuLimited, !capacityIsConstrained {
+            // No new receiver observation arrived; preserve the sample count
+            // until the next report instead of counting stale feedback again.
+            return nil
         } else {
             poorSamples = 0
             healthySamples = 0
