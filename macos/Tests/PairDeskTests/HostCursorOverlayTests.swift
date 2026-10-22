@@ -66,6 +66,40 @@ final class HostCursorOverlayTests: XCTestCase {
         }
     }
 
+    @MainActor
+    func testCaptureFilterExcludesSelectedWindowAndCursorOverlayTogether() async throws {
+        guard #available(macOS 15.2, *) else { throw XCTSkip("Display filtering requires macOS 15.2") }
+        _ = NSApplication.shared
+        let protected = NSWindow(contentRect: NSRect(x: 80, y: 80, width: 320, height: 180),
+                                 styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        protected.title = "PairDesk privacy test window"
+        protected.animationBehavior = .none
+        protected.isReleasedWhenClosed = false
+        protected.orderFrontRegardless()
+        defer { protected.close() }
+
+        let overlay = HostCursorOverlay()
+        defer { overlay.hide() }
+        overlay.prepare(captureBounds: CGDisplayBounds(CGMainDisplayID()))
+        let panel = try XCTUnwrap(overlay.panel)
+        let content = try await HostCursorOverlay.currentProcessContent()
+        guard let display = content.displays.first(where: { $0.displayID == CGMainDisplayID() && $0.width > 0 && $0.height > 0 }),
+              let protectedContentWindow = content.windows.first(where: { $0.windowID == CGWindowID(protected.windowNumber) }) else {
+            throw XCTSkip("The current-process ScreenCaptureKit window list is redacted")
+        }
+        let selection = SCContentFilter(display: display, excludingWindows: [])
+        let filteredResult = try await overlay.captureFilter(
+            from: selection, displayID: display.displayID, excludingWindows: [protectedContentWindow]
+        )
+        let filtered = try XCTUnwrap(filteredResult)
+
+        XCTAssertFalse(filtered.includedWindows.contains { $0.windowID == CGWindowID(panel.windowNumber) },
+                       "The app's collaborator cursor overlay must remain excluded")
+        XCTAssertFalse(filtered.includedWindows.contains { $0.windowID == protectedContentWindow.windowID },
+                       "The selected private window must be excluded from the display filter")
+        XCTAssertEqual(filtered.includedDisplays.map(\.displayID), [display.displayID])
+    }
+
     func testWhenCaptureExclusionIsUnavailableKeepPickerFilterAndHideHostOverlay() async throws {
         guard #available(macOS 14.4, *) else { throw XCTSkip("Capture exclusion lookup requires macOS 14.4") }
         _ = NSApplication.shared

@@ -273,12 +273,21 @@ struct MenuBarPanel: View {
                     .font(.caption).foregroundStyle(Theme.attention)
             }
             if !rtc.privacyVeilAppNames.isEmpty {
-                Label("Hidden from the shared display", systemImage: "eye.slash")
+                Label("Apps hidden from the shared display", systemImage: "eye.slash")
                     .font(.caption).foregroundStyle(Theme.attention)
                 Text(rtc.privacyVeilAppNames.joined(separator: ", "))
                     .font(.caption2).foregroundStyle(Theme.textMuted)
                     .fixedSize(horizontal: false, vertical: true)
-                Text("Remote control is disabled while these apps are hidden.")
+            }
+            if !rtc.privacyVeilWindowNames.isEmpty {
+                Label("Windows hidden for this share", systemImage: "macwindow.badge.shield.half.filled")
+                    .font(.caption).foregroundStyle(Theme.attention)
+                Text(rtc.privacyVeilWindowNames.joined(separator: ", "))
+                    .font(.caption).foregroundStyle(Theme.textMuted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if rtc.privacyVeilActive {
+                Text("Remote control is disabled while protected content is hidden.")
                     .font(.caption).foregroundStyle(Theme.textMuted)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -292,11 +301,11 @@ struct MenuBarPanel: View {
                 Button(rtc.automaticControlEnabled ? "Stop control" : "Allow control again") {
                     if rtc.automaticControlEnabled { rtc.pauseRemoteControl() } else { rtc.resumeRemoteControl() }
                 }.buttonStyle(QuietButtonStyle(compact: true)).disabled(rtc.isReconnecting)
-            } else if rtc.privacyVeilAppNames.isEmpty && rtc.isSharingWindow {
+            } else if !rtc.privacyVeilActive && rtc.isSharingWindow {
                 Text("Window sharing is view-only").font(.caption).foregroundStyle(Theme.textMuted)
-            } else if rtc.privacyVeilAppNames.isEmpty && !permissions.accessibility {
+            } else if !rtc.privacyVeilActive && !permissions.accessibility {
                 Button("Set up remote control…") { show("permissions") }.buttonStyle(.plain).font(.caption).foregroundStyle(Theme.accent)
-            } else if rtc.privacyVeilAppNames.isEmpty {
+            } else if !rtc.privacyVeilActive {
                 Text("Remote control unavailable for this share").font(.caption).foregroundStyle(Theme.textMuted)
             }
         }

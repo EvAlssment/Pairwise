@@ -46,6 +46,32 @@ enum ScreenCropGeometry {
     }
 }
 
+struct PrivacyVeilWindowChoice: Hashable, Identifiable {
+    let windowID: CGWindowID
+    let applicationBundleIdentifier: String
+    let applicationName: String
+    let title: String
+
+    var id: CGWindowID { windowID }
+    var label: String {
+        let windowName = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        return windowName.isEmpty ? applicationName : "\(applicationName) · \(windowName)"
+    }
+}
+
+struct ScreenShareSelection {
+    let filter: SCContentFilter
+    let sourceRect: CGRect
+    let excludedApplications: [SCRunningApplication]
+    let excludedWindows: [SCWindow]
+    let hiddenWindowNames: [String]
+}
+
+private struct PrivacyVeilSelectionResult {
+    let applications: [SCRunningApplication]
+    let windowIDs: Set<CGWindowID>
+}
+
 private struct ScreenCropSelectionView: View {
     let image: NSImage
     let onCancel: () -> Void
@@ -137,15 +163,18 @@ final class SystemScreenPicker: NSObject, @preconcurrency SCContentSharingPicker
     private var continuation: CheckedContinuation<SCContentFilter, Error>?
     private var cropContinuation: CheckedContinuation<CGRect?, Error>?
     private var cropWindow: NSWindow?
-    private var privacyContinuation: CheckedContinuation<[SCRunningApplication], Error>?
+    private var privacyContinuation: CheckedContinuation<PrivacyVeilSelectionResult, Error>?
     private var privacyWindow: NSWindow?
     private var privacyWindowDelegate: PrivacyVeilWindowDelegate?
 
-    func chooseSource(_ source: ScreenShareSource = .display) async throws -> (filter: SCContentFilter, sourceRect: CGRect, excludedApplications: [SCRunningApplication]) {
+    func chooseSource(_ source: ScreenShareSource = .display) async throws -> ScreenShareSelection {
         let filter = try await chooseDisplay(source)
         guard source == .region, filter.style != .window else {
-            let excluded = try await choosePrivacyVeilApplications(for: filter, source: source)
-            return (filter, .zero, excluded)
+            let veil = try await choosePrivacyVeilSelection(for: filter, source: source)
+            return ScreenShareSelection(filter: filter, sourceRect: .zero,
+                                        excludedApplications: veil.applications,
+                                        excludedWindows: veil.windows,
+                                        hiddenWindowNames: veil.windowNames)
         }
         let configuration = SCStreamConfiguration()
         configuration.width = max(1, Int(filter.contentRect.width * 2))
@@ -153,13 +182,16 @@ final class SystemScreenPicker: NSObject, @preconcurrency SCContentSharingPicker
         configuration.showsCursor = false
         let image = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: configuration)
         let normalized = try await chooseCrop(for: NSImage(cgImage: image, size: NSSize(width: image.width, height: image.height)))
-        guard let normalized else { return (filter, .zero, []) }
+        guard let normalized else { throw CocoaError(.userCancelled) }
         let displaySize = CGSize(width: filter.contentRect.width, height: filter.contentRect.height)
         guard let sourceRect = ScreenCropGeometry.sourceRect(normalizedCrop: normalized, displaySize: displaySize) else {
             throw CocoaError(.validationMissingMandatoryProperty)
         }
-        let excluded = try await choosePrivacyVeilApplications(for: filter, source: source)
-        return (filter, sourceRect, excluded)
+        let veil = try await choosePrivacyVeilSelection(for: filter, source: source)
+        return ScreenShareSelection(filter: filter, sourceRect: sourceRect,
+                                    excludedApplications: veil.applications,
+                                    excludedWindows: veil.windows,
+                                    hiddenWindowNames: veil.windowNames)
     }
 
     /// Captures one user-selected window for the local agent. The image remains
@@ -184,9 +216,9 @@ final class SystemScreenPicker: NSObject, @preconcurrency SCContentSharingPicker
         return png
     }
 
-    /// Offer app exclusions only after the person explicitly picked a display.
+    /// Offer app and window exclusions only after the person explicitly picked a display.
     /// Rebuilding the filter retains that exact display and can only narrow it.
-    private func choosePrivacyVeilApplications(for filter: SCContentFilter, source: ScreenShareSource) async throws -> [SCRunningApplication] {
+    private func choosePrivacyVeilSelection(for filter: SCContentFilter, source: ScreenShareSource) async throws -> (applications: [SCRunningApplication], windows: [SCWindow], windowNames: [String]) {
         let preferences = PrivacyVeilPreferences.shared
         if #available(macOS 15.2, *), filter.style == .window,
            let bundleIdentifier = filter.includedWindows.first?.owningApplication?.bundleIdentifier,
@@ -197,14 +229,14 @@ final class SystemScreenPicker: NSObject, @preconcurrency SCContentSharingPicker
             if !preferences.bundleIdentifiers.isEmpty, #unavailable(macOS 15.2) {
                 throw Self.privacyVeilError("Update to macOS 15.2 or later before using hidden-app settings with window shares.")
             }
-            return []
+            return ([], [], [])
         }
         guard (source == .display || source == .region), filter.style == .display,
               #available(macOS 15.2, *), let display = filter.includedDisplays.first else {
             if !preferences.bundleIdentifiers.isEmpty || preferences.hideNotificationBanners {
                 throw Self.privacyVeilError("Display privacy filters require macOS 15.2 or later. Choose a window only if notification hiding is not required, or update macOS.")
             }
-            return []
+            return ([], [], [])
         }
         // The person has already selected an exact display in Apple's picker.
         // Listing all running apps now lets the filter cover windows opened or
@@ -214,7 +246,7 @@ final class SystemScreenPicker: NSObject, @preconcurrency SCContentSharingPicker
             if !preferences.bundleIdentifiers.isEmpty || preferences.hideNotificationBanners {
                 throw Self.privacyVeilError("macOS did not provide the selected display details needed to apply privacy filters. No screen was shared.")
             }
-            return []
+            return ([], [], [])
         }
         let apps = content.applications
             .filter { $0.bundleIdentifier != Bundle.main.bundleIdentifier }
@@ -225,7 +257,19 @@ final class SystemScreenPicker: NSObject, @preconcurrency SCContentSharingPicker
             let names = preferences.applications.filter { missingIDs.contains($0.bundleIdentifier) }.map(\.name).sorted()
             throw Self.privacyVeilError("Open every app in your hidden-app list before sharing a display. PairDesk could not verify: \(names.joined(separator: ", ")).")
         }
-        var excludedApplications = try await choosePrivacyVeilApplications(apps)
+        let windowChoices = content.windows.compactMap { window -> PrivacyVeilWindowChoice? in
+            guard window.windowID != 0,
+                  window.isOnScreen,
+                  window.frame.intersects(display.frame),
+                  let application = window.owningApplication,
+                  application.bundleIdentifier != Bundle.main.bundleIdentifier else { return nil }
+            return PrivacyVeilWindowChoice(windowID: window.windowID,
+                                           applicationBundleIdentifier: application.bundleIdentifier,
+                                           applicationName: application.applicationName,
+                                           title: window.title ?? "")
+        }.sorted { $0.label.localizedCaseInsensitiveCompare($1.label) == .orderedAscending }
+        let selection = try await choosePrivacyVeilApplications(apps, windows: windowChoices)
+        var excludedApplications = selection.applications
         if preferences.hideNotificationBanners {
             let availableIDs = Set(apps.map(\.bundleIdentifier))
             guard let notificationIDs = PrivacyVeilSelection.notificationBundleIdentifiersToExclude(
@@ -237,15 +281,46 @@ final class SystemScreenPicker: NSObject, @preconcurrency SCContentSharingPicker
                 excludedApplications.append(notificationCenter)
             }
         }
-        return excludedApplications
+        let selectedIDs = PrivacyVeilSelection.resolveWindowIDs(
+            selection.windowIDs, from: windowChoices,
+            excludedApplicationBundleIDs: Set(excludedApplications.map(\.bundleIdentifier))
+        )
+        let refreshedContent = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
+        guard refreshedContent.displays.contains(where: { $0.displayID == display.displayID }) else {
+            throw Self.privacyVeilError("The selected display changed during privacy review. No screen was shared; choose the display again.")
+        }
+        let refreshedWindowChoices = refreshedContent.windows.compactMap { window -> PrivacyVeilWindowChoice? in
+            guard window.windowID != 0,
+                  window.isOnScreen,
+                  window.frame.intersects(display.frame),
+                  let application = window.owningApplication,
+                  application.bundleIdentifier != Bundle.main.bundleIdentifier else { return nil }
+            return PrivacyVeilWindowChoice(windowID: window.windowID,
+                                           applicationBundleIdentifier: application.bundleIdentifier,
+                                           applicationName: application.applicationName,
+                                           title: window.title ?? "")
+        }
+        let stillAvailableIDs = PrivacyVeilSelection.resolveWindowIDs(
+            selectedIDs, from: refreshedWindowChoices,
+            excludedApplicationBundleIDs: Set(excludedApplications.map(\.bundleIdentifier))
+        )
+        guard stillAvailableIDs == selectedIDs else {
+            throw Self.privacyVeilError("A selected window changed during privacy review. No screen was shared; choose it again.")
+        }
+        let excludedWindows = refreshedContent.windows.filter { selectedIDs.contains($0.windowID) }
+        let namesByID = Dictionary(uniqueKeysWithValues: refreshedWindowChoices.map { ($0.windowID, $0.label) })
+        let names = selectedIDs.compactMap { namesByID[$0] }.sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+        return (excludedApplications, excludedWindows, names)
     }
 
     private static func privacyVeilError(_ message: String) -> NSError {
         NSError(domain: "PairDesk.PrivacyVeil", code: 1, userInfo: [NSLocalizedDescriptionKey: message])
     }
 
-    private func choosePrivacyVeilApplications(_ applications: [SCRunningApplication]) async throws -> [SCRunningApplication] {
-        guard !applications.isEmpty else { return [] }
+    private func choosePrivacyVeilApplications(_ applications: [SCRunningApplication], windows: [PrivacyVeilWindowChoice]) async throws -> PrivacyVeilSelectionResult {
+        guard !applications.isEmpty || !windows.isEmpty else {
+            return PrivacyVeilSelectionResult(applications: [], windowIDs: [])
+        }
         return try await withCheckedThrowingContinuation { continuation in
             let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 440, height: 520),
                                   styleMask: [.titled, .closable], backing: .buffered, defer: false)
@@ -262,12 +337,14 @@ final class SystemScreenPicker: NSObject, @preconcurrency SCContentSharingPicker
             window.delegate = delegate
             window.contentViewController = NSHostingController(rootView: PrivacyVeilApplicationPicker(
                 applications: applications,
+                windows: windows,
                 initiallyExcludedBundleIDs: PrivacyVeilPreferences.shared.bundleIdentifiers,
                 hideNotifications: PrivacyVeilPreferences.shared.hideNotificationBanners,
-                onContinue: { [weak self, weak window] selected in
+                onContinue: { [weak self, weak window] selected, selectedWindowIDs in
                     PrivacyVeilPreferences.shared.saveShareSelection(selected, visible: applications)
-                    self?.finishPrivacyVeil(.success(selected))
+                    window?.delegate = nil
                     window?.close()
+                    self?.finishPrivacyVeil(.success(PrivacyVeilSelectionResult(applications: selected, windowIDs: selectedWindowIDs)))
                 },
                 onCancel: { [weak self, weak window] in
                     self?.finishPrivacyVeil(.failure(CocoaError(.userCancelled)))
@@ -280,7 +357,7 @@ final class SystemScreenPicker: NSObject, @preconcurrency SCContentSharingPicker
         }
     }
 
-    private func finishPrivacyVeil(_ result: Result<[SCRunningApplication], Error>) {
+    private func finishPrivacyVeil(_ result: Result<PrivacyVeilSelectionResult, Error>) {
         let continuation = privacyContinuation
         privacyContinuation = nil
         privacyWindow = nil
@@ -373,15 +450,18 @@ final class SystemScreenPicker: NSObject, @preconcurrency SCContentSharingPicker
 
 private struct PrivacyVeilApplicationPicker: View {
     let applications: [SCRunningApplication]
+    let windows: [PrivacyVeilWindowChoice]
     let initiallyExcludedBundleIDs: Set<String>
     let hideNotifications: Bool
-    let onContinue: ([SCRunningApplication]) -> Void
+    let onContinue: ([SCRunningApplication], Set<CGWindowID>) -> Void
     let onCancel: () -> Void
     @State private var excludedBundleIDs: Set<String>
+    @State private var excludedWindowIDs = Set<CGWindowID>()
 
-    init(applications: [SCRunningApplication], initiallyExcludedBundleIDs: Set<String>, hideNotifications: Bool,
-         onContinue: @escaping ([SCRunningApplication]) -> Void, onCancel: @escaping () -> Void) {
+    init(applications: [SCRunningApplication], windows: [PrivacyVeilWindowChoice], initiallyExcludedBundleIDs: Set<String>, hideNotifications: Bool,
+         onContinue: @escaping ([SCRunningApplication], Set<CGWindowID>) -> Void, onCancel: @escaping () -> Void) {
         self.applications = applications
+        self.windows = windows
         self.initiallyExcludedBundleIDs = initiallyExcludedBundleIDs
         self.hideNotifications = hideNotifications
         self.onContinue = onContinue
@@ -396,28 +476,55 @@ private struct PrivacyVeilApplicationPicker: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Hide apps from this share")
+            Text("Protect content in this share")
                 .font(.headline)
-            Text("PairDesk will capture only the display you selected and exclude every window owned by the apps you choose. This is optional and can be changed by stopping and sharing again.")
+            Text("The Apple picker selected this display. Apps hide every current and future window from those apps. Specific windows are hidden only for this share. Titles and choices stay on this Mac.")
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             Text(hideNotifications
                  ? "Notification Center is also excluded from this display share. PairDesk cancels sharing if macOS cannot verify that filter."
                  : "macOS notification banners may appear. Turn on a Focus mode before sharing if you need to silence them.")
                 .font(.caption).foregroundStyle(hideNotifications ? Theme.textMuted : Theme.attention)
                 .fixedSize(horizontal: false, vertical: true)
-            List(uniqueApplications, id: \.bundleIdentifier) { app in
-                Toggle(app.applicationName, isOn: Binding(
-                    get: { excludedBundleIDs.contains(app.bundleIdentifier) },
-                    set: { enabled in
-                        if enabled { excludedBundleIDs.insert(app.bundleIdentifier) }
-                        else { excludedBundleIDs.remove(app.bundleIdentifier) }
+            List {
+                Section("Hide every window from these apps") {
+                    ForEach(uniqueApplications, id: \.bundleIdentifier) { app in
+                        Toggle(app.applicationName, isOn: Binding(
+                            get: { excludedBundleIDs.contains(app.bundleIdentifier) },
+                            set: { enabled in
+                                if enabled { excludedBundleIDs.insert(app.bundleIdentifier) }
+                                else { excludedBundleIDs.remove(app.bundleIdentifier) }
+                            }
+                        ))
                     }
-                ))
+                }
+                Section("Hide specific windows for this share") {
+                    ForEach(windows) { item in
+                        Toggle(item.label, isOn: Binding(
+                            get: { excludedWindowIDs.contains(item.windowID) },
+                            set: { enabled in
+                                if enabled { excludedWindowIDs.insert(item.windowID) }
+                                else { excludedWindowIDs.remove(item.windowID) }
+                            }
+                        ))
+                        .disabled(excludedBundleIDs.contains(item.applicationBundleIdentifier))
+                    }
+                    if windows.isEmpty {
+                        Text("No other visible windows were available to hide.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                }
             }
             HStack {
                 Button("Cancel") { onCancel() }.keyboardShortcut(.cancelAction)
                 Spacer()
-                Button("Continue") { onContinue(PrivacyVeilSelection.resolve(excludedBundleIDs, from: applications)) }
+                Button("Continue") {
+                    let selectedApps = PrivacyVeilSelection.resolve(excludedBundleIDs, from: applications)
+                    let selectedWindows = PrivacyVeilSelection.resolveWindowIDs(
+                        excludedWindowIDs, from: windows,
+                        excludedApplicationBundleIDs: Set(selectedApps.map(\.bundleIdentifier))
+                    )
+                    onContinue(selectedApps, selectedWindows)
+                }
                     .buttonStyle(PrimaryButtonStyle()).keyboardShortcut(.defaultAction)
             }
         }
@@ -449,5 +556,12 @@ enum PrivacyVeilSelection {
 
     static func resolve(_ requested: Set<String>, availableBundleIDs: [String]) -> Set<String> {
         requested.intersection(availableBundleIDs)
+    }
+
+    static func resolveWindowIDs(_ requested: Set<CGWindowID>, from windows: [PrivacyVeilWindowChoice],
+                                 excludedApplicationBundleIDs: Set<String>) -> Set<CGWindowID> {
+        Set(windows.filter {
+            requested.contains($0.windowID) && !excludedApplicationBundleIDs.contains($0.applicationBundleIdentifier)
+        }.map(\.windowID))
     }
 }

@@ -617,6 +617,8 @@ final class AppStore: ObservableObject {
             screenClaimRoomID = room.id
             try await rtc.startScreenShare(contentFilter: selection.filter, sourceRect: selection.sourceRect,
                                            excludingApplications: selection.excludedApplications,
+                                           excludingWindows: selection.excludedWindows,
+                                           hiddenWindowNames: selection.hiddenWindowNames,
                                            protectingBundleIDs: PrivacyVeilPreferences.shared.protectedBundleIdentifiers)
         } catch {
             try? await releaseScreenClaim()
@@ -635,6 +637,8 @@ final class AppStore: ObservableObject {
             guard !rtc.isSharing else { throw APIError(status: 0, message: "The current screen share could not be stopped safely.") }
             try await rtc.startScreenShare(contentFilter: selection.filter, sourceRect: selection.sourceRect,
                                            excludingApplications: selection.excludedApplications,
+                                           excludingWindows: selection.excludedWindows,
+                                           hiddenWindowNames: selection.hiddenWindowNames,
                                            protectingBundleIDs: PrivacyVeilPreferences.shared.protectedBundleIdentifiers)
             screenClaimRoomID = room.id
         } catch {

@@ -15,6 +15,22 @@ final class ScreenPrivacyVeilTests: XCTestCase {
         XCTAssertTrue(PrivacyVeilSelection.resolve([], availableBundleIDs: ["com.example.editor"]).isEmpty)
     }
 
+    func testWindowSelectionOnlyResolvesDisplayedWindowsOutsideHiddenApps() {
+        let windows = [
+            PrivacyVeilWindowChoice(windowID: 10, applicationBundleIdentifier: "com.example.editor",
+                                    applicationName: "Editor", title: "Source.swift"),
+            PrivacyVeilWindowChoice(windowID: 11, applicationBundleIdentifier: "com.example.mail",
+                                    applicationName: "Mail", title: "Inbox"),
+        ]
+        let selected = PrivacyVeilSelection.resolveWindowIDs(
+            [10, 11, 99], from: windows, excludedApplicationBundleIDs: ["com.example.editor"]
+        )
+
+        XCTAssertEqual(selected, [11], "App-wide exclusions must not be undone by window exceptions")
+        XCTAssertEqual(windows[0].label, "Editor · Source.swift")
+        XCTAssertEqual(windows[1].label, "Mail · Inbox")
+    }
+
     func testNotificationFilterRequiresNotificationCenterToBeDiscoverable() {
         XCTAssertNil(PrivacyVeilSelection.notificationBundleIdentifiersToExclude(
             hideNotifications: true, availableBundleIDs: ["com.example.editor"]

@@ -54,6 +54,7 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
                 sharingIndicator.hide()
                 hostCursorOverlay.hide()
                 privacyVeilAppNames = []
+                privacyVeilWindowNames = []
                 privacyVeilNotificationsHidden = false
                 privacyVeilProtectedBundleIDs = []
             }
@@ -74,9 +75,11 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
     @Published private(set) var automaticControlEnabled = false
     /// Local-only labels; never included in control-availability or call data.
     @Published private(set) var privacyVeilAppNames: [String] = []
+    @Published private(set) var privacyVeilWindowNames: [String] = []
     @Published private(set) var privacyVeilNotificationsHidden = false
     private var privacyVeilProtectedBundleIDs = Set<String>()
     private var privacyVeilStopRequested = false
+    var privacyVeilActive: Bool { !privacyVeilAppNames.isEmpty || !privacyVeilWindowNames.isEmpty }
     var onProtectedPrivacyAppChanged: ((String) -> Void)?
     @Published private(set) var remotePointers: [RemotePointer] = [] { didSet { updateHostCursors() } }
     @Published private(set) var cursorSessionID: String?
@@ -726,6 +729,7 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
 
     func startScreenShare(contentFilter: SCContentFilter, sourceRect: CGRect = .zero,
                           excludingApplications: [SCRunningApplication] = [],
+                          excludingWindows: [SCWindow] = [], hiddenWindowNames: [String] = [],
                           protectingBundleIDs: Set<String> = []) async throws {
         guard !isSharing, !isStartingShare else { throw LiveKitError(.invalidState, message: "Screen sharing is already active or starting.") }
         isStartingShare = true
@@ -766,17 +770,19 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
             } else if !selectedWindow, NSScreen.screens.count == 1 {
                 selectedFrame = sourceRect.isEmpty ? contentFilter.contentRect : sourceRect
             } else { selectedFrame = nil }
-            guard excludingApplications.isEmpty || (!selectedWindow && displayID != nil && selectedFrame != nil) else {
-                throw LiveKitError(.invalidState, message: "The selected app privacy veil could not be applied safely. Choose the display again or share a window.")
+            let privacyExclusionsRequested = !excludingApplications.isEmpty || !excludingWindows.isEmpty
+            guard !privacyExclusionsRequested || (!selectedWindow && displayID != nil && selectedFrame != nil) else {
+                throw LiveKitError(.invalidState, message: "The selected privacy filters could not be applied safely. Choose the display again or share a window.")
             }
             var captureFilter = contentFilter
             if let selectedFrame, let displayID, !selectedWindow {
                 hostCursorOverlay.prepare(captureBounds: selectedFrame)
                 let exclusionFilter = try await hostCursorOverlay.captureFilter(from: contentFilter, displayID: displayID,
-                                                                                  excludingApplications: excludingApplications)
-                guard excludingApplications.isEmpty || exclusionFilter != nil else {
+                                                                                  excludingApplications: excludingApplications,
+                                                                                  excludingWindows: excludingWindows)
+                guard !privacyExclusionsRequested || exclusionFilter != nil else {
                     hostCursorOverlay.hide()
-                    throw LiveKitError(.invalidState, message: "The selected app privacy veil could not be applied safely. No screen was shared.")
+                    throw LiveKitError(.invalidState, message: "The selected privacy filters could not be applied safely. No screen was shared.")
                 }
                 captureFilter = exclusionFilter ?? contentFilter
             }
@@ -792,6 +798,7 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
                 .map(\.applicationName))).sorted {
                 $0.localizedCaseInsensitiveCompare($1) == .orderedAscending
             }
+            privacyVeilWindowNames = hiddenWindowNames
             let canControlDisplay = selectedFrame != nil && AXIsProcessTrusted()
             // Older viewers infer view-only from the ".window" suffix; newer
             // ones also receive explicit availability messages.
@@ -826,7 +833,7 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
             shareBounds = selectedWindow ? nil : selectedFrame
             setCursorSession(selectedFrame == nil ? nil : UUID().uuidString)
             shareIsWindow = selectedWindow
-            remoteControlAvailable = !shareIsWindow && privacyVeilAppNames.isEmpty && canControlDisplay
+            remoteControlAvailable = !shareIsWindow && !privacyVeilActive && canControlDisplay
             remoteControlManuallyPaused = false
             automaticControlEnabled = remoteControlAvailable
             if automaticControlEnabled { controlArbiter.enable() }
@@ -848,11 +855,11 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
             }
             activeSharerIdentity = localIdentity
             controlState = .host
-            remoteControlUnavailableReason = !privacyVeilAppNames.isEmpty ? .privacyVeil
+            remoteControlUnavailableReason = privacyVeilActive ? .privacyVeil
                 : (selectedWindow ? .windowShare
                    : (!AXIsProcessTrusted() ? .accessibility : (selectedFrame == nil ? .displayGeometry : nil)))
-            status = !privacyVeilAppNames.isEmpty
-                ? "Sharing display · remote control disabled while apps are hidden"
+            status = privacyVeilActive
+                ? "Sharing display · remote control disabled while content is hidden"
                 : (privacyVeilNotificationsHidden
                    ? "Sharing display · notification banners hidden"
                    : (selectedWindow
@@ -867,6 +874,7 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
             if let pendingTrack { _ = try? await pendingTrack.capturer.stopCapture() }
             hostCursorOverlay.hide()
             privacyVeilAppNames = []
+            privacyVeilWindowNames = []
             privacyVeilNotificationsHidden = false
             privacyVeilProtectedBundleIDs = []
             self.error = "Screen sharing failed: \(error.localizedDescription)"
@@ -1046,7 +1054,7 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
         let state = RemoteControlAvailability.evaluate(sharingWindow: shareIsWindow,
                                                        accessibilityTrusted: AXIsProcessTrusted(),
                                                        automaticControlEnabled: automaticControlEnabled,
-                                                       privacyVeilEnabled: !privacyVeilAppNames.isEmpty,
+                                                       privacyVeilEnabled: privacyVeilActive,
                                                        ownerActive: ProcessInfo.processInfo.systemUptime < ownerBusyUntil,
                                                        displayGeometryKnown: shareBounds != nil)
         sendControl(.init(epoch: "", sequence: nextSequence(), kind: .availability,
@@ -1092,7 +1100,7 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
         accessibilityMonitorTask?.cancel()
         accessibilityMonitorTask = Task { [weak self] in
             while !Task.isCancelled {
-                guard let self, self.isSharing, !self.shareIsWindow, self.privacyVeilAppNames.isEmpty else { return }
+                guard let self, self.isSharing, !self.shareIsWindow, !self.privacyVeilActive else { return }
                 self.refreshRemoteControlPermission()
                 do { try await Task.sleep(for: .seconds(1)) } catch { return }
             }
@@ -1101,7 +1109,7 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
 
     private func refreshRemoteControlPermission() {
         guard isSharing, !shareIsWindow, shareBounds != nil, !controlTransportFailed else { return }
-        guard privacyVeilAppNames.isEmpty else {
+        guard !privacyVeilActive else {
             remoteControlAvailable = false
             automaticControlEnabled = false
             controlArbiter.disable()

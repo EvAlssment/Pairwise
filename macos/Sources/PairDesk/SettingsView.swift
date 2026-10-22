@@ -398,19 +398,25 @@ struct SettingsView: View {
                         .font(.caption).foregroundStyle(Theme.attention)
                 }
             }
-            Text("Privacy changes apply to the next share. The active share keeps the filter you approved when it started. PairDesk stops sharing if a protected app opens or closes.")
+            Text("App and notification settings apply to the next display share. After the Apple picker, you can hide individual visible windows for that share; the window selection is not saved. PairDesk stops sharing if a protected app opens or closes.")
                 .font(.caption).foregroundStyle(Theme.textMuted).fixedSize(horizontal: false, vertical: true)
             SettingsCard {
                 Label("Browser tabs", systemImage: "safari").font(.headline)
                 Text("macOS shares or excludes windows and apps, not individual browser tabs. Hide the whole browser app, or share a different window.")
                     .font(.callout).foregroundStyle(Theme.textMuted)
             }
-            if !rtc.privacyVeilAppNames.isEmpty {
+            if !rtc.privacyVeilAppNames.isEmpty || !rtc.privacyVeilWindowNames.isEmpty {
                 SettingsCard {
                     Label("Currently hidden", systemImage: "eye.slash.fill").font(.headline)
-                    Text(rtc.privacyVeilAppNames.joined(separator: ", "))
-                        .font(.callout).foregroundStyle(Theme.textMuted)
-                    Text("Remote control is paused while apps are hidden.")
+                    if !rtc.privacyVeilAppNames.isEmpty {
+                        Text("Apps: \(rtc.privacyVeilAppNames.joined(separator: ", "))")
+                            .font(.callout).foregroundStyle(Theme.textMuted)
+                    }
+                    if !rtc.privacyVeilWindowNames.isEmpty {
+                        Text("Windows: \(rtc.privacyVeilWindowNames.joined(separator: ", "))")
+                            .font(.callout).foregroundStyle(Theme.textMuted)
+                    }
+                    Text("Remote control is disabled while protected content is hidden.")
                         .font(.caption).foregroundStyle(Theme.textMuted)
                 }
             }

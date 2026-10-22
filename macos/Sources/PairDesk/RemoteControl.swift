@@ -66,7 +66,7 @@ enum RemoteControlUnavailableReason: String, Codable, Equatable {
         case .accessibility: "\(host) needs to allow PairDesk in Accessibility before you can control"
         case .paused: "\(host) paused remote control"
         case .windowShare: "window sharing is view only"
-        case .privacyVeil: "\(host) is hiding apps · remote control is disabled for privacy"
+        case .privacyVeil: "\(host) is hiding protected content · remote control is disabled for privacy"
         case .ownerActive: "\(host) is using the mouse or keyboard · try again in a moment"
         case .displayGeometry: "the selected display could not be mapped safely for remote control"
         }
@@ -77,7 +77,7 @@ enum RemoteControlUnavailableReason: String, Codable, Equatable {
         case .accessibility: "Accessibility permission is off for this PairDesk copy"
         case .paused: "Remote control is paused"
         case .windowShare: "Window sharing is view only"
-        case .privacyVeil: "Remote control is disabled while apps are hidden"
+        case .privacyVeil: "Remote control is disabled while protected content is hidden"
         case .ownerActive: "Your mouse or keyboard is active; control will resume shortly"
         case .displayGeometry: "PairDesk could not map the shared display for control"
         }
