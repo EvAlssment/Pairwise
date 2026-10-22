@@ -27,6 +27,8 @@ services:
     environment:
       PAIRDESK_ADDR: '0.0.0.0:8080'
       PAIRDESK_DATA: /data/pairdesk.json
+      PAIRDESK_SIGNUP_ENABLED: ${PAIRDESK_SIGNUP_ENABLED:-true}
+      PAIRDESK_SIGNUP_ALLOWED_DOMAINS: ${PAIRDESK_SIGNUP_ALLOWED_DOMAINS:-}
       # Set to a private Cloud SQL PostgreSQL DSN before running more than one
       # API replica. Empty keeps the existing single-writer JSON-volume mode.
       PAIRDESK_DATABASE_URL: ${PAIRDESK_DATABASE_URL:-}

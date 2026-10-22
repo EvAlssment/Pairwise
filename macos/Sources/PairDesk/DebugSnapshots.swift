@@ -156,6 +156,7 @@ enum UISnapshots {
         snapshot("menu-in-call-clipboard-sync", to: directory, compact: true) { MenuBarPanel(store: syncing, rtc: syncing.rtc, loginItem: loginItem) }
         snapshot("window-incoming-call", to: directory) { IncomingCallView(store: incoming) }
         snapshot("window-sign-in", to: directory) { RootView(store: signedOut).environmentObject(loginItem) }
+        snapshot("window-sign-up", to: directory) { LoginView(store: signedOut, creatingAccount: true) }
         snapshot("window-signed-in", to: directory) { RootView(store: idle).environmentObject(loginItem) }
         snapshot("window-settings", to: directory, size: CGSize(width: 960, height: 660)) {
             SettingsView(store: idle, rtc: idle.rtc, loginItem: loginItem)

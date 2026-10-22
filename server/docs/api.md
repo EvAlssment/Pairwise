@@ -1,6 +1,6 @@
 # Pairdesk local backend
 
-This service is for a small, invited team. It has no signup endpoint, external identity provider, email service, or third-party integrations. Team members are created with the admin CLI. Team members can change their own password in the app. Disabling an account invalidates all its sessions.
+This service is designed for a small team. It supports self-service signup and sign-in, but does not send verification email or use an external identity provider. Signup can be disabled or restricted to email domains by the server operator. Because email ownership is not verified, only enable public signup on a team-controlled endpoint and use the domain restriction when it fits your team. Team members can change their own password in the app. Disabling an account invalidates all its sessions.
 
 ## Run locally
 
@@ -9,9 +9,11 @@ From `pairdesk/infra`, run `./setup.sh` and then `docker compose up --build`. Th
 Bootstrap the first admin in the compose data volume before starting the API: from `pairdesk/infra`, run `./setup.sh`, `docker compose build api`, then `docker compose run --rm --no-deps -it --entrypoint /pairdesk-admin api create-user --admin --name 'Taylor Example' --email taylor@example.com`. The CLI prompts for a password of at least 12 characters, or reads `PAIRDESK_ADMIN_PASSWORD` if set in the environment. Deliver the initial password through an existing private channel; it is never printed. Then run `docker compose up`. Once signed in as an admin, create and manage invited members through Account settings; the CLI remains available for offline bootstrap and recovery.
 ## API
 
-All endpoints use JSON. Protected routes require `Authorization: Bearer <token>`. Error responses are JSON `{ "error": "..." }`. Timestamps are UTC RFC3339. The login session is a cryptographically random opaque bearer token, stored server-side, and expires after seven days. The client should store it in Keychain and clear it on logout. Login is limited to 10 failed attempts per source IP per rolling 15 minutes per API process; a successful login clears that IP counter.
+All endpoints use JSON. Protected routes require `Authorization: Bearer <token>`. Error responses are JSON `{ "error": "..." }`. Timestamps are UTC RFC3339. The login session is a cryptographically random opaque bearer token, stored server-side, and expires after seven days. The client should store it in Keychain and clear it on logout. Login is limited to 10 failed attempts per source IP per rolling 15 minutes per API process; a successful login clears that IP counter. Signup shares this budget and counts every attempt. Configure `PAIRDESK_SIGNUP_ENABLED=false` to disable signup and `PAIRDESK_SIGNUP_ALLOWED_DOMAINS=futurepath.ai,example.org` to restrict it to listed email domains. Domain restrictions do not verify mailbox ownership; configure email verification before using signup as proof of identity.
 
 - `POST /v1/login` `{ "email": "...", "password": "..." }` → `{ "token": "...", "user": {"id":"...","name":"...","email":"..."}, "expiresAt":"...Z" }`
+- `GET /v1/signup-policy` → `{ "enabled":true, "allowedDomains":[] }`; public client capability discovery. An empty domain list means any syntactically valid email is accepted.
+- `POST /v1/signup` `{ "name":"...", "email":"...", "password":"..." }` → HTTP 201 with the same session payload as login. Creates a standard non-admin account and signs it in immediately. Password must be at least 12 characters. Duplicate email returns HTTP 409.
 - `GET /v1/me` → `{ "user": {"id":"...","name":"...","email":"...","admin":true} }`; `admin` is included for administrators only.
 - `POST /v1/password` `{ "currentPassword":"...", "newPassword":"..." }` → `{ "ok":true }`. New passwords must be at least 12 characters. The current session remains valid; other sessions for the account are revoked.
 - `POST /v1/logout` → `{ "ok":true }`; invalidates the current session.

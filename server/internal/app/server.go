@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net/mail"
 	"net"
 	"net/http"
 	"os"
@@ -38,6 +39,8 @@ type Server struct {
 	dummyHash                    []byte
 	hits                         map[string][]time.Time
 	hitMu                        sync.Mutex
+	signupEnabled                bool
+	signupAllowedDomains         map[string]struct{}
 }
 
 func New(st *Store) *Server {
@@ -46,7 +49,17 @@ func New(st *Store) *Server {
 	if apiURL == "" {
 		apiURL = "http://127.0.0.1:7880"
 	}
-	return &Server{store: st, push: configuredPushFromEnv(), pushWake: make(chan struct{}, 1), liveURL: os.Getenv("LIVEKIT_URL"), liveAPIURL: apiURL, liveKey: os.Getenv("LIVEKIT_API_KEY"), liveSecret: os.Getenv("LIVEKIT_API_SECRET"), dummyHash: h, hits: map[string][]time.Time{}}
+	domains := map[string]struct{}{}
+	for _, domain := range strings.Split(os.Getenv("PAIRDESK_SIGNUP_ALLOWED_DOMAINS"), ",") {
+		if domain = strings.ToLower(strings.TrimSpace(domain)); domain != "" {
+			domains[domain] = struct{}{}
+		}
+	}
+	enabled := true
+	if value := strings.TrimSpace(os.Getenv("PAIRDESK_SIGNUP_ENABLED")); value != "" {
+		enabled = strings.EqualFold(value, "true") || value == "1"
+	}
+	return &Server{store: st, push: configuredPushFromEnv(), pushWake: make(chan struct{}, 1), liveURL: os.Getenv("LIVEKIT_URL"), liveAPIURL: apiURL, liveKey: os.Getenv("LIVEKIT_API_KEY"), liveSecret: os.Getenv("LIVEKIT_API_SECRET"), dummyHash: h, hits: map[string][]time.Time{}, signupEnabled: enabled, signupAllowedDomains: domains}
 }
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
@@ -59,6 +72,8 @@ func (s *Server) Handler() http.Handler {
 	})
 	mux.HandleFunc("/readyz", s.ready)
 	mux.HandleFunc("/v1/login", s.login)
+	mux.HandleFunc("/v1/signup", s.signup)
+	mux.HandleFunc("/v1/signup-policy", s.signupPolicy)
 	mux.HandleFunc("/v1/me", s.auth(s.me))
 	mux.HandleFunc("/v1/users", s.auth(s.users))
 	mux.HandleFunc("/v1/heartbeat", s.auth(s.heartbeat))
@@ -77,6 +92,97 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/v1/join-requests", s.auth(s.joinRequests))
 	mux.HandleFunc("/v1/join-requests/", s.auth(s.joinRequestAction))
 	return securityHeaders(recoverStorage(mux))
+}
+
+func (s *Server) signupPolicy(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		fail(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	domains := make([]string, 0, len(s.signupAllowedDomains))
+	for domain := range s.signupAllowedDomains {
+		domains = append(domains, domain)
+	}
+	sort.Strings(domains)
+	writeJSON(w, http.StatusOK, map[string]any{"enabled": s.signupEnabled, "allowedDomains": domains})
+}
+
+func (s *Server) signup(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		fail(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if !s.signupEnabled {
+		fail(w, http.StatusForbidden, "self-service signup is disabled for this team")
+		return
+	}
+	type req struct {
+		Name string `json:"name"`
+		Email string `json:"email"`
+		Password string `json:"password"`
+	}
+	var q req
+	if decode(r, &q) != nil || len(q.Name) > 100 || len(q.Email) > 254 || len(q.Password) > 1024 {
+		fail(w, http.StatusBadRequest, "invalid request")
+		return
+	}
+	name := strings.TrimSpace(q.Name)
+	email := strings.ToLower(strings.TrimSpace(q.Email))
+	parsed, err := mail.ParseAddress(email)
+	if name == "" || parsed == nil || parsed.Address != email || len(q.Password) < 12 {
+		fail(w, http.StatusBadRequest, "enter a name, valid email, and password of at least 12 characters")
+		return
+	}
+	if len(s.signupAllowedDomains) > 0 {
+		parts := strings.Split(email, "@")
+		if len(parts) != 2 {
+			fail(w, http.StatusBadRequest, "email domain is not allowed for this team")
+			return
+		}
+		if _, ok := s.signupAllowedDomains[parts[1]]; !ok {
+			fail(w, http.StatusForbidden, "email domain is not allowed for this team")
+			return
+		}
+	}
+	ip, _, _ := net.SplitHostPort(r.RemoteAddr)
+	if ip == "" {
+		ip = r.RemoteAddr
+	}
+	if !s.allowed(ip) {
+		fail(w, http.StatusTooManyRequests, "too many signup attempts; try again later")
+		return
+	}
+	// Count all attempts, including successful registrations, against the same
+	// per-IP 15-minute budget used by login failures.
+	s.recordLoginFailure(ip)
+	u, err := s.store.CreateUser(name, email, q.Password, false)
+	if err != nil {
+		if strings.Contains(err.Error(), "email already exists") {
+			fail(w, http.StatusConflict, "an account with this email already exists; sign in instead")
+			return
+		}
+		fail(w, http.StatusInternalServerError, "could not create account")
+		return
+	}
+	token, err := randomID(32)
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	now := time.Now().UTC()
+	expires := now.Add(sessionTTL)
+	s.store.lock()
+	s.store.s.Sessions[token] = Session{u.ID, expires}
+	err = s.store.save()
+	if err != nil {
+		delete(s.store.s.Sessions, token)
+	}
+	s.store.unlock()
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "could not start session")
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{"token": token, "user": pub(u), "expiresAt": expires.Format(time.RFC3339)})
 }
 
 func recoverStorage(next http.Handler) http.Handler {

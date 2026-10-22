@@ -17,41 +17,106 @@ struct RootView: View {
     }
 }
 
-private struct LoginView: View {
+struct LoginView: View {
+    private struct SignupPolicy: Decodable { let enabled: Bool; let allowedDomains: [String] }
     @ObservedObject var store: AppStore
+    @State private var creatingAccount = false
+    @State private var name = ""
     @State private var email = ""
     @State private var password = ""
+    @State private var confirmPassword = ""
+    @State private var signupEnabled = true
+    @State private var signupDomains: [String] = []
     @State private var serverExpanded = false
     @FocusState private var focused: Bool
+    init(store: AppStore, creatingAccount: Bool = false) {
+        self.store = store
+        _creatingAccount = State(initialValue: creatingAccount)
+    }
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             Logo(size: 44).padding(.top, 12) // clear of the hidden title bar's window buttons
-            Text("Sign in to PairDesk").font(.system(size: 22, weight: .semibold))
-            Text("Use the account your team created.").foregroundStyle(Theme.textMuted).font(.system(size: 13))
+            Text(creatingAccount ? "Create your PairDesk account" : "Sign in to PairDesk")
+                .font(.system(size: 22, weight: .semibold))
+            Text(creatingAccount ? "Join your team and set your own password." : "Sign in with your team account.")
+                .foregroundStyle(Theme.textMuted).font(.system(size: 13))
+            HStack(spacing: 0) {
+                authTab("Sign in", selected: !creatingAccount) { creatingAccount = false }
+                authTab("Create account", selected: creatingAccount) { creatingAccount = true }
+            }
+            .padding(3).background(Theme.surface.opacity(0.8), in: RoundedRectangle(cornerRadius: 9))
+            .padding(.top, 4)
+            if creatingAccount {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("NAME").font(.system(size: 10, weight: .bold)).foregroundStyle(Theme.textMuted)
+                    TextField("Your name", text: $name).textFieldStyle(.roundedBorder)
+                }
+            }
             VStack(alignment: .leading, spacing: 8) {
                 Text("EMAIL").font(.system(size: 10, weight: .bold)).foregroundStyle(Theme.textMuted)
                 TextField("you@team.com", text: $email).textFieldStyle(.roundedBorder).focused($focused)
             }.padding(.top, 12)
             VStack(alignment: .leading, spacing: 8) {
                 Text("PASSWORD").font(.system(size: 10, weight: .bold)).foregroundStyle(Theme.textMuted)
-                SecureField("Your password", text: $password).textFieldStyle(.roundedBorder)
+                SecureField(creatingAccount ? "At least 12 characters" : "Your password", text: $password).textFieldStyle(.roundedBorder)
+            }
+            if creatingAccount {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("CONFIRM PASSWORD").font(.system(size: 10, weight: .bold)).foregroundStyle(Theme.textMuted)
+                    SecureField("Enter your password again", text: $confirmPassword).textFieldStyle(.roundedBorder)
+                }
             }
             Button {
                 let submitted = password
                 password = ""
-                Task { await store.login(email: email, password: submitted) }
+                let submittedEmail = email
+                if creatingAccount {
+                    let submittedName = name
+                    confirmPassword = ""
+                    Task { await store.signUp(name: submittedName, email: submittedEmail, password: submitted) }
+                } else {
+                    Task { await store.login(email: submittedEmail, password: submitted) }
+                }
             } label: {
-                HStack { Spacer(); if store.busy { ProgressView().controlSize(.small) } else { Text("Sign in").fontWeight(.semibold); Image(systemName: "arrow.right") }; Spacer() }
+                HStack { Spacer(); if store.busy { ProgressView().controlSize(.small) } else { Text(creatingAccount ? "Create account" : "Sign in").fontWeight(.semibold); Image(systemName: "arrow.right") }; Spacer() }
                     .padding(.vertical, 10)
-            }.buttonStyle(.borderedProminent).disabled(store.busy || email.isEmpty || password.isEmpty)
+            }.buttonStyle(.borderedProminent).disabled(store.busy || email.isEmpty || password.isEmpty || (creatingAccount && (name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || password.count < 12 || password != confirmPassword)))
                 .keyboardShortcut(.defaultAction)
             DisclosureGroup("Server address", isExpanded: $serverExpanded) {
                 TextField("https://pair.yourteam.com", text: $store.serverAddress).textFieldStyle(.roundedBorder).padding(.top, 8)
             }.font(.system(size: 12)).foregroundStyle(Theme.textMuted).disabled(store.busy)
-            Text("Need an account or password reset? Ask your team administrator.")
+            Text(creatingAccount ? signupNote : "Need help accessing your team account? Contact your team administrator.")
                 .font(.system(size: 11)).foregroundStyle(Theme.textMuted).fixedSize(horizontal: false, vertical: true)
         }.padding(32).frame(width: 380)
             .onAppear { focused = true }
+            .task { await loadSignupPolicy() }
+            .onChange(of: store.serverAddress) { _, _ in Task { await loadSignupPolicy() } }
+    }
+
+    private func authTab(_ title: String, selected: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title).font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(selected ? Color.primary : Theme.textMuted)
+                .frame(maxWidth: .infinity).padding(.vertical, 8)
+                .background(selected ? Theme.surface : .clear, in: RoundedRectangle(cornerRadius: 7))
+        }
+        .buttonStyle(.plain)
+        .disabled(store.busy || (title == "Create account" && !signupEnabled))
+    }
+
+    private var signupNote: String {
+        guard signupEnabled else { return "Self-service signup is turned off for this team. Contact your team administrator." }
+        let domainNote = signupDomains.isEmpty ? "Use the email address you use with your team." : "Use an email ending in " + signupDomains.map { "@\($0)" }.joined(separator: " or ") + "."
+        return domainNote + " Email verification is not currently enabled."
+    }
+
+    @MainActor
+    private func loadSignupPolicy() async {
+        guard let client = try? APIClient(server: store.serverAddress),
+              let policy: SignupPolicy = try? await client.request("v1/signup-policy") else { return }
+        signupEnabled = policy.enabled
+        signupDomains = policy.allowedDomains
+        if !signupEnabled { creatingAccount = false }
     }
 }
 

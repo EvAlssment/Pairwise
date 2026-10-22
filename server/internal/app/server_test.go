@@ -212,6 +212,59 @@ func TestAdminCreatesInvitedUserAndPublicPayloadOmitsSecrets(t *testing.T) {
 	}
 }
 
+func TestSelfServiceSignupCreatesNormalAccountAndSession(t *testing.T) {
+	s, _ := fixture(t)
+	h := s.Handler()
+	s.signupEnabled = true
+	s.signupAllowedDomains = nil
+	w := request(h, "POST", "/v1/signup", "", `{"name":"New Teammate","email":"New.Person@example.com","password":"a-strong-password"}`)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("signup status %d: %s", w.Code, w.Body)
+	}
+	var response struct {
+		Token string `json:"token"`
+		User apiUser `json:"user"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Token == "" || response.User.Email != "new.person@example.com" || response.User.Admin || !response.User.Enabled {
+		t.Fatalf("unexpected signup response: %+v", response)
+	}
+	if w := request(h, "GET", "/v1/me", response.Token, ""); w.Code != http.StatusOK {
+		t.Fatalf("signup session not authenticated: %d %s", w.Code, w.Body)
+	}
+	if w := request(h, "POST", "/v1/login", "", `{"email":"new.person@example.com","password":"a-strong-password"}`); w.Code != http.StatusOK {
+		t.Fatalf("new account cannot sign in: %d %s", w.Code, w.Body)
+	}
+}
+
+func TestSignupPolicyAndValidation(t *testing.T) {
+	s, _ := fixture(t)
+	h := s.Handler()
+	s.signupEnabled = false
+	if w := request(h, "GET", "/v1/signup-policy", "", ""); w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"enabled":false`) {
+		t.Fatalf("signup policy response: %d %s", w.Code, w.Body)
+	}
+	if w := request(h, "POST", "/v1/signup", "", `{"name":"New Teammate","email":"new@example.com","password":"a-strong-password"}`); w.Code != http.StatusForbidden {
+		t.Fatalf("disabled signup status %d", w.Code)
+	}
+	s.signupEnabled = true
+	s.signupAllowedDomains = map[string]struct{}{"example.com": {}}
+	if w := request(h, "POST", "/v1/signup", "", `{"name":"New Teammate","email":"new@other.com","password":"a-strong-password"}`); w.Code != http.StatusForbidden {
+		t.Fatalf("disallowed email domain status %d: %s", w.Code, w.Body)
+	}
+	if w := request(h, "POST", "/v1/signup", "", `{"name":"New Teammate","email":"new@example.com","password":"short"}`); w.Code != http.StatusBadRequest {
+		t.Fatalf("short password status %d: %s", w.Code, w.Body)
+	}
+	if w := request(h, "POST", "/v1/signup", "", `{"name":"New Teammate","email":"new@example.com","password":"a-strong-password"}`); w.Code != http.StatusCreated {
+		t.Fatalf("allowed email signup status %d: %s", w.Code, w.Body)
+	}
+	if w := request(h, "POST", "/v1/signup", "", `{"name":"New Teammate","email":"new@example.com","password":"a-strong-password"}`); w.Code != http.StatusConflict {
+		t.Fatalf("duplicate signup status %d: %s", w.Code, w.Body)
+	}
+}
+
 func TestAdminCanListResetAndDisableUsersWithoutExposingCredentialData(t *testing.T) {
 	s, member := fixture(t)
 	h := s.Handler()
@@ -438,11 +491,12 @@ func TestRoomReservationCapAndMediaToken(t *testing.T) {
 		t.Fatalf("join after leave: %d %s", w.Code, w.Body)
 	}
 }
-func TestHeartbeatAndNoSignup(t *testing.T) {
+func TestHeartbeatAndSignupEndpoint(t *testing.T) {
 	s, _ := fixture(t)
 	h := s.Handler()
-	if w := request(h, "POST", "/v1/signup", "", `{"email":"new@example.com"}`); w.Code != 404 {
-		t.Fatalf("signup route should not exist: %d", w.Code)
+	s.signupEnabled = true
+	if w := request(h, "POST", "/v1/signup", "", `{"email":"new@example.com"}`); w.Code != http.StatusBadRequest {
+		t.Fatalf("invalid signup should be rejected: %d", w.Code)
 	}
 	tok := login(t, s)
 	if w := request(h, "POST", "/v1/heartbeat", tok, `{}`); w.Code != 200 {

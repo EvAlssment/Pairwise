@@ -239,6 +239,30 @@ final class AppStore: ObservableObject {
         busy = false
     }
 
+    func signUp(name: String, email: String, password: String) async {
+        guard !busy else { return }
+        busy = true
+        error = nil
+        struct Body: Encodable { let name: String; let email: String; let password: String }
+        do {
+            let client = try APIClient(server: serverAddress)
+            let response: LoginResponse = try await client.post("v1/signup", body: Body(
+                name: name.trimmingCharacters(in: .whitespacesAndNewlines),
+                email: email.trimmingCharacters(in: .whitespacesAndNewlines),
+                password: password
+            ))
+            let saved = SavedSession(token: response.token, server: serverAddress)
+            if persistsSession {
+                try await Task.detached(priority: .userInitiated) { try SessionVault.save(saved) }.value
+            }
+            token = response.token
+            user = response.user
+            UserDefaults.standard.set(serverAddress, forKey: "serverAddress")
+            startRefresh()
+        } catch { self.error = error.localizedDescription }
+        busy = false
+    }
+
     func logout() async {
         guard !busy else { return }
         busy = true
