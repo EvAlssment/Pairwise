@@ -466,7 +466,7 @@ private final class SyntheticVideoReceiver: NSObject, RoomDelegate, VideoRendere
 }
 
 private struct SyntheticMediaBenchmark: Encodable {
-    let schemaVersion = 3
+    let schemaVersion = 4
     let classification: String
     let networkProfile: String
     let configuredNetwork: SyntheticNetworkProfile
@@ -485,6 +485,7 @@ private struct SyntheticMediaBenchmark: Encodable {
     let packetLossPercent: Double?
     let selectedPathRTTMilliseconds: Double?
     let harnessProcessCPUPercent: Double?
+    let runner: BenchmarkRunnerMetadata
     let unmeasured: [String]
 }
 
@@ -554,6 +555,7 @@ private func writeSyntheticBenchmark(_ snapshot: SyntheticVideoReceiver.Snapshot
         packetLossPercent: snapshot.packetLossPercent,
         selectedPathRTTMilliseconds: snapshot.selectedPathRTTMilliseconds,
         harnessProcessCPUPercent: processCPUPercent,
+        runner: BenchmarkRunnerMetadata.current(),
         unmeasured: ["pointer_to_render_latency", "sender_cpu", "receiver_cpu", "readability"])
     let encoder = JSONEncoder()
     encoder.outputFormatting = [.prettyPrinted, .sortedKeys]

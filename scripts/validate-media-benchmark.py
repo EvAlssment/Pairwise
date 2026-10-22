@@ -28,6 +28,7 @@ ALLOWED_FIELDS = {
     "packetLossPercent",
     "selectedPathRTTMilliseconds",
     "harnessProcessCPUPercent",
+    "runner",
     "unmeasured",
 }
 ALWAYS_UNMEASURED = {
@@ -53,6 +54,7 @@ CURSOR_FIELDS = {
     "sampleCount",
     "p50PublishToOverlayRenderMilliseconds",
     "p95PublishToOverlayRenderMilliseconds",
+    "runner",
     "measurement",
     "limitations",
 }
@@ -67,6 +69,19 @@ def finite_number(value: object) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
 
 
+def validate_runner_metadata(value: object, name: str) -> None:
+    fields = {"platform", "osVersion", "architecture", "modelIdentifier", "logicalCPUCount"}
+    if not isinstance(value, dict) or set(value) != fields:
+        raise ValueError(f"{name}: runner metadata contains unknown or missing fields")
+    if value["platform"] != "macOS":
+        raise ValueError(f"{name}: synthetic media benchmarks must identify the macOS runner")
+    for field in ("osVersion", "architecture", "modelIdentifier"):
+        if not isinstance(value[field], str) or not value[field].strip() or len(value[field]) > 80:
+            raise ValueError(f"{name}: invalid runner {field}")
+    if not isinstance(value["logicalCPUCount"], int) or isinstance(value["logicalCPUCount"], bool) or not 1 <= value["logicalCPUCount"] <= 256:
+        raise ValueError(f"{name}: invalid runner logicalCPUCount")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("reports", nargs="+")
@@ -77,6 +92,7 @@ def main() -> int:
     commits = set()
     run_ids = set()
     network_profiles = set()
+    runner_profiles = set()
     for name in args.reports:
         report = json.loads(Path(name).read_text(encoding="utf-8"))
         if not isinstance(report, dict) or not set(report).issubset(ALLOWED_FIELDS):
@@ -92,7 +108,7 @@ def main() -> int:
         }
         if not required.issubset(report):
             raise ValueError(f"{name}: benchmark is missing a required field")
-        if report["schemaVersion"] != 3:
+        if report["schemaVersion"] != 4:
             raise ValueError(f"{name}: unexpected benchmark schema or classification")
         profile = report["networkProfile"]
         if profile not in ("baseline", "constrained"):
@@ -133,6 +149,8 @@ def main() -> int:
         participants = report["participantCount"]
         if report["source"] != "synthetic-screen-track" or type(participants) is not int or participants not in (2, 4):
             raise ValueError(f"{name}: unexpected benchmark source or participant profile")
+        validate_runner_metadata(report["runner"], name)
+        runner_profiles.add(json.dumps(report["runner"], sort_keys=True))
         observed_profiles.add((profile, participants))
         if type(report["framesReceived"]) is not int or report["framesReceived"] <= 0:
             raise ValueError(f"{name}: benchmark did not receive video frames")
@@ -175,8 +193,10 @@ def main() -> int:
         report = json.loads(Path(name).read_text(encoding="utf-8"))
         if not isinstance(report, dict) or set(report) != CURSOR_FIELDS:
             raise ValueError(f"{name}: cursor benchmark contains unknown or missing fields")
-        if report["schemaVersion"] != 1 or report["classification"] != "synthetic-local-cursor-ci":
+        if report["schemaVersion"] != 2 or report["classification"] != "synthetic-local-cursor-ci":
             raise ValueError(f"{name}: unexpected cursor benchmark schema or classification")
+        validate_runner_metadata(report["runner"], name)
+        runner_profiles.add(json.dumps(report["runner"], sort_keys=True))
         profile = report["networkProfile"]
         participants = report["participantCount"]
         if profile not in ("baseline", "constrained") or type(participants) is not int or participants not in (2, 3):
@@ -205,6 +225,8 @@ def main() -> int:
         raise ValueError("cursor artifacts must include baseline and constrained 2-person/3-person profiles")
     if len(commits) != 1 or len(run_ids) != 1:
         raise ValueError("media and cursor profiles must come from the same commit and workflow run")
+    if len(runner_profiles) != 1:
+        raise ValueError("media and cursor profiles must come from the same CI runner")
     if args.conditioner:
         conditioner_path = Path(args.conditioner)
         conditioner = json.loads(conditioner_path.read_text(encoding="utf-8"))

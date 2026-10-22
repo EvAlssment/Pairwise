@@ -15,7 +15,7 @@ VALIDATOR = Path(__file__).resolve().parents[1] / "validate-media-benchmark.py"
 def benchmark(profile: str, participants: int) -> dict:
     constrained = profile == "constrained"
     return {
-        "schemaVersion": 3,
+        "schemaVersion": 4,
         "classification": f"synthetic-{profile}-ci",
         "networkProfile": profile,
         "configuredNetwork": {
@@ -39,13 +39,20 @@ def benchmark(profile: str, participants: int) -> dict:
         "packetLossPercent": 0.0,
         "selectedPathRTTMilliseconds": 40.0 if constrained else 2.0,
         "harnessProcessCPUPercent": 65.0,
+        "runner": {
+            "platform": "macOS",
+            "osVersion": "15.6.1",
+            "architecture": "arm64",
+            "modelIdentifier": "Mac14,5",
+            "logicalCPUCount": 8,
+        },
         "unmeasured": ["pointer_to_render_latency", "sender_cpu", "receiver_cpu", "readability"],
     }
 
 
 def cursor_benchmark(profile: str, participants: int) -> dict:
     return {
-        "schemaVersion": 1,
+        "schemaVersion": 2,
         "classification": "synthetic-local-cursor-ci",
         "networkProfile": profile,
         "commit": "test-commit",
@@ -55,6 +62,13 @@ def cursor_benchmark(profile: str, participants: int) -> dict:
         "sampleCount": 30,
         "p50PublishToOverlayRenderMilliseconds": 4.0,
         "p95PublishToOverlayRenderMilliseconds": 12.0,
+        "runner": {
+            "platform": "macOS",
+            "osVersion": "15.6.1",
+            "architecture": "arm64",
+            "modelIdentifier": "Mac14,5",
+            "logicalCPUCount": 8,
+        },
         "measurement": "sender publish call to the sharer's native overlay view render pass",
         "limitations": [
             "single-host LiveKit loopback",
@@ -96,6 +110,8 @@ class MediaBenchmarkValidatorTests(unittest.TestCase):
         zero_drops: bool = False,
         negative_rtt: bool = False,
         missing_outbound_traffic: bool = False,
+        missing_runner_metadata: bool = False,
+        mismatched_runner_metadata: bool = False,
     ) -> subprocess.CompletedProcess[str]:
         with tempfile.TemporaryDirectory(prefix="pairwise-benchmark-validator-") as temporary:
             reports = []
@@ -106,6 +122,10 @@ class MediaBenchmarkValidatorTests(unittest.TestCase):
                         report["receivedBitrateKilobitsPerSecond"] = 0
                     if negative_rtt and profile == "baseline" and participants == 2:
                         report["selectedPathRTTMilliseconds"] = -1
+                    if missing_runner_metadata and profile == "baseline" and participants == 2:
+                        report["runner"] = {}
+                    if mismatched_runner_metadata and profile == "constrained" and participants == 2:
+                        report["runner"]["architecture"] = "x86_64"
                     path = Path(temporary) / f"{profile}-{participants}p.json"
                     path.write_text(json.dumps(report), encoding="utf-8")
                     reports.append(str(path))
@@ -166,6 +186,16 @@ class MediaBenchmarkValidatorTests(unittest.TestCase):
         result = self.run_validator(negative_rtt=True)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("missing or invalid measured field: selectedPathRTTMilliseconds", result.stderr)
+
+    def test_rejects_benchmark_without_runner_metadata(self) -> None:
+        result = self.run_validator(missing_runner_metadata=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("runner metadata contains unknown or missing fields", result.stderr)
+
+    def test_rejects_profiles_from_different_runners(self) -> None:
+        result = self.run_validator(mismatched_runner_metadata=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("profiles must come from the same CI runner", result.stderr)
 
 
 if __name__ == "__main__":

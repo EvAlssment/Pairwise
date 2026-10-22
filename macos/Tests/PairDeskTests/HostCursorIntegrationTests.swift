@@ -365,7 +365,7 @@ private func measureCursorToOverlayRender(viewer: Room, host: RTCService, hostId
 }
 
 private struct SyntheticCursorBenchmark: Encodable {
-    let schemaVersion = 1
+    let schemaVersion = 2
     let classification: String
     let networkProfile: String
     let commit: String?
@@ -375,6 +375,7 @@ private struct SyntheticCursorBenchmark: Encodable {
     let sampleCount: Int
     let p50PublishToOverlayRenderMilliseconds: Double
     let p95PublishToOverlayRenderMilliseconds: Double
+    let runner: BenchmarkRunnerMetadata
     let measurement: String
     let limitations: [String]
 }
@@ -400,6 +401,7 @@ private func writeSyntheticCursorBenchmark(_ samples: [Double], participantCount
         generatedAt: formatter.string(from: Date()), participantCount: participantCount,
         sampleCount: samples.count, p50PublishToOverlayRenderMilliseconds: percentile(0.50),
         p95PublishToOverlayRenderMilliseconds: percentile(0.95),
+        runner: BenchmarkRunnerMetadata.current(),
         measurement: "sender publish call to the sharer's native overlay view render pass",
         limitations: ["single-host LiveKit loopback", "no physical display scanout", "not a cross-region one-way latency"])
     let encoder = JSONEncoder()
