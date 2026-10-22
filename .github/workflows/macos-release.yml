@@ -25,7 +25,6 @@ jobs:
       APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
       PAIRDESK_SERVER_URL: ${{ vars.PAIRDESK_SERVER_URL }}
       PAIRDESK_NOTARY_PROFILE: pairdesk-release-notary
-      PAIRDESK_RELEASE_OUTPUT: ${{ runner.temp }}/pairdesk-release
       GH_TOKEN: ${{ github.token }}
 
     steps:
@@ -92,9 +91,13 @@ jobs:
         run: sh scripts/build-app.sh
 
       - name: Sign, notarize, package, and assess
+        env:
+          PAIRDESK_RELEASE_OUTPUT: ${{ runner.temp }}/pairdesk-release
         run: sh scripts/release-app.sh
 
       - name: Publish GitHub release
+        env:
+          PAIRDESK_RELEASE_OUTPUT: ${{ runner.temp }}/pairdesk-release
         run: |
           gh release create "$GITHUB_REF_NAME" \
             "$PAIRDESK_RELEASE_OUTPUT/PairDesk.dmg" \
@@ -107,6 +110,8 @@ jobs:
       - name: Remove temporary signing material
         if: always()
         shell: bash
+        env:
+          PAIRDESK_RELEASE_OUTPUT: ${{ runner.temp }}/pairdesk-release
         run: |
           set +e
           if [[ -n "${PAIRDESK_KEYCHAIN_PATH:-}" ]]; then
