@@ -102,6 +102,27 @@ These do not replace the issue #3 call and control matrix above.
 | Sustained call | Complete a 30-minute call, recording only quality metrics and interruption counts at fixed intervals. | Not run |
 | Older supported hardware/OS | Record results only for hardware and macOS versions that the release claims to support. | Not run |
 
+## Open-issue acceptance gates
+
+These rows make the remaining issue-specific checks executable. Keep each result
+**Not run** until its actual device or production path has been exercised. A
+unit test, simulator, local LiveKit run, or green CI job is useful evidence but
+does not replace a row that explicitly requires a physical device, signed
+release, external client, or production delivery.
+
+| Issue | Scenario | Pass evidence | Result / evidence |
+|---|---|---|---|
+| #1, #34 | Signed release and in-place update | Install a Developer ID-signed, notarized build from a clean download; pass Gatekeeper; update in place; confirm the app launches and previously granted permissions still work. Record both build versions and signatures. | Not run |
+| #2 | Permission lifecycle | On macOS 14 and the current supported macOS, exercise fresh install, allow, deny, revoke, relaunch, update, and a second app copy. Verify the running copy's actual capability and retry behavior. Use a dedicated test Mac; do not reset TCC on a daily-use machine. | Not run |
+| #5, #35 | Screen source, crop, adaptive quality, and readability | At 1440p30 and the 4K30 maximum, switch display/window/crop while sharing. Record viewer resolution/FPS, RTT/loss, first-frame and recovery time, and the smallest readable synthetic text at 100% zoom. Repeat on a second network and a 3–4 person call. Follow the detailed [media benchmark procedure](media-quality-benchmarks.md). | Not run |
+| #6 | Audio device recovery | Test the built-in input/output and an external USB or Bluetooth device. Switch routes during a call, unplug/reconnect the active device, and verify mute, meter, selected-device display, fallback, and recovery. Confirm no microphone starts before explicit user action. | Not run |
+| #27 | Camera opt-in and recovery | Confirm camera starts off. Enable it explicitly, inspect capture/receive dimensions and FPS, switch cameras, disconnect/reconnect the active device, and deny/revoke camera permission. Verify voice and screen sharing remain usable and no frames are recorded. | Not run |
+| #29 | Mobile call and push lifecycle | On signed physical iOS and Android installs, test direct-call and join-request actions while foregrounded, backgrounded, and force-quit; cover accept, decline, expiry, token refresh, logout, audio routing, and camera opt-in. Record provider/build versions without APNs/FCM tokens. If managed credentials or devices are unavailable, leave this row Not run. | Not run |
+| #30 | Native picker and external MCP client | During a real call, grant transcript and screenshot separately, invoke the bundled MCP bridge from a real external MCP client, approve Apple's on-demand picker, verify the returned image renders, then revoke and end the call. Confirm the helper cannot access content afterward and no content lands in the local audit log. | Not run |
+| #31 | Privacy veil | Before sharing, configure a protected app/window and notification exclusion. Verify from the viewer that the first transmitted frame omits protected content; change apps/windows and switch sources; verify fail-closed behavior and local usability; confirm remote control stays disabled while protected content is hidden. Do not save the viewer image or source footage. | Not run |
+| #32 | Annotations | On Retina/scaled displays and with crop/window changes, draw, laser-point, and clear from multiple participants. Confirm alignment, expiry on disconnect/share change, and that annotation gestures never click or type into the host Mac. | Not run |
+| #7 | Recovery and alert delivery | Run an isolated restore from a real production backup, verify an existing account can authenticate after restore, and record recovery time. Separately verify the configured monitoring alert arrives in its destination inbox; an enabled policy or open alert alone is not delivery evidence. | Not run |
+
 ## Sign-off
 
 Do not mark the issue accepted until every required matrix row has a result, the
