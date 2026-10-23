@@ -15,7 +15,7 @@ VALIDATOR = Path(__file__).resolve().parents[1] / "validate-media-benchmark.py"
 def benchmark(profile: str, participants: int) -> dict:
     constrained = profile == "constrained"
     return {
-        "schemaVersion": 4,
+        "schemaVersion": 5,
         "classification": f"synthetic-{profile}-ci",
         "networkProfile": profile,
         "configuredNetwork": {
@@ -39,6 +39,15 @@ def benchmark(profile: str, participants: int) -> dict:
         "packetLossPercent": 0.0,
         "selectedPathRTTMilliseconds": 40.0 if constrained else 2.0,
         "harnessProcessCPUPercent": 65.0,
+        "syntheticReadability": {
+            "recognizedLines": 3,
+            "totalLines": 4,
+            "recognizedTextPercent": 75.0,
+            "testedFontSizesPixels": [12, 16, 20, 24],
+            "recognizedFontSizesPixels": [16, 20, 24],
+            "smallestRecognizedFontPixels": 16,
+            "measurement": "Vision OCR of a transient synthetic decoded frame; recognized text is not stored",
+        },
         "runner": {
             "platform": "macOS",
             "osVersion": "15.6.1",
@@ -46,7 +55,7 @@ def benchmark(profile: str, participants: int) -> dict:
             "modelIdentifier": "Mac14,5",
             "logicalCPUCount": 8,
         },
-        "unmeasured": ["pointer_to_render_latency", "sender_cpu", "receiver_cpu", "readability"],
+        "unmeasured": ["pointer_to_render_latency", "sender_cpu", "receiver_cpu", "physical_readability"],
     }
 
 
@@ -107,6 +116,7 @@ class MediaBenchmarkValidatorTests(unittest.TestCase):
     def run_validator(
         self,
         zero_bitrate: bool = False,
+        malformed_readability: bool = False,
         zero_drops: bool = False,
         negative_rtt: bool = False,
         missing_outbound_traffic: bool = False,
@@ -120,6 +130,8 @@ class MediaBenchmarkValidatorTests(unittest.TestCase):
                     report = benchmark(profile, participants)
                     if zero_bitrate:
                         report["receivedBitrateKilobitsPerSecond"] = 0
+                    if malformed_readability:
+                        report["syntheticReadability"]["recognizedTextPercent"] = 100.0
                     if negative_rtt and profile == "baseline" and participants == 2:
                         report["selectedPathRTTMilliseconds"] = -1
                     if missing_runner_metadata and profile == "baseline" and participants == 2:
@@ -160,6 +172,7 @@ class MediaBenchmarkValidatorTests(unittest.TestCase):
         result = self.run_validator()
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("received bitrate 850 kbit/s", result.stdout)
+        self.assertIn("synthetic OCR 3/4 lines", result.stdout)
         self.assertIn("dummynet: 693 packets, 166721 bytes, 3 dropped", result.stdout)
 
     def test_cursor_latency_is_reported_with_explicit_loopback_limits(self) -> None:
@@ -171,6 +184,11 @@ class MediaBenchmarkValidatorTests(unittest.TestCase):
         result = self.run_validator(zero_bitrate=True)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("received bitrate must be a positive measured value", result.stderr)
+
+    def test_rejects_inconsistent_synthetic_readability_percentage(self) -> None:
+        result = self.run_validator(malformed_readability=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("percentage does not match recognized line count", result.stderr)
 
     def test_rejects_conditioner_without_observed_packet_drops(self) -> None:
         result = self.run_validator(zero_drops=True)

@@ -1,7 +1,9 @@
 import Foundation
 import XCTest
 import CoreVideo
+import CoreText
 import Darwin
+import Vision
 @preconcurrency import LiveKit
 @testable import PairDesk
 
@@ -50,7 +52,9 @@ final class CallIntegrationTests: XCTestCase {
             let track = await LocalVideoTrack.createBufferTrack(name: "pairdesk.screen.1to1",
                 source: .screenShareVideo, options: BufferCaptureOptions(dimensions: .h1080_169, fps: 30))
             let capturer = try XCTUnwrap(track.capturer as? BufferCapturer)
-            let frames = try (0..<6).map { try syntheticPixelBuffer(width: 1_920, height: 1_080, phase: $0 * 29) }
+            let frames = try (0..<6).map {
+                try syntheticPixelBuffer(width: 1_920, height: 1_080, phase: $0 * 29, includeTextPattern: true)
+            }
             capturer.capture(try XCTUnwrap(frames.first))
             frameTask = Task {
                 var frame = 1
@@ -84,8 +88,12 @@ final class CallIntegrationTests: XCTestCase {
                 }
             }
             try await receiver.waitForRecovery(timeout: 10)
+            let readability = try XCTUnwrap(SyntheticReadabilityMetrics.measure(metrics.firstFrame),
+                                            "synthetic decoded frame should support OCR measurement")
+            XCTAssertGreaterThan(readability.recognizedLines, 0, "text-pattern measurement should recognize at least one line")
             try writeSyntheticBenchmark(metrics, recoveryMilliseconds: receiver.recoveryMilliseconds,
-                                        processCPUPercent: processCPUPercent, participantCount: media.count)
+                                        processCPUPercent: processCPUPercent, readability: readability,
+                                        participantCount: media.count)
             frameTask?.cancel()
             await frameTask?.value
             frameTask = nil
@@ -259,7 +267,9 @@ final class CallIntegrationTests: XCTestCase {
                 name: "pairdesk.screen.fixture", source: .screenShareVideo,
                 options: BufferCaptureOptions(dimensions: .h1080_169, fps: 30))
             let capturer = try XCTUnwrap(track.capturer as? BufferCapturer)
-            let screenFrames = try (0..<8).map { try syntheticPixelBuffer(width: 1_920, height: 1_080, phase: $0 * 37) }
+            let screenFrames = try (0..<8).map {
+                try syntheticPixelBuffer(width: 1_920, height: 1_080, phase: $0 * 37, includeTextPattern: true)
+            }
             capturer.capture(try XCTUnwrap(screenFrames.first))
             frameTask = Task {
                 var phase = 1
@@ -295,8 +305,13 @@ final class CallIntegrationTests: XCTestCase {
             try await videoReceiver.waitForRecovery(timeout: 10)
             let recoveryMilliseconds = videoReceiver.recoveryMilliseconds
             if let metrics = videoMetrics {
+                let readability = try XCTUnwrap(SyntheticReadabilityMetrics.measure(metrics.firstFrame),
+                                                "synthetic decoded frame should support OCR measurement")
+                XCTAssertGreaterThan(readability.recognizedLines, 0,
+                                     "text-pattern measurement should recognize at least one line")
                 try writeSyntheticBenchmark(metrics, recoveryMilliseconds: recoveryMilliseconds,
-                                            processCPUPercent: processCPUPercent, participantCount: media.count)
+                                            processCPUPercent: processCPUPercent, readability: readability,
+                                            participantCount: media.count)
             }
             frameTask?.cancel()
             await frameTask?.value
@@ -341,7 +356,8 @@ final class CallIntegrationTests: XCTestCase {
         for client in clients { try? await client.send("v1/rooms/\(roomID)/leave", body: EmptyBody()) }
     }
 
-    private func syntheticPixelBuffer(width: Int = 640, height: Int = 480, phase: Int = 0) throws -> CVPixelBuffer {
+    private func syntheticPixelBuffer(width: Int = 640, height: Int = 480, phase: Int = 0,
+                                      includeTextPattern: Bool = false) throws -> CVPixelBuffer {
         var buffer: CVPixelBuffer?
         let result = CVPixelBufferCreate(kCFAllocatorDefault, width, height, kCVPixelFormatType_32BGRA,
                                         [kCVPixelBufferIOSurfacePropertiesKey: [:]] as CFDictionary, &buffer)
@@ -351,14 +367,37 @@ final class CallIntegrationTests: XCTestCase {
         defer { CVPixelBufferUnlockBaseAddress(pixel, []) }
         let bytes = try XCTUnwrap(CVPixelBufferGetBaseAddress(pixel))
         let rowBytes = CVPixelBufferGetBytesPerRow(pixel)
+        let width = CVPixelBufferGetWidth(pixel)
         let height = CVPixelBufferGetHeight(pixel)
-        memset(bytes, 0, rowBytes * height)
+        guard let context = CGContext(data: bytes, width: width, height: height,
+                                      bitsPerComponent: 8, bytesPerRow: rowBytes,
+                                      space: CGColorSpaceCreateDeviceRGB(),
+                                      bitmapInfo: CGBitmapInfo.byteOrder32Little.union(
+                                        CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedFirst.rawValue)).rawValue) else {
+            throw NSError(domain: "SyntheticVideo", code: 1,
+                          userInfo: [NSLocalizedDescriptionKey: "Could not create synthetic test-pattern context"])
+        }
+        context.setFillColor(CGColor(gray: includeTextPattern ? 0.04 : 0, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        if includeTextPattern {
+            for (index, size) in [12, 16, 20, 24].enumerated() {
+                let label = "PAIRWISE \(size)PX SAMPLE 0123456789"
+                let font = CTFontCreateWithName("Menlo" as CFString, CGFloat(size), nil)
+                let attributes: [NSAttributedString.Key: Any] = [
+                    NSAttributedString.Key(kCTFontAttributeName as String): font,
+                    NSAttributedString.Key(kCTForegroundColorAttributeName as String): CGColor(gray: 0.82, alpha: 1),
+                ]
+                let line = CTLineCreateWithAttributedString(NSAttributedString(string: label, attributes: attributes))
+                context.textPosition = CGPoint(x: 48, y: CGFloat(height - 80 - index * 72))
+                CTLineDraw(line, context)
+            }
+        }
+        // Keep a moving marker so frame delivery/FPS still uses dynamic content.
+        context.setFillColor(CGColor(gray: 1, alpha: 1))
         let markerSize = 24
         let markerRow = phase % max(1, height - markerSize)
-        let markerColumn = (phase * 7) % max(1, CVPixelBufferGetWidth(pixel) - markerSize)
-        for row in markerRow..<markerRow + markerSize {
-            memset(bytes.advanced(by: row * rowBytes + markerColumn * 4), 255, markerSize * 4)
-        }
+        let markerColumn = (phase * 7) % max(1, width - markerSize)
+        context.fill(CGRect(x: markerColumn, y: markerRow, width: markerSize, height: markerSize))
         return pixel
     }
 }
@@ -373,6 +412,7 @@ private final class SyntheticVideoReceiver: NSObject, RoomDelegate, VideoRendere
         let timeToFirstFrameMilliseconds: Double?
         let packetLossPercent: Double?
         let selectedPathRTTMilliseconds: Double?
+        let firstFrame: CVPixelBuffer?
     }
 
     let expectation: XCTestExpectation
@@ -385,6 +425,7 @@ private final class SyntheticVideoReceiver: NSObject, RoomDelegate, VideoRendere
     private var measuredFrameCount = 0
     private var measuredWidth: Int?
     private var measuredHeight: Int?
+    private var firstFrame: CVPixelBuffer?
     private var remoteVideoTrack: RemoteVideoTrack?
     private var recoveryStartedAt: TimeInterval?
     private var storedRecoveryMilliseconds: Double?
@@ -418,6 +459,7 @@ private final class SyntheticVideoReceiver: NSObject, RoomDelegate, VideoRendere
         if measuredWidth == nil {
             measuredWidth = Int(frame.dimensions.width)
             measuredHeight = Int(frame.dimensions.height)
+            firstFrame = frame.toCVPixelBuffer()
         }
         let shouldFulfill = measuredFrameCount == 1
         lock.unlock()
@@ -446,7 +488,8 @@ private final class SyntheticVideoReceiver: NSObject, RoomDelegate, VideoRendere
         return Snapshot(width: measuredWidth, height: measuredHeight, frameCount: measuredFrameCount,
                         observedFramesPerSecond: fps, receivedBitrateKilobitsPerSecond: bitrate,
                         timeToFirstFrameMilliseconds: firstFrameMilliseconds,
-                        packetLossPercent: packetLoss, selectedPathRTTMilliseconds: rtt)
+                        packetLossPercent: packetLoss, selectedPathRTTMilliseconds: rtt,
+                        firstFrame: firstFrame)
     }
 
     func markRecoveryStart() {
@@ -468,7 +511,7 @@ private final class SyntheticVideoReceiver: NSObject, RoomDelegate, VideoRendere
 }
 
 private struct SyntheticMediaBenchmark: Encodable {
-    let schemaVersion = 4
+    let schemaVersion = 5
     let classification: String
     let networkProfile: String
     let configuredNetwork: SyntheticNetworkProfile
@@ -487,8 +530,48 @@ private struct SyntheticMediaBenchmark: Encodable {
     let packetLossPercent: Double?
     let selectedPathRTTMilliseconds: Double?
     let harnessProcessCPUPercent: Double?
+    let syntheticReadability: SyntheticReadabilityMetrics?
     let runner: BenchmarkRunnerMetadata
     let unmeasured: [String]
+}
+
+private struct SyntheticReadabilityMetrics: Encodable {
+    let recognizedLines: Int
+    let totalLines: Int
+    let recognizedTextPercent: Double
+    let testedFontSizesPixels: [Int]
+    let recognizedFontSizesPixels: [Int]
+    let smallestRecognizedFontPixels: Int?
+    let measurement: String
+
+    static func measure(_ pixelBuffer: CVPixelBuffer?) -> Self? {
+        guard let pixelBuffer else { return nil }
+        let sizes = [12, 16, 20, 24]
+        let expected = sizes.map { "PAIRWISE \($0)PX SAMPLE 0123456789" }
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .accurate
+        request.usesLanguageCorrection = false
+        do {
+            try VNImageRequestHandler(cvPixelBuffer: pixelBuffer).perform([request])
+        } catch {
+            return nil
+        }
+        let observations = request.results ?? []
+        let normalizedObservations = observations.compactMap { observation in
+            observation.topCandidates(1).first?.string
+                .replacingOccurrences(of: " ", with: "")
+                .uppercased()
+        }
+        let recognizedSizes = zip(sizes, expected).compactMap { size, expectedLine -> Int? in
+            let normalized = expectedLine.replacingOccurrences(of: " ", with: "").uppercased()
+            return normalizedObservations.contains { $0.contains(normalized) } ? size : nil
+        }
+        return Self(recognizedLines: recognizedSizes.count, totalLines: expected.count,
+                    recognizedTextPercent: Double(recognizedSizes.count) / Double(expected.count) * 100,
+                    testedFontSizesPixels: sizes, recognizedFontSizesPixels: recognizedSizes,
+                    smallestRecognizedFontPixels: recognizedSizes.min(),
+                    measurement: "Vision OCR of a transient synthetic decoded frame; recognized text is not stored")
+    }
 }
 
 private struct ProcessCPUProbe {
@@ -521,6 +604,7 @@ private struct SyntheticNetworkProfile: Encodable {
 
 private func writeSyntheticBenchmark(_ snapshot: SyntheticVideoReceiver.Snapshot,
                                     recoveryMilliseconds: Double?, processCPUPercent: Double?,
+                                    readability: SyntheticReadabilityMetrics?,
                                     participantCount: Int) throws {
     guard let path = ProcessInfo.processInfo.environment["PAIRDESK_MEDIA_BENCHMARK_OUTPUT"] else { return }
     let profile = ProcessInfo.processInfo.environment["PAIRDESK_BENCHMARK_PROFILE"] ?? "baseline"
@@ -557,8 +641,9 @@ private func writeSyntheticBenchmark(_ snapshot: SyntheticVideoReceiver.Snapshot
         packetLossPercent: snapshot.packetLossPercent,
         selectedPathRTTMilliseconds: snapshot.selectedPathRTTMilliseconds,
         harnessProcessCPUPercent: processCPUPercent,
+        syntheticReadability: readability,
         runner: BenchmarkRunnerMetadata.current(),
-        unmeasured: ["pointer_to_render_latency", "sender_cpu", "receiver_cpu", "readability"])
+        unmeasured: ["pointer_to_render_latency", "sender_cpu", "receiver_cpu", "physical_readability"])
     let encoder = JSONEncoder()
     encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
     let requestedOutput = URL(fileURLWithPath: path)

@@ -28,6 +28,7 @@ ALLOWED_FIELDS = {
     "packetLossPercent",
     "selectedPathRTTMilliseconds",
     "harnessProcessCPUPercent",
+    "syntheticReadability",
     "runner",
     "unmeasured",
 }
@@ -35,7 +36,7 @@ ALWAYS_UNMEASURED = {
     "pointer_to_render_latency",
     "sender_cpu",
     "receiver_cpu",
-    "readability",
+    "physical_readability",
 }
 MEASUREMENTS = {
     "receivedBitrateKilobitsPerSecond": (0, 100_000),
@@ -108,7 +109,7 @@ def main() -> int:
         }
         if not required.issubset(report):
             raise ValueError(f"{name}: benchmark is missing a required field")
-        if report["schemaVersion"] != 4:
+        if report["schemaVersion"] != 5:
             raise ValueError(f"{name}: unexpected benchmark schema or classification")
         profile = report["networkProfile"]
         if profile not in ("baseline", "constrained"):
@@ -158,7 +159,30 @@ def main() -> int:
         if not isinstance(unmeasured, list) or len(unmeasured) != len(set(unmeasured)):
             raise ValueError(f"{name}: unmeasured fields must be a unique list")
         if set(unmeasured) != ALWAYS_UNMEASURED:
-            raise ValueError(f"{name}: pointer latency, CPU, and readability must remain explicitly unmeasured")
+            raise ValueError(f"{name}: pointer latency, endpoint CPU, and physical readability must remain explicitly unmeasured")
+        readability = report["syntheticReadability"]
+        if not isinstance(readability, dict) or set(readability) != {
+            "recognizedLines", "totalLines", "recognizedTextPercent", "testedFontSizesPixels",
+            "recognizedFontSizesPixels",
+            "smallestRecognizedFontPixels", "measurement",
+        }:
+            raise ValueError(f"{name}: malformed synthetic readability measurement")
+        tested_sizes = readability["testedFontSizesPixels"]
+        recognized_sizes = readability["recognizedFontSizesPixels"]
+        if tested_sizes != [12, 16, 20, 24] or not isinstance(recognized_sizes, list):
+            raise ValueError(f"{name}: synthetic readability must report the tested font sizes")
+        if any(type(size) is not int or size not in tested_sizes for size in recognized_sizes) or len(recognized_sizes) != len(set(recognized_sizes)):
+            raise ValueError(f"{name}: recognized synthetic font sizes must be unique tested sizes")
+        if readability["totalLines"] != len(tested_sizes) or type(readability["recognizedLines"]) is not int or readability["recognizedLines"] != len(recognized_sizes):
+            raise ValueError(f"{name}: synthetic readability must cover the four expected text sizes")
+        expected_percent = readability["recognizedLines"] / readability["totalLines"] * 100
+        if not finite_number(readability["recognizedTextPercent"]) or abs(readability["recognizedTextPercent"] - expected_percent) > 0.01:
+            raise ValueError(f"{name}: synthetic readability percentage does not match recognized line count")
+        smallest = readability["smallestRecognizedFontPixels"]
+        if smallest != (min(recognized_sizes) if recognized_sizes else None):
+            raise ValueError(f"{name}: smallest recognized font must match the recognized-line result")
+        if readability["measurement"] != "Vision OCR of a transient synthetic decoded frame; recognized text is not stored":
+            raise ValueError(f"{name}: synthetic readability method must be explicitly identified")
         for field, (minimum, maximum) in MEASUREMENTS.items():
             value = report.get(field)
             if (
@@ -180,7 +204,8 @@ def main() -> int:
             f"{profile} {participants}p: selected RTT {report['selectedPathRTTMilliseconds']:.1f} ms, "
             f"packet loss {report['packetLossPercent']:.2f}%, "
             f"observed FPS {report['observedFramesPerSecond']:.1f}, "
-            f"received bitrate {report['receivedBitrateKilobitsPerSecond']:.0f} kbit/s"
+            f"received bitrate {report['receivedBitrateKilobitsPerSecond']:.0f} kbit/s, "
+            f"synthetic OCR {readability['recognizedLines']}/{readability['totalLines']} lines"
         )
     if observed_profiles != {("baseline", 2), ("baseline", 4), ("constrained", 2), ("constrained", 4)}:
         raise ValueError("benchmark artifacts must include baseline and constrained 2-person/4-person profiles")
