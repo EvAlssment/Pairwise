@@ -23,6 +23,7 @@ jobs:
     environment: production
     permissions:
       contents: read
+      actions: read
       id-token: write
     steps:
       - uses: actions/checkout@v7
@@ -44,6 +45,26 @@ jobs:
           for name in GCP_PROJECT GCP_ZONE GCP_VM WIF_PROVIDER DEPLOY_SERVICE_ACCOUNT; do
             [[ -n "${!name:-}" ]] || { echo "Missing repository variable: $name" >&2; exit 1; }
           done
+
+      - name: Require successful push CI for this exact main commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          runs="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow tests.yml \
+            --branch main --commit "$GITHUB_SHA" --limit 20 \
+            --json event,status,conclusion)"
+          push_run="$(jq -c '[.[] | select(.event == "push")][0] // empty' <<< "$runs")"
+          if [[ -z "$push_run" ]]; then
+            echo 'No push CI run exists for this exact main commit; wait for CI then dispatch again.' >&2
+            exit 1
+          fi
+          status="$(jq -r '.status' <<< "$push_run")"
+          conclusion="$(jq -r '.conclusion // empty' <<< "$push_run")"
+          if [[ "$status" != completed || "$conclusion" != success ]]; then
+            echo "Push CI for $GITHUB_SHA is $status/$conclusion; deployment requires completed success." >&2
+            exit 1
+          fi
 
       - uses: google-github-actions/auth@v3
         with:

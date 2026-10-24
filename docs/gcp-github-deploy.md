@@ -1,7 +1,8 @@
 # Manual GCP production deployment
 
 The `Deploy Pairwise to GCP production` workflow runs only when manually
-dispatched from `main` and the operator types `DEPLOY`. It uses GitHub OIDC and
+dispatched from `main`, the operator types `DEPLOY`, and the push CI run for
+that exact commit has completed successfully. It uses GitHub OIDC and
 Workload Identity Federation (no service-account key), transfers a source-only
 archive through IAP, rebuilds only the API container, and verifies `/readyz`
 and the exact `/version` commit before reporting success. If verification fails,
