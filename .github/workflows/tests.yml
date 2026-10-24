@@ -33,6 +33,20 @@ jobs:
         working-directory: mobile/android
         run: ./gradlew --no-daemon testDebugUnitTest assembleRelease
 
+  ios:
+    runs-on: macos-15
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build iOS simulator app without signing
+        run: >-
+          xcodebuild -quiet
+          -project mobile/ios/PairDesk.xcodeproj
+          -scheme PairDesk
+          -destination 'generic/platform=iOS Simulator'
+          CODE_SIGNING_ALLOWED=NO
+          build
+
   postgres-integration:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
