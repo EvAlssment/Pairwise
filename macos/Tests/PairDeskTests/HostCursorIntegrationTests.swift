@@ -256,8 +256,20 @@ final class HostCursorIntegrationTests: XCTestCase {
                     options: DataPublishOptions(destinationIdentities: [Participant.Identity(from: hostJoin.participantIdentity)],
                                                 topic: "pairdesk.control.v1", reliable: false))
             }
-            try await send(1)
-            try await waitFor { host.remotePointers.first?.x == 0.25 }
+            func sendUntil(_ sequence: UInt64, x: Double = 0.25, y: Double = 0.75,
+                           visible: Bool = true, session: String = "share-one",
+                           condition: () -> Bool) async throws {
+                // Cursor presence intentionally uses an unreliable channel.
+                // Re-publish the same idempotent state until the receiver sees
+                // it instead of making packet delivery part of this test.
+                for _ in 0..<20 {
+                    try await send(sequence, x: x, y: y, visible: visible, session: session)
+                    if condition() { return }
+                    try await Task.sleep(for: .milliseconds(100))
+                }
+                XCTFail("Cursor state did not propagate after retrying the lossy presence packet")
+            }
+            try await sendUntil(1) { host.remotePointers.first?.x == 0.25 }
             XCTAssertTrue(panel.isVisible)
             XCTAssertEqual(content.rootView.names[viewerID], users[1].name)
             XCTAssertEqual(content.rootView.pointers.first?.id, viewerID)
@@ -270,15 +282,12 @@ final class HostCursorIntegrationTests: XCTestCase {
             // The benchmark's retry sequence advances past 241; use larger
             // values here so the production monotonic-sequence guard accepts
             // the follow-up lifecycle assertions.
-            try await send(250, x: 0.8, y: 0.2)
-            try await waitFor { host.remotePointers.first?.x == 0.8 }
+            try await sendUntil(250, x: 0.8, y: 0.2) { host.remotePointers.first?.x == 0.8 }
             XCTAssertEqual(host.remotePointers.count, 1)
             XCTAssertEqual(content.rootView.pointers.first?.y, 0.2)
-            try await send(251, visible: false)
-            try await waitFor { host.remotePointers.isEmpty }
+            try await sendUntil(251, visible: false) { host.remotePointers.isEmpty }
             XCTAssertFalse(panel.isVisible)
-            try await send(252)
-            try await waitFor { !host.remotePointers.isEmpty }
+            try await sendUntil(252) { !host.remotePointers.isEmpty }
             try await waitFor { host.remotePointers.isEmpty }
             XCTAssertFalse(panel.isVisible, "A silent viewer's stale cursor must expire")
 
@@ -287,8 +296,7 @@ final class HostCursorIntegrationTests: XCTestCase {
             let replacement = try XCTUnwrap(host.debugHostCursorPanel)
             XCTAssertFalse(replacement === panel)
             try await send(99, session: "share-one")
-            try await send(1, x: 0.5, y: 0.5, session: "share-two")
-            try await waitFor { host.remotePointers.first?.x == 0.5 }
+            try await sendUntil(1, x: 0.5, y: 0.5, session: "share-two") { host.remotePointers.first?.x == 0.5 }
             XCTAssertTrue(replacement.isVisible)
             await viewer.disconnect()
             try await waitFor { host.remotePointers.isEmpty }
