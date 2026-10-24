@@ -261,7 +261,7 @@ private fun CameraVideoTiles(room: Room) {
     }
 }
 
-private fun securePreferences(context: Context) = EncryptedSharedPreferences.create(
+internal fun securePreferences(context: Context) = EncryptedSharedPreferences.create(
     context, "pairdesk_private", MasterKey.Builder(context).setKeyScheme(MasterKey.KeyScheme.AES256_GCM).build(),
     EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
     EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM

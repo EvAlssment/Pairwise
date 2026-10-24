@@ -7,14 +7,37 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import androidx.core.app.NotificationCompat
+import com.google.firebase.FirebaseApp
 import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 /**
  * Handles FCM call events. The API sends only an event and ID; the app refreshes
  * authenticated state before exposing the accept/decline flow.
  */
 class PairDeskMessagingService : FirebaseMessagingService() {
+    override fun onNewToken(token: String) {
+        super.onNewToken(token)
+        if (FirebaseApp.getApps(this).isEmpty()) return
+
+        // FCM rotates tokens independently of app launches. Re-register the new
+        // token against this installation so subsequent call alerts keep working.
+        CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
+            for (attempt in 0 until 3) {
+                val registered = runCatching {
+                    registerRefreshedPushToken(this@PairDeskMessagingService, token)
+                }.isSuccess
+                if (registered) break
+                if (attempt < 2) delay(1_000L shl attempt)
+            }
+        }
+    }
+
     override fun onMessageReceived(message: RemoteMessage) {
         val title = "PairDesk"
         val body = when (message.data["event"]) {
