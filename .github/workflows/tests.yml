@@ -23,7 +23,9 @@ jobs:
           distribution: temurin
           java-version: '17'
           cache: gradle
-          cache-dependency-path: mobile/android/**/*.gradle.kts,mobile/android/gradle/wrapper/gradle-wrapper.properties
+          cache-dependency-path: |
+            mobile/android/**/*.gradle.kts
+            mobile/android/gradle/wrapper/gradle-wrapper.properties
       - uses: android-actions/setup-android@v4
       - name: Install Android build platform
         run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
