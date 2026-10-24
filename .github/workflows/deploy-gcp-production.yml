@@ -51,7 +51,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          sh scripts/require-successful-main-ci.sh "$GITHUB_SHA"
+          bash scripts/require-successful-main-ci.sh "$GITHUB_SHA"
 
       - uses: google-github-actions/auth@v3
         with:
