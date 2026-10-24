@@ -10,10 +10,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
-	"net/mail"
 	"net"
 	"net/http"
+	"net/mail"
 	"os"
 	"sort"
 	"strings"
@@ -117,8 +118,8 @@ func (s *Server) signup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	type req struct {
-		Name string `json:"name"`
-		Email string `json:"email"`
+		Name     string `json:"name"`
+		Email    string `json:"email"`
 		Password string `json:"password"`
 	}
 	var q req
@@ -543,10 +544,39 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request, u User) {
 		fail(w, 405, "method not allowed")
 		return
 	}
+	var q struct {
+		DeviceID string `json:"deviceId"`
+	}
+	if err := decode(r, &q); err != nil && !errors.Is(err, io.EOF) {
+		fail(w, http.StatusBadRequest, "invalid request")
+		return
+	}
+	q.DeviceID = strings.TrimSpace(q.DeviceID)
+	if len(q.DeviceID) > 128 || strings.ContainsAny(q.DeviceID, "/\\") {
+		fail(w, http.StatusBadRequest, "deviceId must be at most 128 characters")
+		return
+	}
 	h := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 	s.store.lock()
+	previousSession, hadSession := s.store.s.Sessions[h]
+	var previousDevice DeviceRegistration
+	var hadDevice bool
+	deviceRegistrationKey := ""
+	if q.DeviceID != "" {
+		deviceRegistrationKey = deviceKey(u.ID, q.DeviceID)
+		previousDevice, hadDevice = s.store.s.Devices[deviceRegistrationKey]
+		delete(s.store.s.Devices, deviceRegistrationKey)
+	}
 	delete(s.store.s.Sessions, h)
 	e := s.store.save()
+	if e != nil {
+		if hadSession {
+			s.store.s.Sessions[h] = previousSession
+		}
+		if hadDevice {
+			s.store.s.Devices[deviceRegistrationKey] = previousDevice
+		}
+	}
 	s.store.unlock()
 	if e != nil {
 		fail(w, 500, "internal error")

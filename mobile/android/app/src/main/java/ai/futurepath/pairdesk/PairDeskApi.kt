@@ -72,7 +72,12 @@ class PairDeskApi(base: String) : PushDeviceRegistrar {
     }
     suspend fun roomHeartbeat(roomId: String) { request("POST", "/v1/rooms/$roomId/heartbeat") }
     suspend fun leaveRoom(roomId: String) { request("POST", "/v1/rooms/$roomId/leave") }
-    suspend fun logout() { request("POST", "/v1/logout"); bearer = null }
+    suspend fun logout(deviceId: String?) {
+        val body = JSONObject()
+        if (!deviceId.isNullOrBlank()) body.put("deviceId", deviceId)
+        request("POST", "/v1/logout", body)
+        bearer = null
+    }
 
     private fun <T> parseList(response: JSONObject, key: String, type: Class<T>): List<T> =
         gson.fromJson(response.getJSONArray(key).toString(), com.google.gson.reflect.TypeToken.getParameterized(List::class.java, type).type)

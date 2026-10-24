@@ -62,7 +62,8 @@ import Security
         await leaveCall()
         try? await pushRegistrationAPI?.unregister()
         pushRegistrationAPI = nil
-        try? await api.send("v1/logout", body: EmptyBody())
+        struct LogoutBody: Encodable { let deviceId: String }
+        try? await api.send("v1/logout", body: LogoutBody(deviceId: DeviceInstallation.id))
         token = nil; user = nil; teammates = []; calls = []; activeCalls = []; joinRequests = []
         Keychain.delete("pairdesk.session")
     }

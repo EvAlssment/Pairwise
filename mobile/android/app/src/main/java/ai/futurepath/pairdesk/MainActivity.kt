@@ -245,7 +245,9 @@ private fun PairDeskApp() {
             item { TextButton(onClick = { scope.launch {
                 androidx.work.WorkManager.getInstance(context).cancelUniqueWork(PUSH_REGISTRATION_WORK)
                 val deviceId = prefs.getString("device_id", null)
-                runCatching { deviceId?.let { api?.unregister(it) }; roomId?.let { api?.leaveRoom(it) }; liveRoom?.disconnect(); api?.logout() }
+                runCatching { roomId?.let { api?.leaveRoom(it) } }
+                runCatching { liveRoom?.disconnect() }
+                runCatching { api?.logout(deviceId) }
                 api = null; me = null; roomId = null; liveRoom = null; prefs.edit().remove("token").apply()
             } }) { Text("Sign out") } }
         }

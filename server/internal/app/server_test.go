@@ -181,6 +181,28 @@ func TestPasswordChangeAndLogout(t *testing.T) {
 		t.Fatalf("logged out session accepted: %d", w.Code)
 	}
 }
+
+func TestLogoutRemovesMobilePushRegistration(t *testing.T) {
+	s, u := fixture(t)
+	h := s.Handler()
+	token := login(t, s)
+	if w := request(h, "POST", "/v1/devices", token, `{"deviceId":"phone","platform":"android","pushToken":"push-secret"}`); w.Code != http.StatusOK {
+		t.Fatalf("register device: %d %s", w.Code, w.Body)
+	}
+	if w := request(h, "POST", "/v1/logout", token, `{"deviceId":"phone"}`); w.Code != http.StatusOK {
+		t.Fatalf("logout: %d %s", w.Code, w.Body)
+	}
+	s.store.lock()
+	_, deviceExists := s.store.s.Devices[deviceKey(u.ID, "phone")]
+	s.store.unlock()
+	if deviceExists {
+		t.Fatal("logout left a push registration for the signed-out installation")
+	}
+	if w := request(h, "GET", "/v1/me", token, ""); w.Code != http.StatusUnauthorized {
+		t.Fatalf("logged-out session accepted: %d", w.Code)
+	}
+}
+
 func TestAdminCreatesInvitedUserAndPublicPayloadOmitsSecrets(t *testing.T) {
 	s, _ := fixture(t)
 	h := s.Handler()
@@ -222,8 +244,8 @@ func TestSelfServiceSignupCreatesNormalAccountAndSession(t *testing.T) {
 		t.Fatalf("signup status %d: %s", w.Code, w.Body)
 	}
 	var response struct {
-		Token string `json:"token"`
-		User apiUser `json:"user"`
+		Token string  `json:"token"`
+		User  apiUser `json:"user"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
