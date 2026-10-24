@@ -20,7 +20,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          fetch-depth: 0
           persist-credentials: false
+
+      - name: Ensure release tag points to merged main history
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! git show-ref --verify --quiet refs/remotes/origin/main; then
+            echo 'Refusing to publish: origin/main was not fetched.' >&2
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" refs/remotes/origin/main; then
+            echo 'Refusing to publish: release tag must point to a commit reachable from origin/main.' >&2
+            exit 1
+          fi
 
       - uses: actions/setup-go@v5
         with:
