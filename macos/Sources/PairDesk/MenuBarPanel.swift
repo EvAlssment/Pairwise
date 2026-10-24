@@ -29,7 +29,10 @@ struct MenuBarPanel: View {
                     HStack(alignment: .top, spacing: 8) {
                         Text(error).font(.caption).foregroundStyle(Theme.attention).fixedSize(horizontal: false, vertical: true)
                         Spacer(minLength: 0)
-                        Button("Dismiss") { store.error = nil }.buttonStyle(QuietButtonStyle(compact: true))
+                        Button("Dismiss") {
+                            store.error = nil
+                            rtc.dismissError()
+                        }.buttonStyle(QuietButtonStyle(compact: true))
                     }
                 }
             }

@@ -116,6 +116,8 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
     var onAudioBuffer: ((String, String, [Float], Double) -> Void)?
     private var audioForwardingConsented = false
 
+    func dismissError() { error = nil }
+
     private var room: Room?
     private var localAudioRenderer: PCMForwarder?
     private var lastMicrophoneMeterUpdate: TimeInterval = 0

@@ -35,10 +35,13 @@ PairDesk — internal macOS pairing app
    A remote screen opens a large viewer with a Full screen button.
    Hanging up ends a two-person call for both people.
 
-This file may be a development/test build. Only a Developer ID signed,
-notarized release is ready for normal team distribution. If macOS blocks
-opening it, ask your administrator for the signed release. Do not disable
-Gatekeeper or remove quarantine as a substitute for signing.
+This file may be a development/test build and is not notarized. A test build
+is only for a tester who independently trusts the source and has verified the
+separate SHA-256 checksum. After trying to open it, macOS may allow a one-app
+exception in System Settings > Privacy & Security > Open Anyway. Proceed only
+if you trust this exact build. Do not disable Gatekeeper or remove quarantine.
+Only a Developer ID signed and notarized release is suitable for normal team
+distribution.
 
 Voice, optional camera video, and screen sharing. Transcription is optional
 and local. Startup does not activate the microphone, camera, sharing, remote
