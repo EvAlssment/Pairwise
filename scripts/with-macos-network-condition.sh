@@ -24,8 +24,10 @@ TMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/pairdesk-net.XXXXXX")
 PF_WAS_ENABLED=''
 PF_CONFIG_LOADED=false
 JITTER_PID=''
+COMMAND_PID=''
 
 cleanup() {
+  if [[ -n "$COMMAND_PID" ]]; then kill "$COMMAND_PID" 2>/dev/null || true; wait "$COMMAND_PID" 2>/dev/null || true; fi
   if [[ -n "$JITTER_PID" ]]; then kill "$JITTER_PID" 2>/dev/null || true; wait "$JITTER_PID" 2>/dev/null || true; fi
   if [[ "$PF_CONFIG_LOADED" == true ]]; then
     sudo -n pfctl -a "$ANCHOR" -F rules >/dev/null 2>&1 || true
@@ -53,9 +55,39 @@ cat > "$TMP_DIR/dummynet.rules" <<EOF
 dummynet out quick inet proto udp from any to any port 17882:17981 pipe $PIPE_OUT
 EOF
 
-sudo -n dnctl pipe "$PIPE_OUT" config bw 20000Kbit/s delay 40ms plr 0.01
 sudo -n pfctl -n -f "$TMP_DIR/pf.conf"
 sudo -n pfctl -a "$ANCHOR" -n -f "$TMP_DIR/dummynet.rules"
+export PAIRDESK_BENCHMARK_PROFILE=constrained
+export PAIRDESK_NETWORK_CONDITION_INTERFACE=all
+export PAIRDESK_NETWORK_CONDITION_BANDWIDTH_KBIT=20000
+export PAIRDESK_NETWORK_CONDITION_DELAY_SEQUENCE_MS=20,60,30,50
+export PAIRDESK_NETWORK_CONDITION_PACKET_LOSS_PERCENT=1.0
+export PAIRDESK_NETWORK_CONDITION_READY_FILE="$TMP_DIR/ready"
+export PAIRDESK_NETWORK_CONDITION_ACTIVE_FILE="$TMP_DIR/active"
+
+# Start the test without shaping its API, room setup, ICE, or DTLS handshake.
+# The media integration test creates READY_FILE only after all participants
+# are connected and authorized to share; impairment starts before it publishes
+# the synthetic stream. This keeps the benchmark focused on steady-state media.
+"$@" &
+COMMAND_PID=$!
+network_ready=false
+for _ in $(seq 1 120); do
+  if [[ -f "$PAIRDESK_NETWORK_CONDITION_READY_FILE" ]]; then
+    network_ready=true
+    break
+  fi
+  if ! kill -0 "$COMMAND_PID" 2>/dev/null; then break; fi
+  sleep 1
+done
+if [[ "$network_ready" != true ]]; then
+  echo "Media test did not reach the network-conditioning checkpoint." >&2
+  wait "$COMMAND_PID" || true
+  COMMAND_PID=''
+  exit 1
+fi
+
+sudo -n dnctl pipe "$PIPE_OUT" config bw 20000Kbit/s delay 40ms plr 0.01
 PF_WAS_ENABLED=$(sudo -n pfctl -s info | awk -F ': ' '/Status:/ {split($2, status, " "); print status[1]; exit}')
 if [[ "$PF_WAS_ENABLED" != Enabled && "$PF_WAS_ENABLED" != Disabled ]]; then
   echo "Could not determine the runner's PF state; refusing to load network rules." >&2
@@ -76,16 +108,12 @@ sudo -n pfctl -a "$ANCHOR" -f "$TMP_DIR/dummynet.rules"
   done
 ) &
 JITTER_PID=$!
+touch "$PAIRDESK_NETWORK_CONDITION_ACTIVE_FILE"
 
-export PAIRDESK_BENCHMARK_PROFILE=constrained
-export PAIRDESK_NETWORK_CONDITION_ACTIVE=1
-export PAIRDESK_NETWORK_CONDITION_INTERFACE=all
-export PAIRDESK_NETWORK_CONDITION_BANDWIDTH_KBIT=20000
-export PAIRDESK_NETWORK_CONDITION_DELAY_SEQUENCE_MS=20,60,30,50
-export PAIRDESK_NETWORK_CONDITION_PACKET_LOSS_PERCENT=1.0
 set +e
-"$@"
-COMMAND_STATUS=$?
+COMMAND_STATUS=0
+wait "$COMMAND_PID" || COMMAND_STATUS=$?
+COMMAND_PID=''
 set -e
 
 # Emit the actual PF rule and dummynet pipe counters before cleanup removes

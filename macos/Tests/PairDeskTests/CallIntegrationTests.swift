@@ -261,6 +261,7 @@ final class CallIntegrationTests: XCTestCase {
             XCTAssertTrue(media[0].localParticipant.permissions.canPublishSources.contains(Track.Source.screenShareVideo.rawValue))
             XCTAssertTrue(media[0].localParticipant.permissions.canPublishSources.contains(Track.Source.camera.rawValue))
             XCTAssertFalse(media[0].localParticipant.permissions.canPublishSources.contains(Track.Source.screenShareAudio.rawValue))
+            try await activateNetworkConditionerIfNeeded()
             let videoReceiver = SyntheticVideoReceiver(expectation: expectation(description: "Synthetic screen frame delivered"))
             media[1].add(delegate: videoReceiver)
             let track = await LocalVideoTrack.createBufferTrack(
@@ -613,9 +614,11 @@ private func writeSyntheticBenchmark(_ snapshot: SyntheticVideoReceiver.Snapshot
                       userInfo: [NSLocalizedDescriptionKey: "Unknown network benchmark profile: \(profile)"])
     }
     let isConstrained = profile == "constrained"
-    guard !isConstrained || ProcessInfo.processInfo.environment["PAIRDESK_NETWORK_CONDITION_ACTIVE"] == "1" else {
+    let conditionerActive = ProcessInfo.processInfo.environment["PAIRDESK_NETWORK_CONDITION_ACTIVE_FILE"]
+        .map { FileManager.default.fileExists(atPath: $0) } ?? false
+    guard !isConstrained || conditionerActive else {
         throw NSError(domain: "SyntheticMediaBenchmark", code: 3,
-                      userInfo: [NSLocalizedDescriptionKey: "Constrained profile requires the macOS network conditioner"])
+                      userInfo: [NSLocalizedDescriptionKey: "Constrained profile requires the active macOS network conditioner"])
     }
     let environment = ProcessInfo.processInfo.environment
     let delaySequence = (environment["PAIRDESK_NETWORK_CONDITION_DELAY_SEQUENCE_MS"] ?? "0")
@@ -652,6 +655,28 @@ private func writeSyntheticBenchmark(_ snapshot: SyntheticVideoReceiver.Snapshot
     try FileManager.default.createDirectory(at: output.deletingLastPathComponent(),
                                             withIntermediateDirectories: true)
     try encoder.encode(report).write(to: output, options: .atomic)
+}
+
+@MainActor
+private func activateNetworkConditionerIfNeeded() async throws {
+    guard ProcessInfo.processInfo.environment["PAIRDESK_BENCHMARK_PROFILE"] == "constrained" else { return }
+    let environment = ProcessInfo.processInfo.environment
+    guard let readyPath = environment["PAIRDESK_NETWORK_CONDITION_READY_FILE"],
+          let activePath = environment["PAIRDESK_NETWORK_CONDITION_ACTIVE_FILE"] else {
+        throw NSError(domain: "SyntheticMediaBenchmark", code: 4,
+                      userInfo: [NSLocalizedDescriptionKey: "Constrained profile is missing its activation handshake"])
+    }
+    guard FileManager.default.createFile(atPath: readyPath, contents: Data()) else {
+        throw NSError(domain: "SyntheticMediaBenchmark", code: 5,
+                      userInfo: [NSLocalizedDescriptionKey: "Could not request network conditioning"])
+    }
+    let deadline = ProcessInfo.processInfo.systemUptime + 120
+    while ProcessInfo.processInfo.systemUptime < deadline {
+        if FileManager.default.fileExists(atPath: activePath) { return }
+        try await Task.sleep(for: .milliseconds(100))
+    }
+    throw NSError(domain: "SyntheticMediaBenchmark", code: 6,
+                  userInfo: [NSLocalizedDescriptionKey: "Timed out waiting for network conditioning to become active"])
 }
 
 private final class DataReceiver: RoomDelegate, @unchecked Sendable {
