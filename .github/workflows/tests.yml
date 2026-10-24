@@ -13,6 +13,24 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  android:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+          cache-dependency-path: mobile/android/**/*.gradle.kts,mobile/android/gradle/wrapper/gradle-wrapper.properties
+      - uses: android-actions/setup-android@v4
+      - name: Install Android build platform
+        run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
+      - name: Run Android unit tests and assemble release APK
+        working-directory: mobile/android
+        run: ./gradlew --no-daemon testDebugUnitTest assembleRelease
+
   postgres-integration:
     runs-on: ubuntu-24.04
     timeout-minutes: 10

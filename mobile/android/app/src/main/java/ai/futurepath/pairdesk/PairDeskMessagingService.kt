@@ -10,11 +10,6 @@ import androidx.core.app.NotificationCompat
 import com.google.firebase.FirebaseApp
 import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 
 /**
  * Handles FCM call events. The API sends only an event and ID; the app refreshes
@@ -25,17 +20,9 @@ class PairDeskMessagingService : FirebaseMessagingService() {
         super.onNewToken(token)
         if (FirebaseApp.getApps(this).isEmpty()) return
 
-        // FCM rotates tokens independently of app launches. Re-register the new
-        // token against this installation so subsequent call alerts keep working.
-        CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
-            for (attempt in 0 until 3) {
-                val registered = runCatching {
-                    registerRefreshedPushToken(this@PairDeskMessagingService, token)
-                }.isSuccess
-                if (registered) break
-                if (attempt < 2) delay(1_000L shl attempt)
-            }
-        }
+        // FCM rotates tokens independently of app launches. Persist the new token
+        // encrypted and let WorkManager retry registration across process exits.
+        enqueuePushTokenRegistration(this, token)
     }
 
     override fun onMessageReceived(message: RemoteMessage) {

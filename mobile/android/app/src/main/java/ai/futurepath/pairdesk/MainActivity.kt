@@ -79,7 +79,7 @@ private fun PairDeskApp() {
     }
     val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
 
-    fun registerPushIfConfigured(service: PairDeskApi) {
+    fun registerPushIfConfigured() {
         if (FirebaseApp.getApps(context).isEmpty()) return
         if (Build.VERSION.SDK_INT >= 33 && context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
             notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
@@ -88,7 +88,8 @@ private fun PairDeskApp() {
             prefs.edit().putString("device_id", it).apply()
         }
         FirebaseMessaging.getInstance().token.addOnSuccessListener { token ->
-            scope.launch { runCatching { service.register(deviceId, token) } }
+            prefs.edit().putString("device_id", deviceId).apply()
+            enqueuePushTokenRegistration(context, token)
         }
     }
 
@@ -139,7 +140,7 @@ private fun PairDeskApp() {
 
     LaunchedEffect(api, lifecycleOwner) {
         lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
-            api?.let { registerPushIfConfigured(it) }
+            if (api != null) registerPushIfConfigured()
         }
     }
 
@@ -242,6 +243,7 @@ private fun PairDeskApp() {
                 } }
             }
             item { TextButton(onClick = { scope.launch {
+                androidx.work.WorkManager.getInstance(context).cancelUniqueWork(PUSH_REGISTRATION_WORK)
                 val deviceId = prefs.getString("device_id", null)
                 runCatching { deviceId?.let { api?.unregister(it) }; roomId?.let { api?.leaveRoom(it) }; liveRoom?.disconnect(); api?.logout() }
                 api = null; me = null; roomId = null; liveRoom = null; prefs.edit().remove("token").apply()
