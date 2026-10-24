@@ -10,7 +10,7 @@ The current client supports macOS 14 and later. It is an early-stage project; te
 
 **Download the complete source:** [ZIP archive of the latest `main` branch](https://github.com/EvAlssment/Pairwise/archive/refs/heads/main.zip) · [browse the repository](https://github.com/EvAlssment/Pairwise)
 
-**Download the [Pairwise 0.3.7 test DMG](https://github.com/EvAlssment/Pairwise/releases/download/pairwise-test-0.3.7/PairDesk-0.3.7-test.dmg)** · [checksum](https://github.com/EvAlssment/Pairwise/releases/download/pairwise-test-0.3.7/PairDesk-0.3.7-test.dmg.sha256). This Apple Silicon development build is ad-hoc signed and not notarized; Gatekeeper rejects it. Do not bypass Gatekeeper to install it. Wait for a signed and notarized release for normal use.
+**Downloads:** browse [GitHub Releases](https://github.com/EvAlssment/Pairwise/releases) for published builds. Check the version and release notes before installing: the source on `main` can be newer than the latest published DMG. The current app version is recorded in [`macos/Info.plist`](macos/Info.plist). Development builds are not a substitute for a signed and notarized release; see [the release guide](docs/releasing.md).
 
 Installable macOS builds will be published under [GitHub Releases](https://github.com/EvAlssment/Pairwise/releases) once the release signing credentials are configured. See [the release guide](docs/releasing.md).
 
@@ -93,6 +93,8 @@ Read [the architecture notes](docs/architecture.md), [feature parity roadmap](do
 PairDesk's opt-in, read-only local coding-agent bridge is documented in [docs/local-agent-bridge.md](docs/local-agent-bridge.md). During a call, it can expose separately granted participant names, local transcript text, and on-demand still screenshots from a window the user selects in Apple's native picker. Screenshots are returned only to the local MCP client and are not stored by PairDesk.
 
 See [docs/media-quality-benchmarks.md](docs/media-quality-benchmarks.md) for the CI synthetic benchmark scope and the separate physical Mac reference procedure.
+
+If you are preparing a two-Mac test, start with the [tester quick start](docs/tester-quick-start.md) and use the full [physical Mac acceptance record](docs/physical-mac-acceptance.md) for results.
 
 ## License
 
