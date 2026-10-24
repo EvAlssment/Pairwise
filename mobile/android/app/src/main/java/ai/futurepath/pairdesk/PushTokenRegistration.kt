@@ -9,6 +9,7 @@ import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
+import kotlinx.coroutines.CancellationException
 import java.util.concurrent.TimeUnit
 
 private const val PUSH_TOKEN_KEY = "fcm_push_token"
@@ -64,6 +65,8 @@ internal class PushTokenRegistrationWorker(
         return try {
             PairDeskApi(config.server).apply { bearer = config.bearer }.register(config.deviceId, pushToken)
             Result.success()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
         } catch (_: Exception) {
             if (runAttemptCount < MAX_ATTEMPTS) Result.retry() else Result.failure()
         }
