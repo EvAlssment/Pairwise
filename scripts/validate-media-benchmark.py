@@ -23,6 +23,7 @@ ALLOWED_FIELDS = {
     "observedFramesPerSecond",
     "receivedBitrateKilobitsPerSecond",
     "framesReceived",
+    "measurementWindowSeconds",
     "timeToFirstFrameMilliseconds",
     "syntheticSenderPauseRecoveryMilliseconds",
     "packetLossPercent",
@@ -40,6 +41,7 @@ ALWAYS_UNMEASURED = {
 }
 MEASUREMENTS = {
     "receivedBitrateKilobitsPerSecond": (0, 100_000),
+    "measurementWindowSeconds": (5.5, 60),
     "packetLossPercent": (0, 100),
     "selectedPathRTTMilliseconds": (0, 120_000),
     "harnessProcessCPUPercent": (0, 2_000),
@@ -109,7 +111,7 @@ def main() -> int:
         }
         if not required.issubset(report):
             raise ValueError(f"{name}: benchmark is missing a required field")
-        if report["schemaVersion"] != 5:
+        if report["schemaVersion"] != 6:
             raise ValueError(f"{name}: unexpected benchmark schema or classification")
         profile = report["networkProfile"]
         if profile not in ("baseline", "constrained"):

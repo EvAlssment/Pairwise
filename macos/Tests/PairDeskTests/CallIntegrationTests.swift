@@ -64,12 +64,14 @@ final class CallIntegrationTests: XCTestCase {
                     try? await Task.sleep(for: .milliseconds(33))
                 }
             }
-            let processCPUStart = ProcessCPUProbe.capture()
             let publication = try await media[0].localParticipant.publish(videoTrack: track,
                 options: VideoPublishOptions(screenShareEncoding: VideoEncoding(maxBitrate: 5_000_000, maxFps: 30),
                                              simulcast: false))
             await fulfillment(of: [receiver.expectation], timeout: 15)
-            try await Task.sleep(for: .seconds(3))
+            let measurementStartedAt = ProcessInfo.processInfo.systemUptime
+            let processCPUStart = ProcessCPUProbe.capture()
+            try await Task.sleep(for: .seconds(6))
+            let measurementWindowSeconds = ProcessInfo.processInfo.systemUptime - measurementStartedAt
             let metrics = try XCTUnwrap(receiver.snapshot(), "1:1 profile must receive measurable frames")
             let processCPUPercent = ProcessCPUProbe.capture().percent(since: processCPUStart)
             frameTask?.cancel()
@@ -93,7 +95,8 @@ final class CallIntegrationTests: XCTestCase {
             XCTAssertGreaterThan(readability.recognizedLines, 0, "text-pattern measurement should recognize at least one line")
             try writeSyntheticBenchmark(metrics, recoveryMilliseconds: receiver.recoveryMilliseconds,
                                         processCPUPercent: processCPUPercent, readability: readability,
-                                        participantCount: media.count)
+                                        participantCount: media.count,
+                                        measurementWindowSeconds: measurementWindowSeconds)
             frameTask?.cancel()
             await frameTask?.value
             frameTask = nil
@@ -280,14 +283,16 @@ final class CallIntegrationTests: XCTestCase {
                     try? await Task.sleep(for: .milliseconds(33))
                 }
             }
-            let processCPUStart = ProcessCPUProbe.capture()
             let publication = try await media[0].localParticipant.publish(
                 videoTrack: track,
                 options: VideoPublishOptions(screenShareEncoding: VideoEncoding(maxBitrate: 5_000_000, maxFps: 30),
                                              simulcast: false))
             await fulfillment(of: [videoReceiver.expectation], timeout: 15)
             XCTAssertTrue(videoReceiver.receivedFrame)
-            try await Task.sleep(for: .seconds(3))
+            let measurementStartedAt = ProcessInfo.processInfo.systemUptime
+            let processCPUStart = ProcessCPUProbe.capture()
+            try await Task.sleep(for: .seconds(6))
+            let measurementWindowSeconds = ProcessInfo.processInfo.systemUptime - measurementStartedAt
             let videoMetrics = videoReceiver.snapshot()
             let processCPUPercent = ProcessCPUProbe.capture().percent(since: processCPUStart)
             frameTask?.cancel()
@@ -312,7 +317,8 @@ final class CallIntegrationTests: XCTestCase {
                                      "text-pattern measurement should recognize at least one line")
                 try writeSyntheticBenchmark(metrics, recoveryMilliseconds: recoveryMilliseconds,
                                             processCPUPercent: processCPUPercent, readability: readability,
-                                            participantCount: media.count)
+                                            participantCount: media.count,
+                                            measurementWindowSeconds: measurementWindowSeconds)
             }
             frameTask?.cancel()
             await frameTask?.value
@@ -512,7 +518,7 @@ private final class SyntheticVideoReceiver: NSObject, RoomDelegate, VideoRendere
 }
 
 private struct SyntheticMediaBenchmark: Encodable {
-    let schemaVersion = 5
+    let schemaVersion = 6
     let classification: String
     let networkProfile: String
     let configuredNetwork: SyntheticNetworkProfile
@@ -526,6 +532,7 @@ private struct SyntheticMediaBenchmark: Encodable {
     let observedFramesPerSecond: Double?
     let receivedBitrateKilobitsPerSecond: Double?
     let framesReceived: Int
+    let measurementWindowSeconds: Double
     let timeToFirstFrameMilliseconds: Double?
     let syntheticSenderPauseRecoveryMilliseconds: Double?
     let packetLossPercent: Double?
@@ -606,7 +613,8 @@ private struct SyntheticNetworkProfile: Encodable {
 private func writeSyntheticBenchmark(_ snapshot: SyntheticVideoReceiver.Snapshot,
                                     recoveryMilliseconds: Double?, processCPUPercent: Double?,
                                     readability: SyntheticReadabilityMetrics?,
-                                    participantCount: Int) throws {
+                                    participantCount: Int,
+                                    measurementWindowSeconds: Double) throws {
     guard let path = ProcessInfo.processInfo.environment["PAIRDESK_MEDIA_BENCHMARK_OUTPUT"] else { return }
     let profile = ProcessInfo.processInfo.environment["PAIRDESK_BENCHMARK_PROFILE"] ?? "baseline"
     guard profile == "baseline" || profile == "constrained" else {
@@ -638,7 +646,7 @@ private func writeSyntheticBenchmark(_ snapshot: SyntheticVideoReceiver.Snapshot
         source: "synthetic-screen-track", width: snapshot.width, height: snapshot.height,
         observedFramesPerSecond: snapshot.observedFramesPerSecond,
         receivedBitrateKilobitsPerSecond: snapshot.receivedBitrateKilobitsPerSecond,
-        framesReceived: snapshot.frameCount,
+        framesReceived: snapshot.frameCount, measurementWindowSeconds: measurementWindowSeconds,
         timeToFirstFrameMilliseconds: snapshot.timeToFirstFrameMilliseconds,
         syntheticSenderPauseRecoveryMilliseconds: recoveryMilliseconds,
         packetLossPercent: snapshot.packetLossPercent,

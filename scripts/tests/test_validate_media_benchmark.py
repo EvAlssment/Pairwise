@@ -15,7 +15,7 @@ VALIDATOR = Path(__file__).resolve().parents[1] / "validate-media-benchmark.py"
 def benchmark(profile: str, participants: int) -> dict:
     constrained = profile == "constrained"
     return {
-        "schemaVersion": 5,
+        "schemaVersion": 6,
         "classification": f"synthetic-{profile}-ci",
         "networkProfile": profile,
         "configuredNetwork": {
@@ -34,6 +34,7 @@ def benchmark(profile: str, participants: int) -> dict:
         "observedFramesPerSecond": 30.0,
         "receivedBitrateKilobitsPerSecond": 850.0,
         "framesReceived": 90,
+        "measurementWindowSeconds": 6.0,
         "timeToFirstFrameMilliseconds": 120.0,
         "syntheticSenderPauseRecoveryMilliseconds": 35.0,
         "packetLossPercent": 0.0,
@@ -122,6 +123,7 @@ class MediaBenchmarkValidatorTests(unittest.TestCase):
         missing_outbound_traffic: bool = False,
         missing_runner_metadata: bool = False,
         mismatched_runner_metadata: bool = False,
+        short_measurement_window: bool = False,
     ) -> subprocess.CompletedProcess[str]:
         with tempfile.TemporaryDirectory(prefix="pairwise-benchmark-validator-") as temporary:
             reports = []
@@ -138,6 +140,8 @@ class MediaBenchmarkValidatorTests(unittest.TestCase):
                         report["runner"] = {}
                     if mismatched_runner_metadata and profile == "constrained" and participants == 2:
                         report["runner"]["architecture"] = "x86_64"
+                    if short_measurement_window and profile == "constrained" and participants == 2:
+                        report["measurementWindowSeconds"] = 3.0
                     path = Path(temporary) / f"{profile}-{participants}p.json"
                     path.write_text(json.dumps(report), encoding="utf-8")
                     reports.append(str(path))
@@ -184,6 +188,11 @@ class MediaBenchmarkValidatorTests(unittest.TestCase):
         result = self.run_validator(zero_bitrate=True)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("received bitrate must be a positive measured value", result.stderr)
+
+    def test_rejects_too_short_quality_measurement_window(self) -> None:
+        result = self.run_validator(short_measurement_window=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("missing or invalid measured field: measurementWindowSeconds", result.stderr)
 
     def test_rejects_inconsistent_synthetic_readability_percentage(self) -> None:
         result = self.run_validator(malformed_readability=True)
