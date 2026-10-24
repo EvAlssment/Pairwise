@@ -51,7 +51,7 @@ rm -f "$STAGING/PairDesk-submit.zip"
 ditto -c -k --keepParent "$APP" "$STAGING/PairDesk.zip"
 PAIRDESK_DISTRIBUTION_APP="$APP" \
 PAIRDESK_DMG_OUTPUT="$STAGING/PairDesk.dmg" \
-  sh "$ROOT/scripts/create-dmg.sh"
+  bash "$ROOT/scripts/create-dmg.sh"
 xcrun notarytool submit "$STAGING/PairDesk.dmg" --keychain-profile "$PROFILE" --wait --output-format json > "$STAGING/dmg-notarization.json"
 python3 - "$STAGING/dmg-notarization.json" <<'PY'
 import json, sys
