@@ -1,7 +1,8 @@
 # Manual GCP production deployment
 
 The `Deploy Pairwise to GCP production` workflow runs only when manually
-dispatched from `main` and the operator types `DEPLOY`. It uses GitHub OIDC and
+dispatched from `main`, the operator types `DEPLOY`, and the push CI run for
+that exact commit has completed successfully. It uses GitHub OIDC and
 Workload Identity Federation (no service-account key), transfers a source-only
 archive through IAP, rebuilds only the API container, and verifies `/readyz`
 and the exact `/version` commit before reporting success. If verification fails,
@@ -22,6 +23,7 @@ POOL_ID=github
 PROVIDER_ID=pairwise-deploy-main
 DEPLOYER_SA=pairwise-github-deployer
 
+gcloud services enable iap.googleapis.com --project "$PROJECT_ID"
 gcloud iam service-accounts create "$DEPLOYER_SA" --project "$PROJECT_ID"
 gcloud iam workload-identity-pools providers create-oidc "$PROVIDER_ID" \
   --project "$PROJECT_ID" --location global --workload-identity-pool "$POOL_ID" \
@@ -32,9 +34,13 @@ gcloud iam workload-identity-pools providers create-oidc "$PROVIDER_ID" \
 gcloud iam service-accounts add-iam-policy-binding \
   "$DEPLOYER_SA@$PROJECT_ID.iam.gserviceaccount.com" --project "$PROJECT_ID" \
   --role roles/iam.workloadIdentityUser \
-  --member="principalSet://iam.googleapis.com/projects/$PROJECT_NUMBER/locations/global/workloadIdentityPools/$POOL_ID/attribute.repository/EvAlssment/Pairwise" \
-  --condition='title=Pairwise main branch,expression=attribute.ref == "refs/heads/main"'
+  --member="principalSet://iam.googleapis.com/projects/$PROJECT_NUMBER/locations/global/workloadIdentityPools/$POOL_ID/attribute.repository/EvAlssment/Pairwise"
 ```
+
+The provider condition enforces both the repository and `refs/heads/main`.
+The service-account policy binds only that repository attribute; keep the
+provider condition in place because IAM binding conditions do not expose the
+provider's mapped `attribute.ref` value.
 
 Grant the service account only read/list access needed for `gcloud compute ssh`
 at project scope, and OS Login/IAP access on the PairDesk VM. IAP is restricted
@@ -117,11 +123,14 @@ gh variable set PAIRDESK_GCP_DEPLOYER_SA --repo EvAlssment/Pairwise \
   --body pairwise-github-deployer@named-tube-444103-p0.iam.gserviceaccount.com
 ```
 
-Configure the GitHub `production` environment with required reviewers and an
-allowed deployment branch of `main`. After the GCP and GitHub setup, wait for
-IAM propagation, then dispatch the workflow from `main` and enter `DEPLOY`.
-The first deployment should be observed directly and `/version` should match
-the full commit SHA shown in the workflow run.
+The repository's `main` branch requires pull requests, one approval, resolved
+review conversations, and passing `workflow-lint`, `android`, `api-image`,
+`ios`, `postgres-integration`, and `macos` checks. The `production` environment
+allows only `main`, requires approval from `bharathasija`, prevents self-review,
+and disables administrator bypass. After the GCP and GitHub setup, wait for IAM
+propagation, then dispatch the workflow from `main` and enter `DEPLOY`. The
+first deployment should be observed directly and `/version` should match the
+full commit SHA shown in the workflow run.
 
 ## Recovery
 

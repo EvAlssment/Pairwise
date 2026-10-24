@@ -23,6 +23,7 @@ jobs:
     environment: production
     permissions:
       contents: read
+      actions: read
       id-token: write
     steps:
       - uses: actions/checkout@v7
@@ -44,6 +45,13 @@ jobs:
           for name in GCP_PROJECT GCP_ZONE GCP_VM WIF_PROVIDER DEPLOY_SERVICE_ACCOUNT; do
             [[ -n "${!name:-}" ]] || { echo "Missing repository variable: $name" >&2; exit 1; }
           done
+
+      - name: Require successful push CI for this exact main commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          bash scripts/require-successful-main-ci.sh "$GITHUB_SHA"
 
       - uses: google-github-actions/auth@v3
         with:
