@@ -5,7 +5,7 @@ import SwiftUI
 
 enum SupportDiagnostics {
     @MainActor
-    static func report(store: AppStore, rtc: RTCService, now: Date = .now) -> String {
+    static func report(store: AppStore, rtc: RTCService, apiBuildCommit: String? = nil, now: Date = .now) -> String {
         let info = Bundle.main.infoDictionary ?? [:]
         let appVersion = info["CFBundleShortVersionString"] as? String ?? "unknown"
         let build = info["CFBundleVersion"] as? String ?? "unknown"
@@ -21,6 +21,7 @@ enum SupportDiagnostics {
         macOS: \(ProcessInfo.processInfo.operatingSystemVersionString)
         API host: \(endpoint)
         API protocol: v1
+        API build commit: \(safeBuildIdentifier(apiBuildCommit))
         Call: \(callState)
         Screen sharing: \(rtc.isSharing ? "yes" : (rtc.screenTrack == nil ? "no" : "viewing"))
         Microphone: \(rtc.isMicrophoneEnabled ? "on" : "off")
@@ -33,6 +34,14 @@ enum SupportDiagnostics {
 
         Privacy: this report contains no account names, email addresses, passwords, tokens, transcript text, audio, screen images, or IP addresses. Review it before sharing.
         """
+    }
+
+    static func safeBuildIdentifier(_ value: String?) -> String {
+        guard let value, !value.isEmpty, value.count <= 64,
+              value.unicodeScalars.allSatisfy({ CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-").contains($0) }) else {
+            return "unavailable"
+        }
+        return value
     }
 
     static func screenRouteSummary(_ statistics: TrackStatistics?) -> String {
@@ -105,8 +114,9 @@ struct SupportDiagnosticsView: View {
     @ObservedObject var rtc: RTCService
     @Environment(\.dismiss) private var dismiss
     @State private var copied = false
+    @State private var apiBuildCommit: String?
 
-    private var report: String { SupportDiagnostics.report(store: store, rtc: rtc) }
+    private var report: String { SupportDiagnostics.report(store: store, rtc: rtc, apiBuildCommit: apiBuildCommit) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -131,5 +141,18 @@ struct SupportDiagnosticsView: View {
         }
         .padding(22)
         .frame(width: 570, height: 430)
+        .task {
+            do {
+                let client = try APIClient(server: store.serverAddress)
+                let metadata: ServerVersionResponse = try await client.request("version")
+                apiBuildCommit = metadata.buildCommit
+            } catch {
+                apiBuildCommit = nil
+            }
+        }
     }
+}
+
+private struct ServerVersionResponse: Decodable {
+    let buildCommit: String
 }

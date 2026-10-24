@@ -29,7 +29,8 @@ case "${1:-}" in
   up)
     [[ "$(uname -s)" == Linux ]] || { echo 'Production startup is restricted to the Linux host' >&2; exit 1; }
     [[ -f generated/certificates/live/pairdesk/fullchain.pem ]] || { echo 'Bootstrap trusted certificates first' >&2; exit 1; }
-    compose up -d --build
+    build_commit=$(git -C "$ROOT/../.." rev-parse --short=12 HEAD 2>/dev/null || printf 'unknown')
+    PAIRDESK_BUILD_COMMIT="$build_commit" compose up -d --build
     ;;
   admin)
     [[ $# == 3 ]] || { echo 'Usage: manage.sh admin NAME EMAIL' >&2; exit 1; }

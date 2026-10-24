@@ -33,6 +33,16 @@ jobs:
         working-directory: mobile/android
         run: ./gradlew --no-daemon testDebugUnitTest assembleRelease
 
+  api-image:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build and smoke test API image with commit metadata
+        env:
+          PAIRDESK_BUILD_COMMIT: ${{ github.sha }}
+        run: bash scripts/ci-api-image.sh
+
   ios:
     runs-on: macos-15
     timeout-minutes: 25

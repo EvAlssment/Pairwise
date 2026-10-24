@@ -24,6 +24,8 @@ services:
   api:
     build:
       context: ../../server
+      args:
+        PAIRDESK_BUILD_COMMIT: ${PAIRDESK_BUILD_COMMIT:-unknown}
     environment:
       PAIRDESK_ADDR: '0.0.0.0:8080'
       PAIRDESK_DATA: /data/pairdesk.json

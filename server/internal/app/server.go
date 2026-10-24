@@ -71,6 +71,7 @@ func (s *Server) Handler() http.Handler {
 		}
 		writeJSON(w, 200, map[string]any{"ok": true})
 	})
+	mux.HandleFunc("/version", s.version)
 	mux.HandleFunc("/readyz", s.ready)
 	mux.HandleFunc("/v1/login", s.login)
 	mux.HandleFunc("/v1/signup", s.signup)
@@ -93,6 +94,18 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/v1/join-requests", s.auth(s.joinRequests))
 	mux.HandleFunc("/v1/join-requests/", s.auth(s.joinRequestAction))
 	return securityHeaders(recoverStorage(mux))
+}
+
+func (s *Server) version(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		fail(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{
+		"service":     "pairdesk-api",
+		"apiProtocol": "v1",
+		"buildCommit": buildCommit,
+	})
 }
 
 func (s *Server) signupPolicy(w http.ResponseWriter, r *http.Request) {

@@ -132,6 +132,27 @@ func TestHealthAndReadinessDistinguishLivenessFromMediaDependency(t *testing.T) 
 	}
 }
 
+func TestVersionEndpointExposesOnlySafeBuildMetadata(t *testing.T) {
+	s, _ := fixture(t)
+	w := request(s.Handler(), http.MethodGet, "/version", "", "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("version endpoint: %d %s", w.Code, w.Body)
+	}
+	var got map[string]string
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["service"] != "pairdesk-api" || got["apiProtocol"] != "v1" || got["buildCommit"] != buildCommit {
+		t.Fatalf("incomplete build metadata: %#v", got)
+	}
+	if len(got) != 3 || strings.Contains(w.Body.String(), "secret") || strings.Contains(w.Body.String(), "token") {
+		t.Fatalf("version endpoint exposed unexpected data: %s", w.Body)
+	}
+	if w := request(s.Handler(), http.MethodPost, "/version", "", ""); w.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("version endpoint accepted a write: %d", w.Code)
+	}
+}
+
 func TestAuthLoginAndDisabledOffboarding(t *testing.T) {
 	s, u := fixture(t)
 	h := s.Handler()

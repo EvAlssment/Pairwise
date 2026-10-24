@@ -27,6 +27,18 @@ successful, and the production instance is `RUNNABLE` before depending on this
 procedure. Do not include database passwords, connection strings, tokens, or
 state payloads in tickets or logs.
 
+To identify the API build currently serving requests, query the public,
+content-free endpoint:
+
+```sh
+curl --fail --silent --show-error https://API_DOMAIN/version
+```
+
+The response reports the API protocol and source commit only. The production
+`manage.sh up` path injects the checked-out short commit into the API image;
+images built without a Git checkout report `unknown`. Do not treat `/healthz`
+or `/readyz` success as proof that the expected source revision is deployed.
+
 ## Exercise backup restore and PITR safely
 
 Run recovery drills by restoring into a disposable Cloud SQL instance. Do not
