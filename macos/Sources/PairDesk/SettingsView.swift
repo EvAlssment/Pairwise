@@ -131,29 +131,43 @@ struct SettingsView: View {
     private var audioSection: some View {
         SettingsPage(title: "Audio", subtitle: "Choose your call devices and check them before a call. PairDesk never turns on your microphone at launch.") {
             SettingsCard {
-                SettingsRow(title: "Microphone", detail: rtc.savedAudioInputUnavailable
-                    ? "Saved microphone unavailable; using the system default."
-                    : (rtc.isMicrophoneEnabled ? "Microphone is active for this call." : "Microphone stays off until you turn it on."),
+                SettingsRow(title: "Microphone", detail: rtc.audioInputDevices.isEmpty
+                    ? "No microphone detected. Check the connection or macOS sound settings."
+                    : (rtc.savedAudioInputUnavailable
+                        ? "Saved microphone unavailable; using the system default."
+                        : (rtc.isMicrophoneEnabled ? "Microphone is active for this call." : "Microphone stays off until you turn it on.")),
                             symbol: "mic") {
-                    Picker("Microphone", selection: Binding(
-                        get: { rtc.selectedAudioInputID }, set: { rtc.selectAudioInput($0) }
-                    )) {
-                        ForEach(rtc.audioInputDevices) { device in Text(device.title).tag(device.id) }
+                    if rtc.audioInputDevices.isEmpty {
+                        Text("No microphone detected")
+                            .font(.callout).foregroundStyle(Theme.textMuted)
+                            .frame(maxWidth: 250, alignment: .leading)
+                    } else {
+                        Picker("Microphone", selection: Binding(
+                            get: { rtc.selectedAudioInputID }, set: { rtc.selectAudioInput($0) }
+                        )) {
+                            ForEach(rtc.audioInputDevices) { device in Text(device.title).tag(device.id) }
+                        }
+                        .labelsHidden().frame(maxWidth: 250)
                     }
-                    .labelsHidden().frame(maxWidth: 250)
-                    .disabled(rtc.audioInputDevices.isEmpty)
                 }
                 Divider()
-                SettingsRow(title: "Speaker", detail: rtc.savedAudioOutputUnavailable
-                    ? "Saved speaker unavailable; using the system default."
-                    : "Audio follows your selected output device.", symbol: "hifispeaker") {
-                    Picker("Speaker", selection: Binding(
-                        get: { rtc.selectedAudioOutputID }, set: { rtc.selectAudioOutput($0) }
-                    )) {
-                        ForEach(rtc.audioOutputDevices) { device in Text(device.title).tag(device.id) }
+                SettingsRow(title: "Speaker", detail: rtc.audioOutputDevices.isEmpty
+                    ? "No output device detected. Check the connection or macOS sound settings."
+                    : (rtc.savedAudioOutputUnavailable
+                        ? "Saved speaker unavailable; using the system default."
+                        : "Audio follows your selected output device."), symbol: "hifispeaker") {
+                    if rtc.audioOutputDevices.isEmpty {
+                        Text("No output device detected")
+                            .font(.callout).foregroundStyle(Theme.textMuted)
+                            .frame(maxWidth: 250, alignment: .leading)
+                    } else {
+                        Picker("Speaker", selection: Binding(
+                            get: { rtc.selectedAudioOutputID }, set: { rtc.selectAudioOutput($0) }
+                        )) {
+                            ForEach(rtc.audioOutputDevices) { device in Text(device.title).tag(device.id) }
+                        }
+                        .labelsHidden().frame(maxWidth: 250)
                     }
-                    .labelsHidden().frame(maxWidth: 250)
-                    .disabled(rtc.audioOutputDevices.isEmpty)
                 }
             }
             SettingsCard {
