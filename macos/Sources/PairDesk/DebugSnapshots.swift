@@ -234,6 +234,13 @@ enum UISnapshots {
         window.appearance = host.appearance
         window.contentView = host
         host.frame = frame
+        window.orderFrontRegardless()
+        NSApp.updateWindows()
+        // NavigationSplitView and several AppKit-backed SwiftUI controls do
+        // not finish their first layout pass until their window is ordered.
+        // Drain a short slice of the main run loop so the cached bitmap
+        // reflects the same laid-out hierarchy a person sees in the app.
+        RunLoop.current.run(until: Date().addingTimeInterval(0.12))
         host.layoutSubtreeIfNeeded()
         host.displayIfNeeded()
         defer { window.close() }
