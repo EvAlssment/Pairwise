@@ -37,8 +37,10 @@ enum SupportDiagnostics {
     }
 
     static func safeBuildIdentifier(_ value: String?) -> String {
-        guard let value, !value.isEmpty, value.count <= 64,
-              value.unicodeScalars.allSatisfy({ CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-").contains($0) }) else {
+        guard let value else { return "unavailable" }
+        if value == "unknown" { return value }
+        guard (7...40).contains(value.count),
+              value.unicodeScalars.allSatisfy({ CharacterSet(charactersIn: "0123456789abcdefABCDEF").contains($0) }) else {
             return "unavailable"
         }
         return value

@@ -148,6 +148,14 @@ func TestVersionEndpointExposesOnlySafeBuildMetadata(t *testing.T) {
 	if len(got) != 3 || strings.Contains(w.Body.String(), "secret") || strings.Contains(w.Body.String(), "token") {
 		t.Fatalf("version endpoint exposed unexpected data: %s", w.Body)
 	}
+	for _, invalid := range []string{"contains-separators", "deadbeef\nsecret", strings.Repeat("a", 41)} {
+		if safeBuildCommit(invalid) != "unknown" {
+			t.Fatalf("unsafe build identifier %q was not removed", invalid)
+		}
+	}
+	if safeBuildCommit("0123456789abcdef") != "0123456789abcdef" || safeBuildCommit("unknown") != "unknown" {
+		t.Fatal("valid build identifier was not preserved")
+	}
 	if w := request(s.Handler(), http.MethodPost, "/version", "", ""); w.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("version endpoint accepted a write: %d", w.Code)
 	}

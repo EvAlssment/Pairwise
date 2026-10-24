@@ -104,7 +104,7 @@ func (s *Server) version(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{
 		"service":     "pairdesk-api",
 		"apiProtocol": "v1",
-		"buildCommit": buildCommit,
+		"buildCommit": safeBuildCommit(buildCommit),
 	})
 }
 
