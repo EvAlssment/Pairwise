@@ -2,6 +2,24 @@ import XCTest
 @testable import PairDesk
 
 final class ScreenPrivacyVeilTests: XCTestCase {
+    func testPrivacyGuidanceReflectsNotificationFilterAndOSSupport() {
+        let enabled = ScreenSharePrivacyGuidance.text(
+            for: .display, hasHiddenApps: false, hidesNotifications: true, supportsPrivacyFilters: true
+        )
+        XCTAssertTrue(enabled.contains("Notification Center is excluded"))
+
+        let unavailable = ScreenSharePrivacyGuidance.text(
+            for: .region, hasHiddenApps: true, hidesNotifications: false, supportsPrivacyFilters: false
+        )
+        XCTAssertTrue(unavailable.contains("turn off app and notification hiding"))
+
+        let window = ScreenSharePrivacyGuidance.text(
+            for: .window, hasHiddenApps: false, hidesNotifications: true, supportsPrivacyFilters: false
+        )
+        XCTAssertTrue(window.contains("Only the selected window is shared"))
+        XCTAssertTrue(window.contains("apply to display or region shares"))
+    }
+
     func testOnlyEnumeratedApplicationIdentifiersCanBeExcluded() {
         let selected = PrivacyVeilSelection.resolve(
             ["com.example.private", "com.example.not-running"],

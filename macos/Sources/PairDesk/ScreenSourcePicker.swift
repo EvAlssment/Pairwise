@@ -23,6 +23,38 @@ enum ScreenShareSource: String, CaseIterable, Identifiable {
     }
 }
 
+enum ScreenSharePrivacyGuidance {
+    static func text(for source: ScreenShareSource, hasHiddenApps: Bool,
+                     hidesNotifications: Bool, supportsPrivacyFilters: Bool) -> String {
+        if source == .window {
+            if supportsPrivacyFilters {
+                return hasHiddenApps
+                    ? "Windows from apps in your hidden-app list are unavailable. Notification hiding applies to display and region shares."
+                    : "Only the selected window is shared. App and notification hiding apply to display and region shares."
+            }
+            if hasHiddenApps {
+                return "Hidden-app settings need macOS 15.2 or newer. Update macOS or remove hidden apps in Settings → Privacy before sharing a window."
+            }
+            return "Only the selected window is shared. App and notification hiding need macOS 15.2 or newer and apply to display or region shares."
+        }
+
+        if supportsPrivacyFilters {
+            if hidesNotifications {
+                return "After choosing a display, review the apps and windows to hide. Notification Center is excluded for this share."
+            }
+            if hasHiddenApps {
+                return "After choosing a display, review the apps and windows to hide. Notification banners remain visible; turn on notification hiding in Settings → Privacy to exclude them."
+            }
+            return "After choosing a display, review apps and windows to hide. Notification banners remain visible unless you turn on notification hiding in Settings → Privacy or use Focus."
+        }
+
+        if hasHiddenApps || hidesNotifications {
+            return "Your privacy filters need macOS 15.2 or newer. Update macOS or turn off app and notification hiding in Settings → Privacy before sharing."
+        }
+        return "App and notification hiding need macOS 15.2 or newer. Region sharing limits the shared area; use Focus to silence notification banners."
+    }
+}
+
 enum ScreenCropGeometry {
     static func normalizedCrop(dragRect: CGRect, contentRect: CGRect) -> CGRect? {
         guard contentRect.width > 0, contentRect.height > 0 else { return nil }

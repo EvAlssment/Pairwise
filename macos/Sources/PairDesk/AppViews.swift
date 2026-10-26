@@ -486,6 +486,7 @@ private struct RemotePointerBadge: View {
 struct ScreenSharePickerView: View {
     @ObservedObject var store: AppStore
     @ObservedObject private var screenPermission = PermissionManager.shared
+    @ObservedObject private var privacyVeil = PrivacyVeilPreferences.shared
     @Environment(\.dismiss) private var dismiss
     @State private var permissions = false
     @State private var source: ScreenShareSource = .display
@@ -496,10 +497,8 @@ struct ScreenSharePickerView: View {
                 ForEach(ScreenShareSource.allCases) { source in Text(source.title).tag(source) }
             }.pickerStyle(.segmented)
             Text(source.explanation + " PairDesk only gets access to your selection for this sharing session.").font(.callout).foregroundStyle(.secondary)
-            if source == .display {
-                Label("On macOS 15.2 or newer, you can hide selected apps after choosing a display. Notification banners may still appear; use Focus to silence them. Window or Region sharing limits what others see.", systemImage: "eye")
-                    .font(.caption).foregroundStyle(Theme.attention).fixedSize(horizontal: false, vertical: true)
-            }
+            Label(privacyHelpText, systemImage: "eye")
+                .font(.caption).foregroundStyle(Theme.attention).fixedSize(horizontal: false, vertical: true)
             if source == .window {
                 Text("Window sharing is view-only. Share a display or region to use remote control.")
                     .font(.caption).foregroundStyle(.secondary)
@@ -529,6 +528,18 @@ struct ScreenSharePickerView: View {
         dismiss()
         AppWindows.shared.close("share")
         Task { await store.shareScreen(source: chosenSource) }
+    }
+
+    private var privacyHelpText: String {
+        let supportsPrivacyFilters: Bool
+        if #available(macOS 15.2, *) { supportsPrivacyFilters = true }
+        else { supportsPrivacyFilters = false }
+        return ScreenSharePrivacyGuidance.text(
+            for: source,
+            hasHiddenApps: !privacyVeil.bundleIdentifiers.isEmpty,
+            hidesNotifications: privacyVeil.hideNotificationBanners,
+            supportsPrivacyFilters: supportsPrivacyFilters
+        )
     }
 }
 
