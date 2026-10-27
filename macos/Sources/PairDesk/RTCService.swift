@@ -1621,7 +1621,7 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
         clipboardSyncTask?.cancel()
         clipboardSyncTask = Task { @MainActor [weak self] in
             while !Task.isCancelled {
-                do { try await Task.sleep(for: .milliseconds(250)) } catch { return }
+                do { try await Task.sleep(for: ClipboardSyncPolicy.pollInterval) } catch { return }
                 guard let self, self.connected, self.clipboardSyncEnabled else { return }
                 self.checkClipboardForChanges()
             }
