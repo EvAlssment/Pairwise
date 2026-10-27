@@ -33,14 +33,14 @@ struct ClipboardTransferView: View {
                     Text("⌘V  Paste there")
                 }
                 .font(.callout.weight(.medium))
-                Toggle("Enable for this call", isOn: Binding(
+                Toggle("Sync clipboard text for this call", isOn: Binding(
                     get: { clipboardSyncEnabled },
                     set: onToggleSync
                 ))
                 .font(.callout.weight(.medium))
                 Text(clipboardSyncEnabled
-                     ? "Each teammate turns this on from their own Copy & paste button. Plain text only; it turns off when the call ends."
-                     : "Turn this on here and on each Mac that should share plain text. No images or files.")
+                     ? "Turn this on on both Macs for automatic plain-text sync. It turns off when the call ends."
+                     : "For automatic sync, both Macs must opt in. Otherwise, send a clip once and let the other person approve copying it.")
                     .font(.caption).foregroundStyle(.secondary)
                 Text("On a shared display: select text and press ⌘C to copy here. Copy locally, click the remote app, then press ⌘V to paste there.")
                     .font(.caption).foregroundStyle(.secondary)
@@ -50,22 +50,21 @@ struct ClipboardTransferView: View {
             .background(.quaternary, in: RoundedRectangle(cornerRadius: 10))
 
             if !peers.isEmpty {
-                DisclosureGroup {
+                VStack(alignment: .leading, spacing: 8) {
+                    Label("Send text once", systemImage: "paperplane")
+                        .font(.callout.weight(.medium))
                     HStack(spacing: 8) {
                         Picker("Send to", selection: $selectedPeerIdentity) {
                             ForEach(peers) { peer in Text(peer.name).tag(peer.identity) }
                         }
                         .frame(maxWidth: .infinity)
 
-                        Button("Send") { sendClipboard() }
+                        Button(sending ? "Sending…" : "Send") { sendClipboard() }
                             .buttonStyle(PrimaryButtonStyle())
                             .disabled(selectedPeerIdentity.isEmpty || sending)
                     }
-                    Text("They review the text and choose when to paste it.")
+                    Text("They approve copying it to their clipboard, then press ⌘V.")
                         .font(.caption).foregroundStyle(.secondary)
-                } label: {
-                    Label("Send copied text to one teammate", systemImage: "paperplane")
-                        .font(.callout.weight(.medium))
                 }
             } else {
                 Text("Start a call with a teammate to share text.")
@@ -122,7 +121,7 @@ struct ClipboardTransferView: View {
         Task {
             // The status reports the outcome, not the attempt: a clip that
             // exceeds the transport's packet limits fails here, visibly.
-            do { try await onSend(text, peer); status = "Sent text to \(peerName)." }
+            do { try await onSend(text, peer); status = "Sent to \(peerName). They can approve it in the call." }
             catch { status = error.localizedDescription }
             sending = false
         }

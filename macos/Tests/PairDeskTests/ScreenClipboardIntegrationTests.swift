@@ -55,6 +55,18 @@ final class ScreenClipboardIntegrationTests: XCTestCase {
                 return false
             }
 
+            // The fixture restarts opted-in polling after installing isolated
+            // pasteboards, so this exercises the same authenticated room as
+            // the explicit shortcut checks without resetting control state.
+            let autoSyncedText = "automatic clipboard sync · café 🚀"
+            viewerBoard.clearContents()
+            viewerBoard.setString(autoSyncedText, forType: .string)
+            try await waitFor { hostBoard.string(forType: .string) == autoSyncedText }
+            XCTAssertEqual(hostBoard.string(forType: .string), autoSyncedText)
+            viewerBoard.clearContents()
+            viewerBoard.setString(localText, forType: .string)
+            try await waitFor { hostBoard.string(forType: .string) == localText }
+
             let canvas = ScreenCanvas(rtc: viewer)
             canvas.driving = true
             let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 400, height: 300),

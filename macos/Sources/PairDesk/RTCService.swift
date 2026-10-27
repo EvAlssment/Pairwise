@@ -190,6 +190,10 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
     private var clipboardReplayWindow = ClipboardTransferReplayWindow()
     private var clipboardAssembler = ClipboardTransferAssembler()
     private var clipboardSyncTask: Task<Void, Never>?
+    private var clipboardSyncSendTask: Task<Void, Never>?
+    private var clipboardSyncQueue: [String] = []
+    private var clipboardSyncQueuedTexts = Set<String>()
+    private var clipboardSyncInFlightText: String?
     private var clipboardObservedChangeCount = 0
     private var lastSharedClipboardText: String?
     private var screenClipboard = ScreenClipboard()
@@ -1584,8 +1588,10 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
 
     func pasteIncomingClipboardTransfer() {
         guard let transfer = incomingClipboardTransfer else { return }
-        screenClipboard.pasteboard.clearContents()
-        screenClipboard.pasteboard.setString(transfer.message.text, forType: .string)
+        do { try screenClipboard.writeText(transfer.message.text) }
+        catch { clipboardSyncNotice = error.localizedDescription; return }
+        clipboardObservedChangeCount = screenClipboard.pasteboard.changeCount
+        lastSharedClipboardText = transfer.message.text
         incomingClipboardTransfer = nil
     }
 
@@ -1598,11 +1604,21 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
         clipboardSyncTask?.cancel()
         clipboardSyncTask = nil
         clipboardSyncEnabled = enabled && connected
-        clipboardSyncNotice = clipboardSyncEnabled ? "Text clipboard sync is on for this call" : nil
+        if !clipboardSyncEnabled {
+            clipboardSyncSendTask?.cancel()
+            clipboardSyncQueue.removeAll()
+            clipboardSyncQueuedTexts.removeAll()
+        }
+        clipboardSyncNotice = clipboardSyncEnabled ? "Clipboard sync is on · plain text only" : nil
         lastSharedClipboardText = nil
         clipboardObservedChangeCount = screenClipboard.pasteboard.changeCount
         sendControlAvailability()
         guard clipboardSyncEnabled else { return }
+        startClipboardSyncTask()
+    }
+
+    private func startClipboardSyncTask() {
+        clipboardSyncTask?.cancel()
         clipboardSyncTask = Task { @MainActor [weak self] in
             while !Task.isCancelled {
                 do { try await Task.sleep(for: .milliseconds(250)) } catch { return }
@@ -1622,19 +1638,64 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
             clipboardSyncNotice = "Private text from a password manager wasn't shared"
             return
         }
-        guard let text = pasteboard.string(forType: .string), !text.isEmpty, text != lastSharedClipboardText else { return }
+        guard let text = pasteboard.string(forType: .string), !text.isEmpty,
+              text != lastSharedClipboardText, text != clipboardSyncInFlightText,
+              !clipboardSyncQueuedTexts.contains(text) else { return }
+        guard participants.contains(where: { !$0.isLocal }) else {
+            clipboardSyncNotice = "A teammate needs to join before clipboard text can sync"
+            return
+        }
         guard text.utf8.count <= ClipboardTransferMessage.maximumTextBytes else {
             clipboardSyncNotice = "Copied text is over the 64 KB limit and wasn't shared"
             return
         }
-        lastSharedClipboardText = text
-        for person in participants where !person.isLocal {
-            Task { @MainActor [weak self] in
-                do { try await self?.sendClipboard(text: text, to: person.identity) }
-                catch { self?.clipboardSyncNotice = "Couldn't share copied text: \(error.localizedDescription)" }
+        clipboardSyncQueue.append(text)
+        clipboardSyncQueuedTexts.insert(text)
+        clipboardSyncNotice = "Sharing copied text…"
+        drainClipboardSyncQueue()
+    }
+
+    private func drainClipboardSyncQueue() {
+        guard clipboardSyncSendTask == nil, clipboardSyncEnabled, connected else { return }
+        clipboardSyncSendTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            var firstFailure: String?
+            var sentCount = 0
+            var failedCount = 0
+            while !Task.isCancelled, self.clipboardSyncEnabled, self.connected,
+                  !self.clipboardSyncQueue.isEmpty {
+                let text = self.clipboardSyncQueue.removeFirst()
+                self.clipboardSyncQueuedTexts.remove(text)
+                self.clipboardSyncInFlightText = text
+                var failed = false
+                for person in self.participants where !person.isLocal {
+                    guard !Task.isCancelled else { break }
+                    do { try await self.sendClipboard(text: text, to: person.identity) }
+                    catch {
+                        failed = true
+                        if firstFailure == nil { firstFailure = error.localizedDescription }
+                    }
+                }
+                self.clipboardSyncInFlightText = nil
+                guard !Task.isCancelled else { break }
+                if failed {
+                    failedCount += 1
+                } else {
+                    self.lastSharedClipboardText = text
+                    sentCount += 1
+                    self.clipboardSyncNotice = "Copied text shared with teammates on this call"
+                }
+            }
+            self.clipboardSyncInFlightText = nil
+            self.clipboardSyncSendTask = nil
+            if self.clipboardSyncEnabled, self.connected, !self.clipboardSyncQueue.isEmpty {
+                self.drainClipboardSyncQueue()
+            } else if failedCount > 0 {
+                self.clipboardSyncNotice = "Couldn't share \(failedCount) copied clip(s): \(firstFailure ?? "copy again to retry")"
+            } else if sentCount > 1 && firstFailure == nil {
+                self.clipboardSyncNotice = "Shared \(sentCount) copied clips with teammates"
             }
         }
-        clipboardSyncNotice = "Copied text shared with teammates on this call"
     }
     private static let allowedModifierMask = CGEventFlags.maskShift.rawValue |
         CGEventFlags.maskControl.rawValue | CGEventFlags.maskAlternate.rawValue |
@@ -2570,6 +2631,7 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
             localControllerEpoch = controllerGranted ? epoch : nil
             screenClipboardEnabledBySender[peer] = true
         }
+        startClipboardSyncTask()
     }
 
     func debugReceiveControl(_ message: RemoteControlMessage, sender: String) { receive(message, sender: sender) }
