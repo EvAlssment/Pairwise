@@ -8,6 +8,16 @@ final class AppTests: XCTestCase {
         XCTAssertEqual(AudioMeter.level(samples: [0.5, -0.5]), 0.5, accuracy: 0.0001)
         XCTAssertEqual(AudioMeter.level(samples: [2, -2]), 1)
     }
+    func testSpeakerTestToneIsShortQuietAndFadeShaped() {
+        let samples = SpeakerTestTone.samples()
+
+        XCTAssertEqual(samples.count, 38_400)
+        XCTAssertEqual(samples.first, 0)
+        XCTAssertEqual(samples.last, 0)
+        XCTAssertLessThanOrEqual(samples.map(abs).max() ?? 1, 0.0801)
+        let positiveCrossings = zip(samples, samples.dropFirst()).filter { $0 <= 0 && $1 > 0 }.count
+        XCTAssertEqual(Double(positiveCrossings) / 0.8, 440, accuracy: 1)
+    }
     func testCameraSelectionFallsBackWhenSavedDeviceIsMissing() {
         let choices = [CameraDeviceChoice(id: "built-in", name: "Built-in"),
                        CameraDeviceChoice(id: "usb", name: "USB camera")]

@@ -7,9 +7,10 @@ import SwiftUI
 @MainActor
 final class SettingsMediaTests {
     let microphone = MicrophoneTestController()
+    let speaker = SpeakerTestController()
     let camera = CameraPreviewTestController()
     private(set) var generation = 0
-    func stop() { generation += 1; microphone.stop(); camera.stop() }
+    func stop() { generation += 1; microphone.stop(); speaker.stop(); camera.stop() }
 }
 
 /// Cached AppKit windows do not disappear from SwiftUI when closed/ordered out.
@@ -29,13 +30,13 @@ final class MicrophoneTestController: ObservableObject {
 
     private var engine: AVAudioEngine?
 
-    func start(deviceID: String) {
+    func start(deviceID: String, isDefault: Bool = false) {
         guard !isRunning else { return }
         message = nil
         let engine = AVAudioEngine()
         let input = engine.inputNode
         guard let audioUnit = input.audioUnit,
-              let device = Self.coreAudioDeviceID(for: deviceID) else {
+              let device = CoreAudioDeviceLookup.deviceID(for: deviceID, isDefault: isDefault, direction: .input) else {
             message = "PairDesk couldn't find the selected microphone. Choose an available input and try again."
             return
         }
@@ -78,7 +79,109 @@ final class MicrophoneTestController: ObservableObject {
         level = 0
     }
 
-    private static func coreAudioDeviceID(for uid: String) -> AudioDeviceID? {
+}
+
+@MainActor
+final class SpeakerTestController: ObservableObject {
+    @Published private(set) var isPlaying = false
+    @Published var message: String?
+
+    private var engine: AVAudioEngine?
+    private var player: AVAudioPlayerNode?
+    private var completion: Task<Void, Never>?
+
+    func play(deviceID: String, isDefault: Bool = false) {
+        stop()
+        message = nil
+        guard let device = CoreAudioDeviceLookup.deviceID(for: deviceID, isDefault: isDefault, direction: .output) else {
+            message = "PairDesk couldn't find the selected speaker. Choose an available output and try again."
+            return
+        }
+        let engine = AVAudioEngine()
+        let player = AVAudioPlayerNode()
+        engine.attach(player)
+        let output = engine.outputNode
+        guard let audioUnit = output.audioUnit else {
+            message = "PairDesk couldn't start the selected speaker test."
+            return
+        }
+        var selectedDevice = device
+        let status = AudioUnitSetProperty(audioUnit, kAudioOutputUnitProperty_CurrentDevice,
+                                          kAudioUnitScope_Global, 0, &selectedDevice,
+                                          UInt32(MemoryLayout<AudioDeviceID>.size))
+        guard status == noErr else {
+            message = "PairDesk couldn't route the test sound to the selected speaker."
+            return
+        }
+        let format = AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 1)!
+        let samples = SpeakerTestTone.samples()
+        guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(samples.count)),
+              let channel = buffer.floatChannelData?.pointee else {
+            message = "PairDesk couldn't prepare the speaker test sound."
+            return
+        }
+        buffer.frameLength = AVAudioFrameCount(samples.count)
+        for index in samples.indices { channel[index] = samples[index] }
+        engine.connect(player, to: output, format: format)
+        do {
+            engine.prepare()
+            try engine.start()
+            player.scheduleBuffer(buffer)
+            player.play()
+            self.engine = engine
+            self.player = player
+            isPlaying = true
+            completion = Task { [weak self] in
+                try? await Task.sleep(for: .milliseconds(900))
+                guard !Task.isCancelled else { return }
+                self?.stop()
+            }
+        } catch {
+            player.stop()
+            engine.stop()
+            message = "Speaker test couldn't start: \(error.localizedDescription)"
+        }
+    }
+
+    func stop() {
+        completion?.cancel()
+        completion = nil
+        player?.stop()
+        engine?.stop()
+        player = nil
+        engine = nil
+        isPlaying = false
+    }
+}
+
+enum SpeakerTestTone {
+    static func samples(sampleRate: Double = 48_000, duration: Double = 0.8,
+                        frequency: Double = 440, amplitude: Double = 0.08) -> [Float] {
+        let count = max(1, Int(sampleRate * duration))
+        let fadeFrames = max(1, Int(sampleRate * 0.02))
+        return (0..<count).map { index in
+            let fadeIn = min(1, Double(index) / Double(fadeFrames))
+            let fadeOut = min(1, Double(count - index - 1) / Double(fadeFrames))
+            let envelope = max(0, min(fadeIn, fadeOut))
+            return Float(sin(2 * .pi * frequency * Double(index) / sampleRate) * amplitude * envelope)
+        }
+    }
+}
+
+private enum CoreAudioDeviceLookup {
+    enum Direction {
+        case input
+        case output
+
+        var defaultDeviceSelector: AudioObjectPropertySelector {
+            switch self {
+            case .input: kAudioHardwarePropertyDefaultInputDevice
+            case .output: kAudioHardwarePropertyDefaultOutputDevice
+            }
+        }
+    }
+
+    static func deviceID(for uid: String, isDefault: Bool, direction: Direction) -> AudioDeviceID? {
         var address = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyDevices,
                                                  mScope: kAudioObjectPropertyScopeGlobal,
                                                  mElement: kAudioObjectPropertyElementMain)
@@ -102,7 +205,16 @@ final class MicrophoneTestController: ObservableObject {
                   value.takeUnretainedValue() as String == uid else { continue }
             return device
         }
-        return nil
+        guard isDefault else { return nil }
+        var defaultAddress = AudioObjectPropertyAddress(mSelector: direction.defaultDeviceSelector,
+                                                        mScope: kAudioObjectPropertyScopeGlobal,
+                                                        mElement: kAudioObjectPropertyElementMain)
+        var defaultDevice = AudioDeviceID(0)
+        var defaultSize = UInt32(MemoryLayout<AudioDeviceID>.size)
+        guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &defaultAddress,
+                                         0, nil, &defaultSize, &defaultDevice) == noErr,
+              defaultDevice != kAudioObjectUnknown else { return nil }
+        return defaultDevice
     }
 }
 
