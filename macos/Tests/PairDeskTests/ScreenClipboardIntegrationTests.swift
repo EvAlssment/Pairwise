@@ -60,8 +60,11 @@ final class ScreenClipboardIntegrationTests: XCTestCase {
             // the explicit shortcut checks without resetting control state.
             let autoSyncedText = "automatic clipboard sync · café 🚀"
             viewerBoard.clearContents()
+            let syncStartedAt = ContinuousClock.now
             viewerBoard.setString(autoSyncedText, forType: .string)
             try await waitFor { hostBoard.string(forType: .string) == autoSyncedText }
+            let syncElapsed = syncStartedAt.duration(to: ContinuousClock.now)
+            XCTAssertLessThanOrEqual(syncElapsed, .milliseconds(350), "Automatic clipboard sync should feel immediate")
             XCTAssertEqual(hostBoard.string(forType: .string), autoSyncedText)
             viewerBoard.clearContents()
             viewerBoard.setString(localText, forType: .string)

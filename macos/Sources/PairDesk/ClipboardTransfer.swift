@@ -201,6 +201,11 @@ struct ClipboardTransferAssembler {
 /// their items concealed; clipboard tools mark restores transient and scripted
 /// writes auto-generated. None of those were copied for a teammate.
 enum ClipboardSyncPolicy {
+    /// Poll only while a call's clipboard sync is opted in. A shorter interval
+    /// reduces paste latency and makes quick successive copies less likely to
+    /// be coalesced into one observed pasteboard state.
+    static let pollInterval = Duration.milliseconds(75)
+
     static let excludedPasteboardTypes = [
         "org.nspasteboard.ConcealedType",
         "org.nspasteboard.TransientType",

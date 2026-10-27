@@ -79,6 +79,7 @@ final class AppWindows {
     func showIncomingCall(store: AppStore) -> NSWindow {
         let window = show("incoming", activate: false) {
             let controller = NSHostingController(rootView: IncomingCallView(store: store).preferredColorScheme(.dark))
+            controller.sizingOptions = []
             let window = IncomingCallPanel(contentViewController: controller)
             window.title = "Incoming call"
             window.styleMask = [.titled, .fullSizeContentView, .nonactivatingPanel]

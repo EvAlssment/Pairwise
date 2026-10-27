@@ -29,6 +29,7 @@ struct SettingsView: View {
     @ObservedObject private var permissions = PermissionManager.shared
     @ObservedObject private var privacyVeil = PrivacyVeilPreferences.shared
     @StateObject private var microphoneTest: MicrophoneTestController
+    @StateObject private var speakerTest: SpeakerTestController
     @StateObject private var cameraTest: CameraPreviewTestController
     private let mediaTests: SettingsMediaTests
     @State private var selection: PairDeskSettingsSection?
@@ -41,6 +42,7 @@ struct SettingsView: View {
         let mediaTests = mediaTests ?? SettingsMediaTests()
         self.mediaTests = mediaTests
         _microphoneTest = StateObject(wrappedValue: mediaTests.microphone)
+        _speakerTest = StateObject(wrappedValue: mediaTests.speaker)
         _cameraTest = StateObject(wrappedValue: mediaTests.camera)
         _selection = State(initialValue: initialSection)
     }
@@ -83,6 +85,7 @@ struct SettingsView: View {
             mediaTests.stop()
         }
         .onChange(of: selection) { _, _ in mediaTests.stop() }
+        .onChange(of: rtc.selectedAudioOutputID) { _, _ in speakerTest.stop() }
         .onChange(of: store.activeRoom?.id) { _, roomID in
             guard roomID != nil else { return }
             mediaTests.stop()
@@ -177,6 +180,32 @@ struct SettingsView: View {
             SettingsCard {
                 HStack {
                     VStack(alignment: .leading, spacing: 5) {
+                        Label("Speaker check", systemImage: "speaker.wave.2")
+                            .font(.headline)
+                        Text(speakerTest.isPlaying
+                             ? "A short test tone is playing through your selected speaker."
+                             : "Play a short local tone to confirm the selected output device works.")
+                            .font(.callout).foregroundStyle(Theme.textMuted)
+                    }
+                    Spacer()
+                    Button(speakerTest.isPlaying ? "Stop sound" : "Test speaker") {
+                        if speakerTest.isPlaying { speakerTest.stop() }
+                        else {
+                            speakerTest.play(
+                                deviceID: rtc.selectedAudioOutputID,
+                                isDefault: rtc.audioOutputDevices.first(where: { $0.id == rtc.selectedAudioOutputID })?.isDefault ?? false
+                            )
+                        }
+                    }
+                    .disabled(store.activeRoom != nil || rtc.audioOutputDevices.isEmpty)
+                }
+                if let message = speakerTest.message {
+                    Text(message).font(.caption).foregroundStyle(Theme.attention)
+                }
+            }
+            SettingsCard {
+                HStack {
+                    VStack(alignment: .leading, spacing: 5) {
                         Label("Microphone check", systemImage: "waveform")
                             .font(.headline)
                         Text(microphoneTest.isRunning
@@ -215,7 +244,7 @@ struct SettingsView: View {
                     Text(message).font(.caption).foregroundStyle(Theme.attention)
                 }
             }
-            Text("The test checks the selected input locally; it does not record or send audio. Your in-call mute control is separate.")
+            Text("Both tests run on this Mac. No test audio is recorded or sent; the microphone check is separate from your in-call mute control.")
                 .font(.caption).foregroundStyle(Theme.textMuted)
         }
     }
@@ -341,11 +370,18 @@ struct SettingsView: View {
             Task {
                 await permissions.requestMicrophone()
                 permissions.refresh()
-                if permissions.microphone, mediaTests.generation == generation { microphoneTest.start(deviceID: rtc.selectedAudioInputID) }
+                if permissions.microphone, mediaTests.generation == generation { startMicrophoneTest() }
             }
             return
         }
-        microphoneTest.start(deviceID: rtc.selectedAudioInputID)
+        startMicrophoneTest()
+    }
+
+    private func startMicrophoneTest() {
+        microphoneTest.start(
+            deviceID: rtc.selectedAudioInputID,
+            isDefault: rtc.audioInputDevices.first(where: { $0.id == rtc.selectedAudioInputID })?.isDefault ?? false
+        )
     }
 
     private func toggleCameraTest() {

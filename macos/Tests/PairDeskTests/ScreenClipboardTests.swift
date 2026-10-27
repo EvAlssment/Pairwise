@@ -3,6 +3,10 @@ import XCTest
 @testable import PairDesk
 
 final class ScreenClipboardTests: XCTestCase {
+    func testAutomaticClipboardSyncUsesResponsiveOptInPollingInterval() {
+        XCTAssertEqual(ClipboardSyncPolicy.pollInterval, .milliseconds(75))
+    }
+
     @MainActor
     func testPasteWaitsForAllPartsAndPostsExactlyOneShortcut() throws {
         let board = NSPasteboard.withUniqueName()
