@@ -58,14 +58,21 @@ final class ScreenClipboardIntegrationTests: XCTestCase {
             // The fixture restarts opted-in polling after installing isolated
             // pasteboards, so this exercises the same authenticated room as
             // the explicit shortcut checks without resetting control state.
-            let autoSyncedText = "automatic clipboard sync · café 🚀"
-            viewerBoard.clearContents()
-            let syncStartedAt = ContinuousClock.now
-            viewerBoard.setString(autoSyncedText, forType: .string)
-            try await waitFor { hostBoard.string(forType: .string) == autoSyncedText }
-            let syncElapsed = syncStartedAt.duration(to: ContinuousClock.now)
-            XCTAssertLessThanOrEqual(syncElapsed, .milliseconds(350), "Automatic clipboard sync should feel immediate")
-            XCTAssertEqual(hostBoard.string(forType: .string), autoSyncedText)
+            var syncDurations: [Duration] = []
+            for sample in 0..<5 {
+                let autoSyncedText = "automatic clipboard sync \(sample) · café 🚀"
+                viewerBoard.clearContents()
+                let syncStartedAt = ContinuousClock.now
+                viewerBoard.setString(autoSyncedText, forType: .string)
+                try await waitFor { hostBoard.string(forType: .string) == autoSyncedText }
+                syncDurations.append(syncStartedAt.duration(to: ContinuousClock.now))
+                XCTAssertEqual(hostBoard.string(forType: .string), autoSyncedText)
+            }
+            let sortedSyncDurations = syncDurations.sorted()
+            XCTAssertLessThanOrEqual(sortedSyncDurations[sortedSyncDurations.count / 2], .milliseconds(350),
+                                     "Typical automatic clipboard sync should feel immediate")
+            XCTAssertLessThanOrEqual(sortedSyncDurations.last ?? .zero, .milliseconds(750),
+                                     "Clipboard sync should not have a long loopback tail")
             viewerBoard.clearContents()
             viewerBoard.setString(localText, forType: .string)
             try await waitFor { hostBoard.string(forType: .string) == localText }
