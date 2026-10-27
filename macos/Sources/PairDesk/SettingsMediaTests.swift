@@ -35,18 +35,24 @@ final class MicrophoneTestController: ObservableObject {
         message = nil
         let engine = AVAudioEngine()
         let input = engine.inputNode
-        guard let audioUnit = input.audioUnit,
-              let device = CoreAudioDeviceLookup.deviceID(for: deviceID, isDefault: isDefault, direction: .input) else {
+        let explicitDevice = isDefault ? nil : CoreAudioDeviceLookup.deviceID(for: deviceID)
+        guard let route = AudioTestDeviceRoute.resolve(isDefault: isDefault, explicitDeviceID: explicitDevice) else {
             message = "PairDesk couldn't find the selected microphone. Choose an available input and try again."
             return
         }
-        var selectedDevice = device
-        let status = AudioUnitSetProperty(audioUnit, kAudioOutputUnitProperty_CurrentDevice,
-                                          kAudioUnitScope_Global, 0, &selectedDevice,
-                                          UInt32(MemoryLayout<AudioDeviceID>.size))
-        guard status == noErr else {
-            message = "PairDesk couldn't test the selected microphone. Check the device connection and try again."
-            return
+        if case let .device(device) = route {
+            guard let audioUnit = input.audioUnit else {
+                message = "PairDesk couldn't test the selected microphone. Check the device connection and try again."
+                return
+            }
+            var selectedDevice = device
+            let status = AudioUnitSetProperty(audioUnit, kAudioOutputUnitProperty_CurrentDevice,
+                                              kAudioUnitScope_Global, 0, &selectedDevice,
+                                              UInt32(MemoryLayout<AudioDeviceID>.size))
+            guard status == noErr else {
+                message = "PairDesk couldn't test the selected microphone. Check the device connection and try again."
+                return
+            }
         }
 
         let format = input.outputFormat(forBus: 0)
@@ -93,7 +99,8 @@ final class SpeakerTestController: ObservableObject {
     func play(deviceID: String, isDefault: Bool = false) {
         stop()
         message = nil
-        guard let device = CoreAudioDeviceLookup.deviceID(for: deviceID, isDefault: isDefault, direction: .output) else {
+        let explicitDevice = isDefault ? nil : CoreAudioDeviceLookup.deviceID(for: deviceID)
+        guard let route = AudioTestDeviceRoute.resolve(isDefault: isDefault, explicitDeviceID: explicitDevice) else {
             message = "PairDesk couldn't find the selected speaker. Choose an available output and try again."
             return
         }
@@ -101,17 +108,19 @@ final class SpeakerTestController: ObservableObject {
         let player = AVAudioPlayerNode()
         engine.attach(player)
         let output = engine.outputNode
-        guard let audioUnit = output.audioUnit else {
-            message = "PairDesk couldn't start the selected speaker test."
-            return
-        }
-        var selectedDevice = device
-        let status = AudioUnitSetProperty(audioUnit, kAudioOutputUnitProperty_CurrentDevice,
-                                          kAudioUnitScope_Global, 0, &selectedDevice,
-                                          UInt32(MemoryLayout<AudioDeviceID>.size))
-        guard status == noErr else {
-            message = "PairDesk couldn't route the test sound to the selected speaker."
-            return
+        if case let .device(device) = route {
+            guard let audioUnit = output.audioUnit else {
+                message = "PairDesk couldn't start the selected speaker test."
+                return
+            }
+            var selectedDevice = device
+            let status = AudioUnitSetProperty(audioUnit, kAudioOutputUnitProperty_CurrentDevice,
+                                              kAudioUnitScope_Global, 0, &selectedDevice,
+                                              UInt32(MemoryLayout<AudioDeviceID>.size))
+            guard status == noErr else {
+                message = "PairDesk couldn't route the test sound to the selected speaker."
+                return
+            }
         }
         let format = AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 1)!
         let samples = SpeakerTestTone.samples()
@@ -168,20 +177,19 @@ enum SpeakerTestTone {
     }
 }
 
-private enum CoreAudioDeviceLookup {
-    enum Direction {
-        case input
-        case output
+enum AudioTestDeviceRoute: Equatable {
+    case systemDefault
+    case device(AudioDeviceID)
 
-        var defaultDeviceSelector: AudioObjectPropertySelector {
-            switch self {
-            case .input: kAudioHardwarePropertyDefaultInputDevice
-            case .output: kAudioHardwarePropertyDefaultOutputDevice
-            }
-        }
+    static func resolve(isDefault: Bool, explicitDeviceID: AudioDeviceID?) -> Self? {
+        if isDefault { return .systemDefault }
+        guard let explicitDeviceID else { return nil }
+        return .device(explicitDeviceID)
     }
+}
 
-    static func deviceID(for uid: String, isDefault: Bool, direction: Direction) -> AudioDeviceID? {
+private enum CoreAudioDeviceLookup {
+    static func deviceID(for uid: String) -> AudioDeviceID? {
         var address = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyDevices,
                                                  mScope: kAudioObjectPropertyScopeGlobal,
                                                  mElement: kAudioObjectPropertyElementMain)
@@ -205,16 +213,7 @@ private enum CoreAudioDeviceLookup {
                   value.takeUnretainedValue() as String == uid else { continue }
             return device
         }
-        guard isDefault else { return nil }
-        var defaultAddress = AudioObjectPropertyAddress(mSelector: direction.defaultDeviceSelector,
-                                                        mScope: kAudioObjectPropertyScopeGlobal,
-                                                        mElement: kAudioObjectPropertyElementMain)
-        var defaultDevice = AudioDeviceID(0)
-        var defaultSize = UInt32(MemoryLayout<AudioDeviceID>.size)
-        guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &defaultAddress,
-                                         0, nil, &defaultSize, &defaultDevice) == noErr,
-              defaultDevice != kAudioObjectUnknown else { return nil }
-        return defaultDevice
+        return nil
     }
 }
 
