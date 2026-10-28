@@ -14,7 +14,7 @@ import java.util.concurrent.TimeUnit
 data class TeamUser(val id: String, val name: String, val email: String, val online: Boolean = false, val busy: Boolean = false)
 data class TeamMember(val id: String, val name: String, val email: String, val online: Boolean = false)
 data class CallRoom(val id: String, val name: String, val participantCount: Int = 0, val participants: List<TeamMember> = emptyList())
-data class Invitation(val id: String, val status: String, val caller: TeamMember, val target: TeamMember, val room: CallRoom)
+data class Invitation(val id: String, val status: String, val caller: TeamMember, val target: TeamMember, val room: CallRoom, val createdAt: String? = null)
 data class JoinRequest(val id: String, val status: String, val requester: TeamMember, val room: CallRoom)
 data class LiveKitGrant(val room: CallRoom, val url: String, val token: String)
 

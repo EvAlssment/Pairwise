@@ -30,6 +30,7 @@ class PairDeskMessagingService : FirebaseMessagingService() {
         val body = when (message.data["event"]) {
             "direct_call" -> "An incoming call is waiting. Open PairDesk to answer."
             "join_request" -> "A teammate wants to join your call. Open PairDesk to respond."
+            "missed_call" -> "You missed a PairDesk call. Open PairDesk to see who called."
             else -> "Open PairDesk to check your team."
         }
         val manager = getSystemService(NotificationManager::class.java)

@@ -337,27 +337,28 @@ struct MenuBarPanel: View {
             .padding(.horizontal, 10).padding(.vertical, 8)
             .background(Theme.surfaceRaised, in: RoundedRectangle(cornerRadius: Theme.cornerRadius))
 
-            if filteredTeammates.isEmpty {
-                VStack(spacing: 7) {
-                    Text(teamConnected ? (searchText.isEmpty ? "No teammates yet" : "No matching teammates") : "Loading teammates…")
-                        .font(.caption).foregroundStyle(Theme.textMuted)
-                    if teamConnected { Button("Refresh") { Task { await store.refresh() } }.buttonStyle(QuietButtonStyle(compact: true)) }
-                }.frame(maxWidth: .infinity).frame(minHeight: 76)
-            } else {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 10) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 10) {
+                    if filteredTeammates.isEmpty {
+                        VStack(spacing: 7) {
+                            Text(teamConnected ? (searchText.isEmpty ? "No teammates yet" : "No matching teammates") : "Loading teammates…")
+                                .font(.caption).foregroundStyle(Theme.textMuted)
+                            if teamConnected { Button("Refresh") { Task { await store.refresh() } }.buttonStyle(QuietButtonStyle(compact: true)) }
+                        }.frame(maxWidth: .infinity).frame(minHeight: 76)
+                    } else {
                         if !onlineTeammates.isEmpty { contactSection("Online", people: onlineTeammates) }
                         if store.activeRoom == nil && !orphanedJoinRequests.isEmpty { joinRequestSection }
                         if store.activeRoom == nil && !store.activeTeamCalls.isEmpty { activeCallsSection }
                         if !offlineTeammates.isEmpty { contactSection("Offline", people: offlineTeammates) }
-                    }.frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    if !recentCalls.isEmpty { recentCallsSection }
                 }
-                // Take the list's real height, scrolling only past the cap. The
-                // menu bar window settles on the panel's minimum height, so an
-                // estimate clipped short rosters.
-                .frame(maxHeight: store.activeRoom == nil ? 420 : 300)
-                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
+            // The call log shares the roster's scroll area so missed calls stay
+            // reachable even when the team list is long.
+            .frame(maxHeight: store.activeRoom == nil ? 420 : 300)
+            .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -374,9 +375,49 @@ struct MenuBarPanel: View {
     }
     private var onlineTeammates: [TeamUser] { filteredTeammates.filter { $0.online == true } }
     private var offlineTeammates: [TeamUser] { filteredTeammates.filter { $0.online != true } }
+    private var recentCalls: [CallInvitation] {
+        store.callInvitations.filter { ["expired", "declined", "cancelled"].contains($0.status) }.prefix(8).map { $0 }
+    }
     private var orphanedJoinRequests: [CallJoinRequest] {
         store.outgoingJoinRequests.filter { request in
             !store.activeTeamCalls.contains(where: { $0.id == request.room.id })
+        }
+    }
+
+    private var recentCallsSection: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            sectionHeader("RECENT CALLS")
+            ForEach(recentCalls) { invitation in
+                let incoming = invitation.target.id == store.user?.id
+                let person = incoming ? invitation.caller : invitation.target
+                let missed = incoming && invitation.status == "expired"
+                HStack(spacing: 9) {
+                    PersonAvatar(name: person.name, id: person.id, size: 27).opacity(missed ? 1 : 0.7)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(person.name).font(.system(size: 12, weight: .medium)).lineLimit(1)
+                        HStack(spacing: 5) {
+                            Text(callHistoryLabel(invitation, incoming: incoming))
+                                .foregroundStyle(missed ? Theme.attention : Theme.textMuted)
+                            Text("·")
+                            Text(invitation.createdDate, style: .relative)
+                                .foregroundStyle(Theme.textMuted)
+                        }.font(.caption).lineLimit(1)
+                    }
+                    Spacer(minLength: 4)
+                    if person.online == true && person.busy != true {
+                        Button("Call back") { Task { await store.call(person) } }
+                            .buttonStyle(QuietButtonStyle(compact: true)).disabled(store.busy)
+                    }
+                }.padding(.horizontal, 8).frame(minHeight: 38)
+            }
+        }
+    }
+
+    private func callHistoryLabel(_ invitation: CallInvitation, incoming: Bool) -> String {
+        switch invitation.status {
+        case "expired": incoming ? "Missed call" : "No answer"
+        case "declined": incoming ? "Declined" : "Call declined"
+        default: "Call ended"
         }
     }
 

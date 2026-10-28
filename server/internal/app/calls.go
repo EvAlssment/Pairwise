@@ -9,7 +9,8 @@ import (
 )
 
 const callTTL = 45 * time.Second
-const callHistoryTTL = 24 * time.Hour
+const callHistoryTTL = 30 * 24 * time.Hour
+const missedCallPushTTL = 24 * time.Hour
 const (
 	callPending   = "pending"
 	callAccepted  = "accepted"
@@ -30,8 +31,8 @@ type apiCall struct {
 	Caller    apiUser   `json:"caller"`
 	Target    apiUser   `json:"target"`
 	Room      apiRoom   `json:"room"`
+	CreatedAt time.Time `json:"createdAt"`
 	ExpiresAt string    `json:"expiresAt"`
-	CreatedAt time.Time `json:"-"`
 }
 
 func (s *Server) calls(w http.ResponseWriter, r *http.Request, u User) {
@@ -326,6 +327,10 @@ func (s *Server) pruneCallsLocked(now time.Time) bool {
 			invite.Status = callExpired
 			invite.UpdatedAt = now
 			s.store.s.Calls[id] = invite
+			// A missed-call alert is a separate, durable event from the short
+			// ringing notification. It is addressed only to the invited user and
+			// expires after the same retention window as the call history.
+			s.enqueuePushJobsLocked([]string{invite.TargetID}, "missed_call", invite.ID, "", now.Add(missedCallPushTTL))
 			changed = true
 		}
 		if invite.Status == callAccepted && !acceptedCallActiveLocked(s.store.s, invite, now) {

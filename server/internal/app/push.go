@@ -62,6 +62,11 @@ func (p *configuredPushSender) Send(ctx context.Context, d DeviceRegistration, e
 				return nil
 			}
 			return p.apns.sendAlert(ctx, d.PushToken, event, callID, expires)
+		case "missed_call":
+			if d.PushToken == "" {
+				return nil
+			}
+			return p.apns.sendAlert(ctx, d.PushToken, event, callID, expires)
 		default:
 			return nil
 		}
@@ -237,6 +242,9 @@ func (s *Server) notify(_ []string, _ string, _ string, _ time.Time) {
 func (s *Server) RunPushWorker(ctx context.Context) {
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
+	expiryTicker := time.NewTicker(time.Second)
+	defer expiryTicker.Stop()
+	s.expireCallsSafely()
 	for {
 		s.deliverPushJobsSafely(ctx)
 		select {
@@ -244,7 +252,30 @@ func (s *Server) RunPushWorker(ctx context.Context) {
 			return
 		case <-s.pushWake:
 		case <-ticker.C:
+		case <-expiryTicker.C:
+			s.expireCallsSafely()
 		}
+	}
+}
+
+// Expire pending invitations independently of client polling so missed-call
+// history and mobile alerts are produced even when both people close PairDesk.
+func (s *Server) expireCallsSafely() {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			if _, ok := recovered.(storageError); !ok {
+				panic(recovered)
+			}
+			log.Printf("call expiry worker paused: shared storage unavailable")
+		}
+	}()
+	s.store.lock()
+	defer s.store.unlock()
+	if !s.pruneCallsLocked(time.Now().UTC()) {
+		return
+	}
+	if err := s.store.save(); err != nil {
+		log.Printf("call expiry state save failed")
 	}
 }
 
@@ -375,6 +406,9 @@ func (s *Server) pushJobActiveLocked(job PushJob) bool {
 	case "join_request":
 		request, exists := s.store.s.JoinRequests[job.RequestID]
 		return exists && request.Status == "pending" && request.RoomID == job.CallID && time.Now().Before(request.ExpiresAt)
+	case "missed_call":
+		invite, exists := s.store.s.Calls[job.CallID]
+		return exists && invite.Status == callExpired && invite.TargetID == job.UserID
 	default:
 		return false
 	}
@@ -544,7 +578,11 @@ func (a *apnsSender) sendVoIP(ctx context.Context, token, event, callID string, 
 }
 
 func (a *apnsSender) sendAlert(ctx context.Context, token, event, callID string, expires time.Time) error {
-	payload := map[string]any{"aps": map[string]any{"alert": map[string]string{"title": "PairDesk", "body": "A teammate wants to join a call."}, "sound": "default"}, "event": event, "callId": callID}
+	body := "A teammate wants to join a call."
+	if event == "missed_call" {
+		body = "You missed a PairDesk call. Open PairDesk to see who called."
+	}
+	payload := map[string]any{"aps": map[string]any{"alert": map[string]string{"title": "PairDesk", "body": body}, "sound": "default"}, "event": event, "callId": callID}
 	return a.send(ctx, token, a.topic, "alert", payload, expires)
 }
 

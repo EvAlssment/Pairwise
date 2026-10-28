@@ -7,6 +7,7 @@ import (
 	"time"
 )
 
+const joinRequestHistoryTTL = 24 * time.Hour
 const joinRequestTTL = 45 * time.Second
 
 type apiJoinRequest struct {
@@ -46,7 +47,7 @@ func (s *Server) joinRequests(w http.ResponseWriter, r *http.Request, u User) {
 	changed := s.pruneJoinRequestsLocked(now)
 	result := []apiJoinRequest{}
 	for _, request := range s.store.s.JoinRequests {
-		if request.Status != "pending" && now.Sub(request.UpdatedAt) > callHistoryTTL {
+		if request.Status != "pending" && now.Sub(request.UpdatedAt) > joinRequestHistoryTTL {
 			continue
 		}
 		room, exists := s.store.s.Rooms[request.RoomID]
@@ -237,7 +238,7 @@ func (s *Server) pruneJoinRequestsLocked(now time.Time) bool {
 			request.UpdatedAt = now
 			s.store.s.JoinRequests[id] = request
 			changed = true
-		} else if request.Status != "pending" && now.Sub(request.UpdatedAt) > callHistoryTTL &&
+		} else if request.Status != "pending" && now.Sub(request.UpdatedAt) > joinRequestHistoryTTL &&
 			!(request.Status == "accepted" && activeMemberInRoomLocked(s.store.s, request.RequesterID, request.RoomID, now)) {
 			// An accepted request remains the admission record for a live member,
 			// including groups that outlive the original direct invitation.

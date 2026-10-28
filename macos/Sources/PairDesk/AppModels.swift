@@ -51,7 +51,32 @@ struct CallInvitation: Decodable, Identifiable, Equatable {
     let caller: TeamUser
     let target: TeamUser
     let room: PairRoom
+    var createdAt: String? = nil
     let expiresAt: String
+    init(id: String, status: String, caller: TeamUser, target: TeamUser, room: PairRoom, expiresAt: String) {
+        self.id = id
+        self.status = status
+        self.caller = caller
+        self.target = target
+        self.room = room
+        self.createdAt = nil
+        self.expiresAt = expiresAt
+    }
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try values.decode(String.self, forKey: .id)
+        status = try values.decode(String.self, forKey: .status)
+        caller = try values.decode(TeamUser.self, forKey: .caller)
+        target = try values.decode(TeamUser.self, forKey: .target)
+        room = try values.decode(PairRoom.self, forKey: .room)
+        createdAt = try values.decodeIfPresent(String.self, forKey: .createdAt)
+        expiresAt = try values.decode(String.self, forKey: .expiresAt)
+    }
+    private enum CodingKeys: String, CodingKey { case id, status, caller, target, room, createdAt, expiresAt }
+    var createdDate: Date {
+        guard let createdAt else { return .distantPast }
+        return ISO8601DateFormatter().date(from: createdAt) ?? .distantPast
+    }
 }
 struct CallResponse: Decodable { let call: CallInvitation }
 struct CallsResponse: Decodable { let calls: [CallInvitation] }

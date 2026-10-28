@@ -21,7 +21,8 @@ struct JoinResponse: Decodable { let room: PairRoom; let url: String; let token:
 struct CallResponse: Decodable { let call: CallInvitation }
 struct JoinRequestResponse: Decodable { let request: CallJoinRequest }
 struct CallInvitation: Decodable, Identifiable, Equatable {
-    let id: String; let status: String; let caller: TeamUser; let target: TeamUser; let room: PairRoom; let expiresAt: String
+    let id: String; let status: String; let caller: TeamUser; let target: TeamUser; let room: PairRoom; let createdAt: String?; let expiresAt: String
+    var createdDate: Date? { guard let createdAt else { return nil }; return ISO8601DateFormatter().date(from: createdAt) }
 }
 struct CallJoinRequest: Decodable, Identifiable, Equatable {
     let id: String; let status: String; let requester: TeamUser; let room: PairRoom; let expiresAt: String

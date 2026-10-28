@@ -33,6 +33,10 @@ import io.livekit.android.room.Room
 import io.livekit.android.room.track.Track
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.time.format.FormatStyle
 import java.util.UUID
 
 class MainActivity : ComponentActivity() {
@@ -271,6 +275,24 @@ private fun PairDeskApp() {
                     TextButton(onClick = { scope.launch { runCatching { api?.callAction(invitation.id, "decline") }; refresh() } }) { Text("Decline") }
                 } }
             }
+            val recentCalls = calls.filter { it.status in listOf("expired", "declined", "cancelled") }.take(12)
+            if (recentCalls.isNotEmpty()) item { Text("RECENT CALLS", style = MaterialTheme.typography.titleMedium) }
+            items(recentCalls, key = { "history-${it.id}" }) { invitation ->
+                val incoming = invitation.target.id == me?.id
+                val person = if (incoming) invitation.caller else invitation.target
+                val missed = incoming && invitation.status == "expired"
+                val availablePerson = roster.firstOrNull { it.id == person.id }
+                Card(Modifier.fillMaxWidth()) { Row(Modifier.padding(12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Column(Modifier.weight(1f)) {
+                        Text(person.name)
+                        Text("${callHistoryLabel(invitation, incoming)} · ${callHistoryTime(invitation.createdAt)}", style = MaterialTheme.typography.bodySmall,
+                            color = if (missed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    if (availablePerson?.online == true && availablePerson.busy != true) {
+                        OutlinedButton(enabled = !busy && roomId == null, onClick = { requestCallAction(PendingCallAction.Place(person.id)) }) { Text("Call back") }
+                    }
+                } }
+            }
             if (requests.any { it.status == "pending" && it.requester.id != me?.id }) item { Text("JOIN REQUESTS", style = MaterialTheme.typography.titleMedium) }
             items(requests.filter { it.status == "pending" && it.requester.id != me?.id }, key = { "join-${it.id}" }) { request ->
                 Card(Modifier.fillMaxWidth()) { Row(Modifier.padding(12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -304,6 +326,17 @@ private fun PairDeskApp() {
         }
     }
 }
+
+private fun callHistoryLabel(invitation: Invitation, incoming: Boolean): String = when (invitation.status) {
+    "expired" -> if (incoming) "Missed call" else "No answer"
+    "declined" -> if (incoming) "Declined" else "Call declined"
+    else -> "Call ended"
+}
+
+private fun callHistoryTime(value: String?): String = runCatching {
+    val date = value?.let(Instant::parse) ?: return ""
+    DateTimeFormatter.ofLocalizedDateTime(FormatStyle.SHORT).withZone(ZoneId.systemDefault()).format(date)
+}.getOrDefault("")
 
 @Composable
 private fun CameraVideoTiles(room: Room) {

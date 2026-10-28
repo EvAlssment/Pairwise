@@ -34,6 +34,66 @@ type failingPushSender struct {
 	calls int
 }
 
+func TestExpiredDirectCallQueuesOneMissedCallAlertForRecipient(t *testing.T) {
+	s, caller := fixture(t)
+	target, _ := addCallUser(t, s, "missed target")
+	now := time.Now().UTC()
+	invite := CallInvitation{
+		ID: "missed-invite", CallerID: caller.ID, TargetID: target.ID, RoomID: "missed-room",
+		Status: callPending, CreatedAt: now.Add(-callTTL), ExpiresAt: now.Add(-time.Second), UpdatedAt: now.Add(-callTTL),
+	}
+	sender := &fakePushSender{sent: make(chan struct {
+		device  DeviceRegistration
+		event   string
+		callID  string
+		expires time.Time
+	}, 2)}
+	s.push = sender
+	s.store.lock()
+	s.store.s.Calls[invite.ID] = invite
+	s.store.s.Devices[deviceKey(caller.ID, "caller-phone")] = DeviceRegistration{UserID: caller.ID, DeviceID: "caller-phone", Platform: "android", PushToken: "caller-token"}
+	s.store.s.Devices[deviceKey(target.ID, "target-phone")] = DeviceRegistration{UserID: target.ID, DeviceID: "target-phone", Platform: "android", PushToken: "target-token"}
+	if err := s.store.save(); err != nil {
+		s.store.unlock()
+		t.Fatal(err)
+	}
+	s.store.unlock()
+
+	s.expireCallsSafely()
+	s.expireCallsSafely() // pruning is idempotent and must not enqueue twice
+	s.store.lock()
+	if got := s.store.s.Calls[invite.ID].Status; got != callExpired {
+		s.store.unlock()
+		t.Fatalf("call status = %q, want expired", got)
+	}
+	if len(s.store.s.PushJobs) != 1 {
+		s.store.unlock()
+		t.Fatalf("missed-call jobs = %d, want exactly one for the recipient", len(s.store.s.PushJobs))
+	}
+	for _, job := range s.store.s.PushJobs {
+		if job.Event != "missed_call" || job.CallID != invite.ID || job.UserID != target.ID || !job.ExpiresAt.After(time.Now()) {
+			s.store.unlock()
+			t.Fatalf("invalid missed-call job: %+v", job)
+		}
+	}
+	s.store.unlock()
+
+	s.deliverPushJobsWithSender(context.Background(), sender)
+	select {
+	case sent := <-sender.sent:
+		if sent.event != "missed_call" || sent.callID != invite.ID || sent.device.UserID != target.ID {
+			t.Fatalf("missed call sent to wrong device or event: %+v", sent)
+		}
+	default:
+		t.Fatal("missed-call alert was not delivered")
+	}
+	select {
+	case extra := <-sender.sent:
+		t.Fatalf("duplicate or caller-side missed-call alert delivered: %+v", extra)
+	default:
+	}
+}
+
 func (f *failingPushSender) Send(context.Context, DeviceRegistration, string, string, time.Time) error {
 	f.calls++
 	return f.err
@@ -518,7 +578,7 @@ func TestIOSRoutesGroupJoinToStandardAlertAndDirectCallToVoIP(t *testing.T) {
 		topic, pushType, device string
 		payload                 map[string]any
 	}
-	requests := make(chan captured, 2)
+	requests := make(chan captured, 3)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var payload map[string]any
 		_ = json.NewDecoder(r.Body).Decode(&payload)
@@ -539,7 +599,10 @@ func TestIOSRoutesGroupJoinToStandardAlertAndDirectCallToVoIP(t *testing.T) {
 	if err := sender.Send(context.Background(), d, "join_request", "room-1", expires); err != nil {
 		t.Fatal(err)
 	}
-	voip, alert := <-requests, <-requests
+	if err := sender.Send(context.Background(), d, "missed_call", "invite-2", time.Now().Add(24*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	voip, alert, missed := <-requests, <-requests, <-requests
 	if voip.topic != "com.example.PairDesk.voip" || voip.pushType != "voip" || voip.device != "voip-token" || voip.payload["callId"] != "invite-1" {
 		t.Fatalf("direct call did not use VoIP token: %+v", voip)
 	}
@@ -552,6 +615,11 @@ func TestIOSRoutesGroupJoinToStandardAlertAndDirectCallToVoIP(t *testing.T) {
 	}
 	if _, ok := aps["alert"]; !ok {
 		t.Fatalf("standard APNs payload missing visible alert: %#v", alert.payload)
+	}
+	missedAPS, ok := missed.payload["aps"].(map[string]any)
+	missedAlert, alertOK := missedAPS["alert"].(map[string]any)
+	if missed.topic != "com.example.PairDesk" || missed.pushType != "alert" || missed.device != "standard-token" || missed.payload["event"] != "missed_call" || !alertOK || missedAlert["body"] != "You missed a PairDesk call. Open PairDesk to see who called." {
+		t.Fatalf("missed call did not use a visible APNs alert: %+v", missed)
 	}
 }
 
@@ -598,6 +666,14 @@ func TestFCMUsesOnlyCallIDDataAndHonorsCallExpiry(t *testing.T) {
 	android, ok := message["android"].(map[string]any)
 	if !ok || android["priority"] != "high" || android["ttl"] == "0s" {
 		t.Fatalf("FCM expiry/priority missing: %#v", fcmBody)
+	}
+	if err := sender.send(context.Background(), "fcm-device-token", "missed_call", "invite-missed-9", time.Now().Add(24*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	message, ok = fcmBody["message"].(map[string]any)
+	data, dataOK := message["data"].(map[string]any)
+	if !ok || !dataOK || len(data) != 2 || data["event"] != "missed_call" || data["callId"] != "invite-missed-9" {
+		t.Fatalf("FCM missed-call event must contain only event and callId: %#v", fcmBody)
 	}
 }
 

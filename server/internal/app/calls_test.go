@@ -106,11 +106,29 @@ func TestDirectCallPendingExpiryAndLeaveCancellation(t *testing.T) {
 	s.store.s.Calls[expired.ID] = expired
 	_ = s.store.save()
 	s.store.unlock()
-	if w = request(h, "GET", "/v1/calls", callerToken, ""); w.Code != 200 || !strings.Contains(w.Body.String(), `"status":"expired"`) {
+	if w = request(h, "GET", "/v1/calls", callerToken, ""); w.Code != 200 || !strings.Contains(w.Body.String(), `"status":"expired"`) || !strings.Contains(w.Body.String(), `"createdAt":`) {
 		t.Fatalf("expired call missing from history: %d %s", w.Code, w.Body)
 	}
 	if w = request(h, "POST", "/v1/calls/"+expired.ID+"/accept", target2Token, ""); w.Code != 409 {
 		t.Fatalf("expired call accepted: %d %s", w.Code, w.Body)
+	}
+	s.store.lock()
+	old := s.store.s.Calls[expired.ID]
+	old.UpdatedAt = time.Now().UTC().Add(-25 * time.Hour)
+	s.store.s.Calls[old.ID] = old
+	_ = s.store.save()
+	s.store.unlock()
+	if w = request(h, "GET", "/v1/calls", callerToken, ""); w.Code != 200 || !strings.Contains(w.Body.String(), expired.ID) {
+		t.Fatalf("call history should retain unanswered calls for 30 days: %d %s", w.Code, w.Body)
+	}
+	s.store.lock()
+	old = s.store.s.Calls[expired.ID]
+	old.UpdatedAt = time.Now().UTC().Add(-31 * 24 * time.Hour)
+	s.store.s.Calls[old.ID] = old
+	_ = s.store.save()
+	s.store.unlock()
+	if w = request(h, "GET", "/v1/calls", callerToken, ""); w.Code != 200 || strings.Contains(w.Body.String(), expired.ID) {
+		t.Fatalf("old call history was not pruned after 30 days: %d %s", w.Code, w.Body)
 	}
 }
 

@@ -6,6 +6,8 @@
 
 Pairwise is an open-source macOS pairing app for small teams. It combines direct teammate calls, voice, optional camera video, full-display sharing, and optional remote mouse and keyboard control. Calls use LiveKit; the account and presence service is a small Go API. Optional transcripts run locally with Whisper Tiny. There is no cloud transcription, public signup, or external account integration.
 
+Unanswered calls appear in Recent Calls for 30 days with a one-tap callback when the teammate is online. When APNs or FCM push is configured, the invited person's mobile devices also receive a missed-call alert.
+
 The current client supports macOS 14 and later. It is an early-stage project; test it with non-sensitive accounts and machines before relying on it.
 
 **Download the complete source:** [ZIP archive of the latest `main` branch](https://github.com/EvAlssment/Pairwise/archive/refs/heads/main.zip) · [browse the repository](https://github.com/EvAlssment/Pairwise)

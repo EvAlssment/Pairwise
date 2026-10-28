@@ -143,6 +143,12 @@ final class AppTests: XCTestCase {
         let join = try JSONDecoder().decode(JoinResponse.self, from: data)
         XCTAssertEqual(join.participantIdentity, join.room.participants.first?.id)
     }
+    func testCallHistoryWireContractDecodesCreationTime() throws {
+        let data = Data(#"{"calls":[{"id":"call-1","status":"expired","caller":{"id":"u1","name":"Sam","email":"sam@example.com"},"target":{"id":"u2","name":"Lee","email":"lee@example.com"},"room":{"id":"room-1","name":"Direct call","participantCount":0,"participants":[]},"createdAt":"2026-10-28T10:00:00Z","expiresAt":"2026-10-28T10:00:45Z"}]}"#.utf8)
+        let response = try JSONDecoder().decode(CallsResponse.self, from: data)
+        XCTAssertEqual(response.calls.first?.status, "expired")
+        XCTAssertEqual(response.calls.first?.createdDate, ISO8601DateFormatter().date(from: "2026-10-28T10:00:00Z"))
+    }
     func testAdminAuditWireContractDecodesRFC3339Timestamp() throws {
         let data = Data(#"{"events":[{"actorId":"admin-1","targetId":"member-2","action":"account.password_reset","occurredAt":"2026-10-20T03:00:00Z"}]}"#.utf8)
         let response = try JSONDecoder().decode(AdminAuditResponse.self, from: data)

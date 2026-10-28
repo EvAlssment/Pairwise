@@ -96,6 +96,36 @@ struct TeamView: View {
             if !model.outgoing.isEmpty {
                 Section("Ringing") { ForEach(model.outgoing) { Text("Calling \($0.target.name)…").foregroundStyle(.secondary) } }
             }
+            let recentCalls = model.calls.filter { ["expired", "declined", "cancelled"].contains($0.status) }
+            if !recentCalls.isEmpty {
+                Section("Recent calls") {
+                    ForEach(recentCalls.prefix(12)) { invitation in
+                        let incoming = invitation.target.id == model.user?.id
+                        let person = incoming ? invitation.caller : invitation.target
+                        let missed = incoming && invitation.status == "expired"
+                        HStack(spacing: 10) {
+                            Image(systemName: missed ? "phone.down.fill" : "phone.fill")
+                                .foregroundStyle(missed ? .red : .secondary)
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(person.name).font(.body)
+                                HStack(spacing: 5) {
+                                    Text(callHistoryLabel(invitation, incoming: incoming))
+                                        .foregroundStyle(missed ? .red : .secondary)
+                                    if let date = invitation.createdDate {
+                                        Text("·").foregroundStyle(.secondary)
+                                        Text(date, style: .relative).foregroundStyle(.secondary)
+                                    }
+                                }.font(.caption)
+                            }
+                            Spacer()
+                            if person.online == true && person.busy != true {
+                                Button("Call back") { Task { await model.call(person) } }
+                                    .buttonStyle(.bordered).disabled(model.busy)
+                            }
+                        }
+                    }
+                }
+            }
             if !model.pendingJoinRequests.isEmpty {
                 Section("Join requests") {
                     ForEach(model.pendingJoinRequests) { request in
@@ -155,6 +185,14 @@ struct TeamView: View {
         }
         .refreshable { await model.refresh() }
         .overlay { if model.teammates.isEmpty { ContentUnavailableView("Loading your team", systemImage: "person.2", description: Text("PairDesk checks team presence every few seconds.")) } }
+    }
+}
+
+private func callHistoryLabel(_ invitation: CallInvitation, incoming: Bool) -> String {
+    switch invitation.status {
+    case "expired": incoming ? "Missed call" : "No answer"
+    case "declined": incoming ? "Declined" : "Call declined"
+    default: "Call ended"
     }
 }
 

@@ -437,6 +437,11 @@ final class AppStore: ObservableObject {
                     if activeRoom?.id == invitation.room.id, rtc.participants.count <= 1, outgoingCalls.isEmpty { await leave() }
                 }
             }
+            for invitation in response.calls where invitation.target.id == currentUser.id {
+                guard oldStatuses[invitation.id] == "pending", invitation.status == "expired" else { continue }
+                callMessage = "Missed call from \(invitation.caller.name)."
+                attentionRequest = NSApp.requestUserAttention(.informationalRequest)
+            }
             await connectApprovedJoinRequest()
         } catch {
             // Directory heartbeat handles authentication/server errors. Polling resumes on the next tick.
