@@ -46,6 +46,7 @@ final class CallIntegrationTests: XCTestCase {
             }
             try await clients[0].send("v1/rooms/\(roomID)/share", body: ShareBody(enabled: true))
             try await Task.sleep(for: .milliseconds(500))
+            try await activateNetworkConditionerIfNeeded()
 
             let receiver = SyntheticVideoReceiver(expectation: expectation(description: "1:1 synthetic screen frame delivered"))
             media[1].add(delegate: receiver)
@@ -674,6 +675,7 @@ private func activateNetworkConditionerIfNeeded() async throws {
         throw NSError(domain: "SyntheticMediaBenchmark", code: 4,
                       userInfo: [NSLocalizedDescriptionKey: "Constrained profile is missing its activation handshake"])
     }
+    if FileManager.default.fileExists(atPath: activePath) { return }
     guard FileManager.default.createFile(atPath: readyPath, contents: Data()) else {
         throw NSError(domain: "SyntheticMediaBenchmark", code: 5,
                       userInfo: [NSLocalizedDescriptionKey: "Could not request network conditioning"])
