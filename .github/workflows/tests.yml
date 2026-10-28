@@ -121,6 +121,8 @@ jobs:
       - name: Native macOS tests
         working-directory: macos
         run: swift test -j 4
+      - name: Cross-compile universal macOS executables
+        run: sh scripts/ci-universal-macos-build.sh
       - name: Run media quality regression gate
         env:
           PAIRDESK_MEDIA_BENCHMARK_DIR: ${{ github.workspace }}/media-benchmark-output
