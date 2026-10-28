@@ -13,11 +13,11 @@ for arch in arm64 x86_64; do
   bin_path=$(cd "$MACOS" && swift build --triple "$target" --scratch-path "$scratch_path" --show-bin-path -c release)
 
   for executable in PairDesk pairdesk-agent-mcp; do
-    lipo -verify_arch "$arch" "$bin_path/$executable"
+    lipo "$bin_path/$executable" -verify_arch "$arch"
   done
   for framework in "$bin_path"/*.framework; do
     [ -d "$framework" ] || continue
     binary="$framework/$(basename "$framework" .framework)"
-    lipo -verify_arch "$arch" "$binary"
+    lipo "$binary" -verify_arch "$arch"
   done
 done

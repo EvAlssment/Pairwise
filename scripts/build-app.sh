@@ -185,15 +185,15 @@ plutil -lint "$CONTENTS/Info.plist"
 /usr/libexec/PlistBuddy -c 'Print :NSCameraUsageDescription' "$CONTENTS/Info.plist" | grep -F 'turn on video during a call' >/dev/null || fail "camera usage description is missing or unclear"
 ARCHS=$(lipo -archs "$APP_EXECUTABLE")
 for arch in $BUILD_ARCHS; do
-  lipo -verify_arch "$arch" "$APP_EXECUTABLE" || fail "PairDesk is missing $arch"
-  lipo -verify_arch "$arch" "$CONTENTS/MacOS/pairdesk-agent-mcp" || fail "pairdesk-agent-mcp is missing $arch"
-  lipo -verify_arch "$arch" "$RESOURCES/whisper/whisper-cli" || fail "Whisper runtime is missing $arch"
+  lipo "$APP_EXECUTABLE" -verify_arch "$arch" || fail "PairDesk is missing $arch"
+  lipo "$CONTENTS/MacOS/pairdesk-agent-mcp" -verify_arch "$arch" || fail "pairdesk-agent-mcp is missing $arch"
+  lipo "$RESOURCES/whisper/whisper-cli" -verify_arch "$arch" || fail "Whisper runtime is missing $arch"
 done
 for framework in "$FRAMEWORKS"/*.framework; do
   [ -d "$framework" ] || continue
   framework_binary="$framework/$(basename "$framework" .framework)"
   for arch in $ARCHS; do
-    lipo -verify_arch "$arch" "$framework_binary" || fail "$(basename "$framework") is missing $arch"
+    lipo "$framework_binary" -verify_arch "$arch" || fail "$(basename "$framework") is missing $arch"
   done
 done
 
