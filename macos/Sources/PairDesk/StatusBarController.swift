@@ -18,6 +18,10 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
     private let popover = NSPopover()
     private let popoverBackground = SurfaceView()
     private var subscriptions = Set<AnyCancellable>()
+    /// System uptime when AppKit last dismissed the popover (a click outside
+    /// it, including on the icon); closes made here are not recorded.
+    private var popoverDismissedAt: TimeInterval = -.infinity
+    private var closingPopoverFromCode = false
 
     init(store: AppStore, rtc: RTCService, loginItem: LoginItemManager) {
         self.store = store
@@ -58,10 +62,28 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
         popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
     }
 
-    func closePopover() { popover.performClose(nil) }
+    func closePopover() {
+        closingPopoverFromCode = true
+        popover.performClose(nil)
+        closingPopoverFromCode = false
+    }
 
+    /// A click on the icon while the popover is open dismisses it on mouse
+    /// down (transient behavior) before the action arrives on mouse up, so a
+    /// plain toggle reopened it and the panel flickered. A popover that
+    /// AppKit dismissed just before this action ran was closed by this click.
     private func togglePopover() {
-        if popover.isShown { closePopover() } else { showPopover() }
+        if popover.isShown { closePopover(); return }
+        if Self.clickDismissedPopover(now: ProcessInfo.processInfo.systemUptime, dismissedAt: popoverDismissedAt) { return }
+        showPopover()
+    }
+
+    /// A click's mouse-up follows its mouse-down within this long. A dismissal
+    /// further back came from something else, such as a click elsewhere.
+    nonisolated static let dismissalClickWindow: TimeInterval = 0.5
+
+    nonisolated static func clickDismissedPopover(now: TimeInterval, dismissedAt: TimeInterval) -> Bool {
+        now - dismissedAt < dismissalClickWindow
     }
 
     /// A left click toggles the popover. A right click or Control-click shows
@@ -140,6 +162,11 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
     }
 
     // MARK: NSPopoverDelegate
+
+    func popoverWillClose(_ notification: Notification) {
+        guard !closingPopoverFromCode else { return }
+        popoverDismissedAt = ProcessInfo.processInfo.systemUptime
+    }
 
     /// Paint the popover frame, arrow included, in the panel's surface color
     /// so the panel reads as one shape.
