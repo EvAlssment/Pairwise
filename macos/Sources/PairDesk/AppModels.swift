@@ -11,13 +11,22 @@ struct TeamUser: Codable, Identifiable, Equatable {
     var initials: String { name.split(separator: " ").prefix(2).compactMap { $0.first }.map(String.init).joined().uppercased() }
 }
 
+/// Parses the server's timestamps. Go marshals `time.Time` as RFC 3339 with
+/// up to nine fractional digits, which `ISO8601DateFormatter` rejects.
+enum ServerDate {
+    static func parse(_ value: String?) -> Date? {
+        guard let value else { return nil }
+        return try? Date(value, strategy: .iso8601)
+    }
+}
+
 struct AdminAuditEvent: Decodable, Identifiable, Equatable {
     let actorId: String
     let targetId: String
     let action: String
     let occurredAt: String
     var id: String { "\(occurredAt)-\(action)-\(targetId)" }
-    var date: Date { ISO8601DateFormatter().date(from: occurredAt) ?? .distantPast }
+    var date: Date? { ServerDate.parse(occurredAt) }
 }
 
 struct PairRoom: Codable, Identifiable, Equatable {
@@ -53,13 +62,13 @@ struct CallInvitation: Decodable, Identifiable, Equatable {
     let room: PairRoom
     var createdAt: String? = nil
     let expiresAt: String
-    init(id: String, status: String, caller: TeamUser, target: TeamUser, room: PairRoom, expiresAt: String) {
+    init(id: String, status: String, caller: TeamUser, target: TeamUser, room: PairRoom, expiresAt: String, createdAt: String? = nil) {
         self.id = id
         self.status = status
         self.caller = caller
         self.target = target
         self.room = room
-        self.createdAt = nil
+        self.createdAt = createdAt
         self.expiresAt = expiresAt
     }
     init(from decoder: Decoder) throws {
@@ -73,10 +82,9 @@ struct CallInvitation: Decodable, Identifiable, Equatable {
         expiresAt = try values.decode(String.self, forKey: .expiresAt)
     }
     private enum CodingKeys: String, CodingKey { case id, status, caller, target, room, createdAt, expiresAt }
-    var createdDate: Date {
-        guard let createdAt else { return .distantPast }
-        return ISO8601DateFormatter().date(from: createdAt) ?? .distantPast
-    }
+    /// When the server created the call. Nil from a server too old to send
+    /// it or for an unreadable value, never a placeholder date.
+    var createdDate: Date? { ServerDate.parse(createdAt) }
 }
 struct CallResponse: Decodable { let call: CallInvitation }
 struct CallsResponse: Decodable { let calls: [CallInvitation] }

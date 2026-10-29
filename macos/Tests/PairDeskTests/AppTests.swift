@@ -144,10 +144,25 @@ final class AppTests: XCTestCase {
         XCTAssertEqual(join.participantIdentity, join.room.participants.first?.id)
     }
     func testCallHistoryWireContractDecodesCreationTime() throws {
-        let data = Data(#"{"calls":[{"id":"call-1","status":"expired","caller":{"id":"u1","name":"Sam","email":"sam@example.com"},"target":{"id":"u2","name":"Lee","email":"lee@example.com"},"room":{"id":"room-1","name":"Direct call","participantCount":0,"participants":[]},"createdAt":"2026-10-28T10:00:00Z","expiresAt":"2026-10-28T10:00:45Z"}]}"#.utf8)
-        let response = try JSONDecoder().decode(CallsResponse.self, from: data)
-        XCTAssertEqual(response.calls.first?.status, "expired")
-        XCTAssertEqual(response.calls.first?.createdDate, ISO8601DateFormatter().date(from: "2026-10-28T10:00:00Z"))
+        func call(createdAtField: String) throws -> CallInvitation? {
+            let json = #"{"calls":[{"id":"call-1","status":"expired","caller":{"id":"u1","name":"Sam","email":"sam@example.com"},"target":{"id":"u2","name":"Lee","email":"lee@example.com"},"room":{"id":"room-1","name":"Direct call","participantCount":0,"participants":[]},"#
+                + createdAtField + #""expiresAt":"2026-10-28T10:00:45Z"}]}"#
+            return try JSONDecoder().decode(CallsResponse.self, from: Data(json.utf8)).calls.first
+        }
+        let whole = try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-10-28T10:00:00Z"))
+        let plain = try call(createdAtField: #""createdAt":"2026-10-28T10:00:00Z","#)
+        XCTAssertEqual(plain?.status, "expired")
+        XCTAssertEqual(plain?.createdDate, whole)
+        // Go marshals time.Time with nanoseconds; the previous parser read this as the distant past.
+        let precise = try XCTUnwrap(try call(createdAtField: #""createdAt":"2026-10-28T10:00:00.123456789Z","#)?.createdDate)
+        XCTAssertEqual(precise.timeIntervalSince(whole), 0.123456789, accuracy: 0.001)
+        let offset = try XCTUnwrap(try call(createdAtField: #""createdAt":"2026-10-28T15:30:00.5+05:30","#)?.createdDate)
+        XCTAssertEqual(offset.timeIntervalSince(whole), 0.5, accuracy: 0.001)
+        // No placeholder date from an older server or an unreadable value.
+        let missing = try call(createdAtField: "")
+        XCTAssertNil(missing?.createdDate)
+        let unreadable = try call(createdAtField: #""createdAt":"yesterday","#)
+        XCTAssertNil(unreadable?.createdDate)
     }
     func testAdminAuditWireContractDecodesRFC3339Timestamp() throws {
         let data = Data(#"{"events":[{"actorId":"admin-1","targetId":"member-2","action":"account.password_reset","occurredAt":"2026-10-20T03:00:00Z"}]}"#.utf8)
@@ -155,6 +170,10 @@ final class AppTests: XCTestCase {
         XCTAssertEqual(response.events.count, 1)
         XCTAssertEqual(response.events[0].action, "account.password_reset")
         XCTAssertEqual(response.events[0].date, ISO8601DateFormatter().date(from: "2026-10-20T03:00:00Z"))
+        let precise = Data(#"{"events":[{"actorId":"admin-1","targetId":"member-2","action":"account.password_reset","occurredAt":"2026-10-20T03:00:00.25Z"}]}"#.utf8)
+        let preciseDate = try XCTUnwrap(JSONDecoder().decode(AdminAuditResponse.self, from: precise).events[0].date)
+        let wholeDate = try XCTUnwrap(response.events[0].date)
+        XCTAssertEqual(preciseDate.timeIntervalSince(wholeDate), 0.25, accuracy: 0.001)
     }
     func testHostAccessibilityBlockIsReportedOverControlChannel() throws {
         let message = RemoteControlMessage(epoch: "", sequence: 1, kind: .hostPermissionRequired)

@@ -339,6 +339,9 @@ struct MenuBarPanel: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 10) {
+                    // The call log leads the roster so a missed call is the first
+                    // thing seen; a search shows only the matching people.
+                    if searchText.isEmpty && !recentCalls.isEmpty { recentCallsSection }
                     if filteredTeammates.isEmpty {
                         VStack(spacing: 7) {
                             Text(teamConnected ? (searchText.isEmpty ? "No teammates yet" : "No matching teammates") : "Loading teammates…")
@@ -351,12 +354,9 @@ struct MenuBarPanel: View {
                         if store.activeRoom == nil && !store.activeTeamCalls.isEmpty { activeCallsSection }
                         if !offlineTeammates.isEmpty { contactSection("Offline", people: offlineTeammates) }
                     }
-                    if !recentCalls.isEmpty { recentCallsSection }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
-            // The call log shares the roster's scroll area so missed calls stay
-            // reachable even when the team list is long.
             .frame(maxHeight: store.activeRoom == nil ? 420 : 300)
             .fixedSize(horizontal: false, vertical: true)
         }
@@ -398,9 +398,13 @@ struct MenuBarPanel: View {
                         HStack(spacing: 5) {
                             Text(callHistoryLabel(invitation, incoming: incoming))
                                 .foregroundStyle(missed ? Theme.attention : Theme.textMuted)
-                            Text("·")
-                            Text(invitation.createdDate, style: .relative)
-                                .foregroundStyle(Theme.textMuted)
+                            if let created = invitation.createdDate {
+                                Text("·")
+                                // Single unit ("12 min ago", "yesterday"); the live
+                                // relative style spells out "12 min, 0 secs".
+                                Text(created, format: .relative(presentation: .named, unitsStyle: .abbreviated))
+                                    .foregroundStyle(Theme.textMuted)
+                            }
                         }.font(.caption).lineLimit(1)
                     }
                     Spacer(minLength: 4)

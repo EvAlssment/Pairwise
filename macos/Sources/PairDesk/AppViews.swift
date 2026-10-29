@@ -740,8 +740,10 @@ private struct ManageTeamView: View {
                             HStack(alignment: .firstTextBaseline) {
                                 Text(auditDescription(event)).font(.caption)
                                 Spacer(minLength: 8)
-                                Text(event.date.formatted(date: .abbreviated, time: .shortened))
-                                    .font(.caption2).foregroundStyle(.secondary)
+                                if let date = event.date {
+                                    Text(date.formatted(date: .abbreviated, time: .shortened))
+                                        .font(.caption2).foregroundStyle(.secondary)
+                                }
                             }
                         }
                     }
