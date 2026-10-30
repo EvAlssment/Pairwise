@@ -263,12 +263,12 @@ struct SharedScreenWindow: View {
                     .accessibilityLabel("Open camera view")
                 }
                 Button { showClipboard = true } label: {
-                    Label("Copy & paste", systemImage: rtc.clipboardSyncEnabled ? "doc.on.clipboard.fill" : "doc.on.clipboard")
+                    Label("Copy & paste", systemImage: rtc.clipboardSharingEnabled ? "doc.on.clipboard.fill" : "doc.on.clipboard")
                 }
                 .buttonStyle(.bordered)
-                .tint(rtc.clipboardSyncEnabled ? Theme.accent : nil)
-                .help(rtc.clipboardSyncEnabled ? "Use ⌘C and ⌘V in the shared display to copy and paste text. Enable on both Macs." : "Enable copy and paste on both Macs, or send text once to a teammate")
-                .accessibilityLabel(rtc.clipboardSyncEnabled ? "Copy and paste sync on" : "Copy and paste options")
+                .tint(rtc.clipboardSharingEnabled ? Theme.accent : nil)
+                .help(rtc.automaticScreenClipboardEnabled ? "Copy and paste works automatically during screen sharing. Use ⌘C and ⌘V." : "Copy and paste options for this call")
+                .accessibilityLabel(rtc.clipboardSharingEnabled ? "Copy and paste on" : "Copy and paste options")
                 .popover(isPresented: $showClipboard, arrowEdge: .bottom) {
                     ClipboardTransferView(
                         peers: rtc.participants.filter { !$0.isLocal }.map { ClipboardPeer(identity: $0.identity, name: $0.name) },
@@ -278,7 +278,8 @@ struct SharedScreenWindow: View {
                         onDismiss: { rtc.dismissIncomingClipboardTransfer() },
                         clipboardSyncEnabled: rtc.clipboardSyncEnabled,
                         clipboardSyncNotice: rtc.clipboardSyncNotice,
-                        onToggleSync: { rtc.setClipboardSyncEnabled($0) }
+                        onToggleSync: { rtc.setClipboardSyncEnabled($0) },
+                        screenSharingActive: rtc.automaticScreenClipboardEnabled
                     )
                     .padding(16)
                     .frame(width: 420)

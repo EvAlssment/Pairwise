@@ -28,7 +28,7 @@ extension RemoteControlState {
 /// encoded: the receiver must use LiveKit's authenticated participant identity.
 struct RemoteControlMessage: Codable, Equatable {
     /// Unknown kinds are ignored by older clients.
-    enum Kind: String, Codable { case request, grant, revoke, hostPermissionRequired, release, heartbeat, pointer, key, button, scroll, releaseAll, availability, cursor, cursorBroadcast, qualityFeedback, clipboardCopy, clipboardPaste, clipboardCopied, clipboardFailure }
+    enum Kind: String, Codable { case request, grant, revoke, hostPermissionRequired, release, heartbeat, pointer, key, button, scroll, releaseAll, availability, cursor, cursorBroadcast, qualityFeedback, clipboardCopy, clipboardPaste, clipboardCopied, clipboardPasted, clipboardFailure }
     var version: Int = 1
     var epoch: String
     var sequence: UInt64
@@ -51,7 +51,7 @@ struct RemoteControlMessage: Codable, Equatable {
     var visible: Bool?
     var packetLossPercent: Double?
     var roundTripMilliseconds: Int?
-    /// Availability negotiates support and the sharer's call-level consent.
+    /// Availability advertises clipboard support, independent of call-wide sync.
     var clipboardEnabled: Bool?
     var clipboard: ClipboardTransferMessage?
     var clipboardRequestID: UUID?
@@ -279,6 +279,30 @@ enum RemoteInputInjector {
         event.flags = modifiers
         event.setIntegerValueField(.eventSourceUserData, value: eventMarker)
         event.post(tap: .cgSessionEventTap)
+        return true
+    }
+
+    /// Use a complete Command key transition for clipboard shortcuts. The
+    /// viewer may have released its physical Command key before text arrives.
+    static func clipboardShortcutEvents(code: UInt16) -> [CGEvent]? {
+        guard code == 8 || code == 9, let source = CGEventSource(stateID: .privateState) else { return nil }
+        let transitions: [(UInt16, Bool, CGEventFlags)] = [
+            (55, true, .maskCommand), (code, true, .maskCommand),
+            (code, false, .maskCommand), (55, false, [])
+        ]
+        var events: [CGEvent] = []
+        for (key, down, flags) in transitions {
+            guard let event = CGEvent(keyboardEventSource: source, virtualKey: key, keyDown: down) else { return nil }
+            event.flags = flags
+            event.setIntegerValueField(.eventSourceUserData, value: eventMarker)
+            events.append(event)
+        }
+        return events
+    }
+
+    static func clipboardShortcut(code: UInt16) -> Bool {
+        guard AXIsProcessTrusted(), let events = clipboardShortcutEvents(code: code) else { return false }
+        for event in events { event.post(tap: .cgSessionEventTap) }
         return true
     }
 

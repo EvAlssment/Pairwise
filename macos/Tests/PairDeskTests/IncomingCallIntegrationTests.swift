@@ -1,10 +1,101 @@
 import AppKit
+import CoreVideo
 import Testing
+@preconcurrency import LiveKit
 @testable import PairDesk
 
 @Suite(.serialized, .enabled(if: ProcessInfo.processInfo.environment["PAIRDESK_TEST_API"] != nil,
                             "Run scripts/test-call.sh for API, media, and popup integration"))
 struct IncomingCallIntegrationTests {
+    @Test @MainActor
+    func testSharedScreenViewerClosesAndReopensOverLiveKitWithoutEndingCall() async throws {
+        _ = NSApplication.shared
+        let address = try #require(ProcessInfo.processInfo.environment["PAIRDESK_TEST_API"])
+        let password = try #require(ProcessInfo.processInfo.environment["PAIRDESK_TEST_PASSWORD"])
+        struct LoginBody: Encodable { let email: String; let password: String }
+        struct RoomBody: Encodable { let name: String }
+        struct ShareBody: Encodable { let enabled: Bool }
+        let unsigned = try APIClient(server: address)
+        var logins: [LoginResponse] = []
+        var clients: [APIClient] = []
+        for i in 1...2 {
+            let login: LoginResponse = try await unsigned.post("v1/login", body: LoginBody(
+                email: "integration-\(i)@pairdesk.invalid", password: password))
+            logins.append(login)
+            clients.append(try APIClient(server: address, token: login.token))
+        }
+        let created: RoomResponse = try await clients[0].post("v1/rooms", body: RoomBody(name: "Viewer lifecycle fixture"))
+        let host = Room()
+        let viewer = AppStore(callAudio: CallAudioFeedback { _ in nil })
+        viewer.debugUseSession(user: logins[1].user, token: logins[1].token, server: address)
+        let windows = AppWindows()
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 320, height: 240),
+                              styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        windows.register("screen", window)
+        defer { window.close() }
+        let presenter = SharedScreenPresenter(store: viewer, windows: windows)
+        do {
+            let hostJoin: JoinResponse = try await clients[0].post("v1/rooms/\(created.room.id)/join", body: EmptyBody())
+            try await host.connect(url: hostJoin.url, token: hostJoin.token)
+            let viewerJoin: JoinResponse = try await clients[1].post("v1/rooms/\(created.room.id)/join", body: EmptyBody())
+            viewer.activeRoom = viewerJoin.room
+            try await viewer.rtc.connect(url: viewerJoin.url, token: viewerJoin.token,
+                                         identity: viewerJoin.participantIdentity, name: "Viewer")
+            try await settle { viewer.rtc.participants.count == 2 }
+            #expect(!windows.isShown("screen"))
+            try await clients[0].send("v1/rooms/\(created.room.id)/share", body: ShareBody(enabled: true))
+            try await settle { host.localParticipant.permissions.canPublishSources.contains(Track.Source.screenShareVideo.rawValue) }
+            var pixelBuffer: CVPixelBuffer?
+            let result = CVPixelBufferCreate(kCFAllocatorDefault, 64, 64, kCVPixelFormatType_32BGRA,
+                                             [kCVPixelBufferIOSurfacePropertiesKey: [:]] as CFDictionary, &pixelBuffer)
+            #expect(result == kCVReturnSuccess)
+            let frame = try #require(pixelBuffer)
+            CVPixelBufferLockBaseAddress(frame, [])
+            if let base = CVPixelBufferGetBaseAddress(frame) {
+                memset(base, 0, CVPixelBufferGetBytesPerRow(frame) * CVPixelBufferGetHeight(frame))
+            }
+            CVPixelBufferUnlockBaseAddress(frame, [])
+            for _ in 0..<2 {
+                let track = await LocalVideoTrack.createBufferTrack(name: "pairdesk.screen.display", source: .screenShareVideo)
+                let capturer = try #require(track.capturer as? BufferCapturer)
+                capturer.capture(frame)
+                let frames = Task { @MainActor in
+                    while !Task.isCancelled {
+                        capturer.capture(frame)
+                        try? await Task.sleep(for: .milliseconds(100))
+                    }
+                }
+                defer { frames.cancel() }
+                let publication = try await host.localParticipant.publish(videoTrack: track)
+                try await settle { viewer.rtc.screenTrack != nil && windows.isShown("screen") }
+                try await host.localParticipant.unpublish(publication: publication)
+                try await settle { viewer.rtc.screenTrack == nil && !windows.isShown("screen") }
+                frames.cancel()
+                #expect(viewer.rtc.connected)
+                #expect(host.connectionState == .connected)
+                #expect(viewer.activeRoom?.id == created.room.id)
+            }
+            withExtendedLifetime(presenter) {}
+            // Release the server's share claim and membership while the host
+            // is still connected; cleanup errors must not leave a busy fixture.
+            try await clients[0].send("v1/rooms/\(created.room.id)/share", body: ShareBody(enabled: false))
+            await viewer.leave()
+            try await clients[0].send("v1/rooms/\(created.room.id)/leave", body: EmptyBody())
+            await host.disconnect()
+            let roster: UsersResponse = try await clients[0].request("v1/users")
+            for login in logins {
+                #expect(roster.users.first(where: { $0.id == login.user.id })?.busy != true)
+            }
+        } catch {
+            try? await clients[0].send("v1/rooms/\(created.room.id)/share", body: ShareBody(enabled: false))
+            await viewer.leave()
+            try? await clients[0].send("v1/rooms/\(created.room.id)/leave", body: EmptyBody())
+            await host.disconnect()
+            throw error
+        }
+    }
+
     @MainActor
     private func withClients(_ run: ([AppStore]) async throws -> Void) async throws {
         _ = NSApplication.shared

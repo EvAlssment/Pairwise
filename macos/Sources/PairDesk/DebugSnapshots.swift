@@ -62,9 +62,7 @@ enum UISnapshots {
         ]
         let room = PairRoom(id: "room", name: "Direct call", participantCount: 1, participants: [])
         func store(_ configure: (AppStore) -> Void = { _ in }) -> AppStore {
-            // Fixture stores never ring: the ringing and incoming fixtures would
-            // otherwise play the call tones on the Mac rendering them.
-            let store = AppStore(callAudio: CallAudioFeedback(makePlayer: { _ in nil }))
+            let store = AppStore(callAudio: CallAudioFeedback { _ in nil })
             store.serverAddress = "snapshot.invalid"
             configure(store)
             return store
@@ -90,19 +88,19 @@ enum UISnapshots {
 
         snapshot("menu-signed-out", to: directory, compact: true) { MenuBarPanel(store: signedOut, rtc: signedOut.rtc, loginItem: loginItem) }
         snapshot("menu-roster", to: directory, compact: true) { MenuBarPanel(store: idle, rtc: idle.rtc, loginItem: loginItem) }
-        // A missed call, an unanswered outgoing call, and one from a server too
-        // old to send createdAt (no time shown).
-        func ended(_ id: String, from caller: TeamUser, to target: TeamUser, status: String, minutesAgo: Double?) -> CallInvitation {
-            CallInvitation(id: id, status: status, caller: caller, target: target, room: room, expiresAt: "",
-                           createdAt: minutesAgo.map { ISO8601DateFormatter().string(from: Date().addingTimeInterval(-$0 * 60)) })
+        let recent = store {
+            $0.user = me; $0.users = [me]; $0.directoryStatus = "Team connected"
+            let end = Date().addingTimeInterval(-60)
+            var completed = CallInvitation(id: "completed", status: "cancelled", caller: me, target: harshit, room: room, expiresAt: "")
+            completed.createdAt = end.addingTimeInterval(-215).ISO8601Format(.iso8601)
+            completed.startedAt = end.addingTimeInterval(-185).ISO8601Format(.iso8601)
+            completed.endedAt = end.ISO8601Format(.iso8601)
+            var missed = CallInvitation(id: "missed", status: "expired", caller: harshit, target: me, room: room, expiresAt: "")
+            missed.endedAt = end.addingTimeInterval(-600).ISO8601Format(.iso8601)
+            let legacy = CallInvitation(id: "legacy", status: "cancelled", caller: me, target: harshit, room: room, expiresAt: "")
+            $0.callInvitations = [completed, missed, legacy]
         }
-        let history = store {
-            $0.user = me; $0.users = team; $0.directoryStatus = "Team connected"
-            $0.callInvitations = [ended("missed", from: harshit, to: me, status: "expired", minutesAgo: 12),
-                                  ended("no-answer", from: me, to: team[3], status: "expired", minutesAgo: 190),
-                                  ended("old-server", from: team[2], to: me, status: "declined", minutesAgo: nil)]
-        }
-        snapshot("menu-recent-calls", to: directory, compact: true) { MenuBarPanel(store: history, rtc: history.rtc, loginItem: loginItem) }
+        snapshot("menu-recent-call-duration", to: directory, compact: true) { MenuBarPanel(store: recent, rtc: recent.rtc, loginItem: loginItem) }
         let pair = store {
             $0.user = me; $0.directoryStatus = "Team connected"
             $0.users = [me, harshit, TeamUser(id: "saurab", name: "Saurab", email: "saurab@example.com", online: false, busy: false, enabled: true)]
@@ -194,7 +192,7 @@ enum UISnapshots {
                 peers: [ClipboardPeer(identity: "harshit", name: "Harshit"), ClipboardPeer(identity: "bharat", name: "Bharat")],
                 incoming: nil,
                 onSend: { _, _ in }, onPaste: {}, onDismiss: {},
-                clipboardSyncEnabled: false, clipboardSyncNotice: nil, onToggleSync: { _ in }
+                clipboardSyncEnabled: false, clipboardSyncNotice: nil, onToggleSync: { _ in }, screenSharingActive: true
             )
             .padding(20)
             .frame(width: 480)

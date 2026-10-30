@@ -58,6 +58,8 @@ note. A failure must be fixed and the entire affected scenario repeated.
 | Text entry and modifiers | Type in a blank editor; verify Shift, Option, Command, Control, and common shortcuts. Text appears once in the focused field. | Not run |
 | First input after idle | First input after at least 60 seconds works without a second click or manual lease request. | Not run |
 | Viewer focus and app switching | Switching viewer focus, changing the host app, and returning does not leave held keys/buttons or stale control state. | Not run |
+| Entire-display share across apps and Spaces | With Entire display selected, switch between ordinary apps, enter/leave a full-screen app, and switch Spaces on the same display. The viewer keeps receiving that display, including newly opened apps, without restarting sharing. Repeat with a region share; a window share stays limited to its selected window. | Not run |
+| Remote viewer start/stop | Starting a remote share opens the viewer. Stopping it closes the viewer while the call stays connected; restarting opens it again. Repeat with the viewer minimized and full-screen. Manually closing the viewer keeps it dismissed until a new share starts or Show shared screen is selected. | Not run |
 | Host local input takeover | Host movement, click, or key input immediately takes priority; remote input stops safely and can recover according to the visible state. | Not run |
 | Host Stop and Resume | Stop revokes the lease and clears held input immediately. Resume restores the advertised availability only when permitted. | Not run |
 | Emergency stop | Control–Option–Escape stops remote input and gives visible recovery feedback. | Not run |
@@ -146,5 +148,5 @@ Run the [two-Mac clipboard procedure](clipboard-sharing.md#two-mac-acceptance) f
 | Local copy → shared-display paste | The selected remote app receives the latest plain text exactly once, including text copied before the call. | Not run |
 | Remote selection → local copy | `⌘C` returns the current remote selection; local `⌘V` pastes it correctly. | Not run |
 | First interaction, Unicode, multiline and near-limit text | A new control grant preserves the clipboard operation and text remains intact. | Not run |
-| Consent, control, Accessibility and lifecycle changes | Opt-out, pause, permission revocation, source change and disconnect prevent delayed clipboard writes or pastes. | Not run |
+| Consent, control, Accessibility and lifecycle changes | Ending the share, pausing control, permission revocation, source change and disconnect prevent delayed clipboard writes or pastes. No extra clipboard approval is requested during sharing. | Not run |
 | Focus, unsupported clipboard and timeout | Local fields keep their shortcuts; images/files, oversized or unchanged remote copies never paste unrelated stale text. | Not run |

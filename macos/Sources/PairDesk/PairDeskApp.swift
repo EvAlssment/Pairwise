@@ -64,6 +64,7 @@ final class PairDeskDelegate: NSObject, NSApplicationDelegate {
     private var statusBar: StatusBarController?
     private var subscriptions = Set<AnyCancellable>()
     private var incomingCallPresenter: IncomingCallPresenter?
+    private var sharedScreenPresenter: SharedScreenPresenter?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         if !isAutomationLaunch {
@@ -117,15 +118,10 @@ final class PairDeskDelegate: NSObject, NSApplicationDelegate {
             NSApp.setActivationPolicy(inCall ? .regular : .accessory)
         }.store(in: &subscriptions)
         incomingCallPresenter = IncomingCallPresenter(store: store)
-        rtc.$activeSharerIdentity.sink { _ in
-            Task { @MainActor in
-                if rtc.activeSharerIdentity != nil, !rtc.isSharing, rtc.screenTrack != nil { AppWindows.shared.showSharedScreen(store: store) }
-            }
-        }.store(in: &subscriptions)
+        sharedScreenPresenter = SharedScreenPresenter(store: store)
         store.$activeRoom.map { $0?.id }.removeDuplicates().sink { id in
             guard id == nil else { return }
             Task { @MainActor in
-                AppWindows.shared.close("screen")
                 AppWindows.shared.close("camera-gallery")
                 AppWindows.shared.close("share")
                 AppWindows.shared.close("transcript")

@@ -233,7 +233,7 @@ struct MenuBarPanel: View {
             if let notice = rtc.cameraDeviceNotice {
                 Text(notice).font(.caption).foregroundStyle(Theme.textMuted).fixedSize(horizontal: false, vertical: true)
             }
-            if rtc.clipboardSyncEnabled { clipboardSyncStatus }
+            if rtc.clipboardSharingEnabled { clipboardSyncStatus }
             HStack {
                 if !store.canAddPerson {
                     Text("Call is full · four people").font(.caption).foregroundStyle(Theme.textMuted)
@@ -273,7 +273,9 @@ struct MenuBarPanel: View {
             Label(rtc.clipboardSyncNotice ?? "Clipboard sync is on", systemImage: "doc.on.clipboard")
                 .font(.caption).foregroundStyle(Theme.textMuted).lineLimit(1)
             Spacer(minLength: 4)
-            Button("Turn off") { rtc.setClipboardSyncEnabled(false) }.buttonStyle(QuietButtonStyle(compact: true))
+            if !rtc.automaticScreenClipboardEnabled {
+                Button("Turn off") { rtc.setClipboardSyncEnabled(false) }.buttonStyle(QuietButtonStyle(compact: true))
+            }
         }
     }
 
@@ -396,16 +398,16 @@ struct MenuBarPanel: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(person.name).font(.system(size: 12, weight: .medium)).lineLimit(1)
                         HStack(spacing: 5) {
-                            Text(callHistoryLabel(invitation, incoming: incoming))
+                            Text(invitation.historyStatusLabel(incoming: incoming))
                                 .foregroundStyle(missed ? Theme.attention : Theme.textMuted)
-                            if let created = invitation.createdDate {
+                            if let duration = invitation.historyDurationText {
                                 Text("·")
-                                // Single unit ("12 min ago", "yesterday"); the live
-                                // relative style spells out "12 min, 0 secs".
-                                Text(created, format: .relative(presentation: .named, unitsStyle: .abbreviated))
-                                    .foregroundStyle(Theme.textMuted)
+                                Text(duration).foregroundStyle(Theme.textMuted)
                             }
                         }.font(.caption).lineLimit(1)
+                        if let time = invitation.historyDateText {
+                            Text(time).font(.caption2).foregroundStyle(Theme.textMuted).lineLimit(1)
+                        }
                     }
                     Spacer(minLength: 4)
                     if person.online == true && person.busy != true {
@@ -414,14 +416,6 @@ struct MenuBarPanel: View {
                     }
                 }.padding(.horizontal, 8).frame(minHeight: 38)
             }
-        }
-    }
-
-    private func callHistoryLabel(_ invitation: CallInvitation, incoming: Bool) -> String {
-        switch invitation.status {
-        case "expired": incoming ? "Missed call" : "No answer"
-        case "declined": incoming ? "Declined" : "Call declined"
-        default: "Call ended"
         }
     }
 

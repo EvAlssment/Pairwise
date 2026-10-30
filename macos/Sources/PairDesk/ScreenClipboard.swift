@@ -24,9 +24,7 @@ final class ScreenClipboard {
     private var replay = ClipboardTransferReplayWindow()
 
     init(pasteboard: NSPasteboard = .general, postShortcut: @escaping (UInt16) -> Bool = { code in
-        let down = RemoteInputInjector.key(code: code, down: true, modifiers: .maskCommand)
-        let up = RemoteInputInjector.key(code: code, down: false, modifiers: .maskCommand)
-        return down && up
+        RemoteInputInjector.clipboardShortcut(code: code)
     }) {
         self.pasteboard = pasteboard
         self.postShortcut = postShortcut
@@ -37,9 +35,9 @@ final class ScreenClipboard {
         return relevant == .command && [UInt16(8), 9].contains(code)
     }
 
-    func readText() throws -> String {
+    func readText(includePrivate: Bool = false) throws -> String {
         let types = ((pasteboard.pasteboardItems ?? []).flatMap(\.types) + (pasteboard.types ?? [])).map(\.rawValue)
-        guard ClipboardSyncPolicy.mayShare(pasteboardTypes: types) else { throw ScreenClipboardError.privateText }
+        guard includePrivate || ClipboardSyncPolicy.mayShare(pasteboardTypes: types) else { throw ScreenClipboardError.privateText }
         guard let text = pasteboard.string(forType: .string), !text.isEmpty else { throw ClipboardTransferError.emptyText }
         guard text.utf8.count <= ClipboardTransferMessage.maximumTextBytes else { throw ClipboardTransferError.textTooLarge }
         return text
@@ -58,7 +56,7 @@ final class ScreenClipboard {
         guard postShortcut(8) else { throw ScreenClipboardError.inputFailed }
         for _ in 0..<40 {
             guard ifAllowed(), !Task.isCancelled else { throw CancellationError() }
-            if pasteboard.changeCount != previous { return try readText() }
+            if pasteboard.changeCount != previous { return try readText(includePrivate: true) }
             try await Task.sleep(for: .milliseconds(25))
         }
         throw ScreenClipboardError.copyTimedOut
