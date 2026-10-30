@@ -39,6 +39,17 @@ func TestResendMailerSendsCodeAndReportsProviderFailure(t *testing.T) {
 	}
 }
 
+func TestVerificationConfigurationFailsClosedOnTypos(t *testing.T) {
+	t.Setenv("PAIRDESK_SIGNUP_VERIFY_EMAIL", "treu")
+	s, _ := fixture(t)
+	if !s.signupVerifyEmail {
+		t.Fatal("misspelled verification flag disabled verification")
+	}
+	if w := request(s.Handler(), "POST", "/v1/signup", "", `{"name":"New","email":"new@example.com","password":"a-strong-password"}`); w.Code != http.StatusBadRequest {
+		t.Fatalf("unverified signup with misspelled flag: %d", w.Code)
+	}
+}
+
 func TestVerifiedSignupCodeIsConsumedAtomically(t *testing.T) {
 	s, _ := fixture(t)
 	s.signupVerifyEmail = true

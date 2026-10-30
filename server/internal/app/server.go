@@ -66,7 +66,9 @@ func New(st *Store) *Server {
 	}
 	accessDomains := parseAllowedValues(os.Getenv("PAIRDESK_ACCESS_ALLOWED_DOMAINS"))
 	accessEmails := parseAllowedValues(os.Getenv("PAIRDESK_ACCESS_ALLOWED_EMAILS"))
-	verify := strings.EqualFold(os.Getenv("PAIRDESK_SIGNUP_VERIFY_EMAIL"), "true") || os.Getenv("PAIRDESK_SIGNUP_VERIFY_EMAIL") == "1"
+	verifyValue := strings.ToLower(strings.TrimSpace(os.Getenv("PAIRDESK_SIGNUP_VERIFY_EMAIL")))
+	// A misspelled enabled value must never silently disable verification.
+	verify := verifyValue != "" && verifyValue != "false" && verifyValue != "0"
 	return &Server{store: st, push: configuredPushFromEnv(), pushWake: make(chan struct{}, 1), liveURL: os.Getenv("LIVEKIT_URL"), liveAPIURL: apiURL, liveKey: os.Getenv("LIVEKIT_API_KEY"), liveSecret: os.Getenv("LIVEKIT_API_SECRET"), dummyHash: h, hits: map[string][]time.Time{}, signupEnabled: enabled, signupAllowedDomains: domains, accessAllowedDomains: accessDomains, accessAllowedEmails: accessEmails, signupVerifyEmail: verify, sendSignupCode: configuredSignupMailer()}
 }
 func (s *Server) Handler() http.Handler {
