@@ -3,6 +3,23 @@ import XCTest
 @testable import PairDesk
 
 final class ScreenClipboardTests: XCTestCase {
+    func testNativeClipboardShortcutBalancesCommandEvenAfterViewerReleasedIt() {
+        for code: UInt16 in [8, 9] {
+            guard let events = RemoteInputInjector.clipboardShortcutEvents(code: code) else {
+                XCTFail("Native shortcut events couldn't be created"); return
+            }
+            XCTAssertEqual(events.map { $0.getIntegerValueField(.keyboardEventKeycode) }, [55, Int64(code), Int64(code), 55])
+            XCTAssertTrue(events[0].flags.contains(.maskCommand))
+            XCTAssertTrue(events[1].flags.contains(.maskCommand))
+            XCTAssertTrue(events[2].flags.contains(.maskCommand))
+            XCTAssertFalse(events[3].flags.contains(.maskCommand))
+            XCTAssertEqual(events[1].type, .keyDown)
+            XCTAssertEqual(events[2].type, .keyUp)
+            for event in events { XCTAssertEqual(event.getIntegerValueField(.eventSourceUserData), RemoteInputInjector.eventMarker) }
+        }
+        XCTAssertNil(RemoteInputInjector.clipboardShortcutEvents(code: 0))
+    }
+
     func testAutomaticClipboardSyncUsesResponsiveOptInPollingInterval() {
         XCTAssertEqual(ClipboardSyncPolicy.pollInterval, .milliseconds(75))
     }
@@ -108,6 +125,7 @@ final class ScreenClipboardTests: XCTestCase {
         XCTAssertThrowsError(try clipboard.readText()) {
             XCTAssertEqual($0 as? ScreenClipboardError, .privateText)
         }
+        XCTAssertEqual(try clipboard.readText(includePrivate: true), "password", "An explicit paste must honor the user's action")
     }
 
     @MainActor

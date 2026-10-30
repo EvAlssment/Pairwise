@@ -43,7 +43,9 @@ private struct ViewerQualityFeedback {
 /// Owns one LiveKit room, local media and the consented remote-control lease.
 @MainActor
 final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerDelegate {
-    @Published private(set) var connected = false
+    @Published private(set) var connected = false {
+        didSet { if connected != oldValue { refreshClipboardSyncLifecycle() } }
+    }
     @Published private(set) var isMicrophoneEnabled = false
     @Published private(set) var isCameraEnabled = false
     @Published private(set) var cameraDevices: [CameraDeviceChoice] = []
@@ -70,7 +72,14 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
     @Published private(set) var error: String?
     @Published private(set) var controlState: RemoteControlState = .unavailable
     @Published private(set) var pendingControlRequests: [CallParticipant] = []
-    @Published private(set) var activeSharerIdentity: String?
+    @Published private(set) var activeSharerIdentity: String? {
+        didSet {
+            if activeSharerIdentity != oldValue {
+                resetScreenClipboard()
+                refreshClipboardSyncLifecycle()
+            }
+        }
+    }
     @Published private(set) var remoteControlAvailable = false
     /// Viewer side: why the sharer will not accept input, when it won't.
     @Published private(set) var remoteControlUnavailableReason: RemoteControlUnavailableReason?
@@ -107,10 +116,23 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
     @Published private(set) var screenShareQuality = ScreenShareQuality.load()
     @Published private(set) var adaptiveQualityEnabled = (UserDefaults.standard.object(forKey: "adaptiveShareQualityEnabled") as? Bool) ?? true
     @Published private(set) var adaptiveShareStatus: String?
-    @Published private(set) var isReconnecting = false
+    @Published private(set) var isReconnecting = false {
+        didSet { if isReconnecting != oldValue { refreshClipboardSyncLifecycle() } }
+    }
     @Published private(set) var incomingClipboardTransfer: (senderName: String, message: ClipboardTransferMessage)?
     @Published private(set) var clipboardSyncEnabled = false
     @Published private(set) var clipboardSyncNotice: String?
+
+    /// Starting or viewing a screen share authorizes clipboard exchange for
+    /// that share. The optional call-wide toggle is independent of this.
+    var automaticScreenClipboardEnabled: Bool { connected && !isReconnecting && activeSharerIdentity != nil }
+    var clipboardSharingEnabled: Bool { connected && !isReconnecting && (clipboardSyncEnabled || automaticScreenClipboardEnabled) }
+
+    private var clipboardSyncRecipients: [CallParticipant] {
+        participants.filter { person in
+            !person.isLocal && (clipboardSyncEnabled || activeSharerIdentity == localIdentity || person.identity == activeSharerIdentity)
+        }
+    }
 
     /// Called for captured local microphone and subscribed remote audio tracks.
     /// Buffers are copied to normalized Float samples before delivery. It remains
@@ -202,6 +224,7 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
     private var pendingScreenCopy: (id: UUID, epoch: String, sharer: String)?
     private var screenCopyTimeoutTask: Task<Void, Never>?
     private var screenCopyAssembler = ClipboardTransferAssembler()
+    private var pendingScreenPastes: [UUID: (epoch: String, sharer: String, timeout: Task<Void, Never>)] = [:]
     private var remoteInputAccessibilityCheck: () -> Bool = { AXIsProcessTrusted() }
     private var queuedControlSends = 0
     private var controlTransportFailed = false
@@ -1081,7 +1104,7 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
         sendControl(.init(epoch: "", sequence: nextSequence(), kind: .availability,
                           available: state.available, reason: state.reason?.rawValue,
                           cursorSession: shareIsWindow ? nil : cursorSessionID,
-                          clipboardEnabled: clipboardSyncEnabled), to: identity)
+                          clipboardEnabled: true), to: identity)
         if !shareIsWindow, let session = cursorSessionID {
             publishAnnotation(ScreenAnnotationMessage(session: session, sequence: nextAnnotationSequence(),
                                                       kind: .availability, participantIdentity: localIdentity,
@@ -1525,19 +1548,25 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
     }
 
     nonisolated func room(_ room: Room, participant: RemoteParticipant?, didReceiveData data: Data, forTopic topic: String, encryptionType: EncryptionType) {
-        if topic == Self.clipboardTopic, data.count <= ClipboardTransferMessage.maximumWireBytes,
+        if (topic == Self.clipboardTopic || topic == Self.screenClipboardTopic), data.count <= ClipboardTransferMessage.maximumWireBytes,
            let sender = participant?.identity?.stringValue {
             Task { @MainActor [weak self] in
                 guard let self, self.room === room, let localIdentity = self.localIdentity,
+                      topic != Self.screenClipboardTopic || self.automaticScreenClipboardEnabled,
                       room.remoteParticipants.values.contains(where: { $0.identity?.stringValue == sender }),
                       let part = try? ClipboardTransferMessage.decode(data, authenticatedSender: sender, localIdentity: localIdentity),
                       let message = self.clipboardAssembler.add(part, from: sender),
                       self.clipboardReplayWindow.insert(message.id) else { return }
-                if self.clipboardSyncEnabled {
-                    self.screenClipboard.pasteboard.clearContents()
-                    self.screenClipboard.pasteboard.setString(message.text, forType: .string)
+                if self.clipboardSharingEnabled {
+                    // A remote Copy is waiting for the destination app's new
+                    // clipboard write, not a simultaneous background sync.
+                    guard self.screenCopyTask == nil,
+                          self.clipboardSyncEnabled || self.activeSharerIdentity == localIdentity || self.activeSharerIdentity == sender else { return }
+                    do { try self.screenClipboard.writeText(message.text) }
+                    catch { self.clipboardSyncNotice = error.localizedDescription; return }
                     self.clipboardObservedChangeCount = self.screenClipboard.pasteboard.changeCount
                     self.lastSharedClipboardText = message.text
+                    self.incomingClipboardTransfer = nil
                     self.clipboardSyncNotice = "Clipboard synced from \(self.participantName(for: sender))"
                     return
                 }
@@ -1571,16 +1600,18 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
     nonisolated private static let controlTopic = "pairdesk.control.v1"
     nonisolated private static let annotationTopic = "pairdesk.annotation.v1"
     nonisolated private static let clipboardTopic = "pairdesk.clipboard.v1"
+    nonisolated private static let screenClipboardTopic = "pairdesk.screen-clipboard.v1"
 
     /// Sends text only after the user explicitly presses Send clipboard.
-    func sendClipboard(text: String, to identity: String) async throws {
+    func sendClipboard(text: String, to identity: String, screenSharing: Bool = false) async throws {
         guard let room, connected, identity != localIdentity,
               room.remoteParticipants.values.contains(where: { $0.identity?.stringValue == identity }) else {
             throw LiveKitError(.invalidState, message: "That teammate is no longer in this call.")
         }
         // Every part is encoded before any is sent, so an oversized clip fails whole.
         let packets = try ClipboardTransferMessage.parts(recipientIdentity: identity, text: text).map { try $0.encoded() }
-        let options = DataPublishOptions(name: "PairDesk clipboard", destinationIdentities: [Participant.Identity(from: identity)], topic: Self.clipboardTopic, reliable: true)
+        let options = DataPublishOptions(name: "PairDesk clipboard", destinationIdentities: [Participant.Identity(from: identity)],
+                                         topic: screenSharing ? Self.screenClipboardTopic : Self.clipboardTopic, reliable: true)
         for data in packets {
             try await room.localParticipant.publish(data: data, options: options)
         }
@@ -1597,23 +1628,24 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
 
     func dismissIncomingClipboardTransfer() { incomingClipboardTransfer = nil }
 
-    /// Clipboard sync is opt-in on each Mac, applies only to plain text during
-    /// this call, and is disabled again when the room disconnects.
+    /// Optional call-wide sync. Screen sharing itself enables clipboard access.
     func setClipboardSyncEnabled(_ enabled: Bool) {
-        resetScreenClipboard()
+        clipboardSyncEnabled = enabled && connected
+        refreshClipboardSyncLifecycle()
+    }
+
+    private func refreshClipboardSyncLifecycle() {
         clipboardSyncTask?.cancel()
         clipboardSyncTask = nil
-        clipboardSyncEnabled = enabled && connected
-        if !clipboardSyncEnabled {
-            clipboardSyncSendTask?.cancel()
-            clipboardSyncQueue.removeAll()
-            clipboardSyncQueuedTexts.removeAll()
-        }
-        clipboardSyncNotice = clipboardSyncEnabled ? "Clipboard sync is on · plain text only" : nil
+        clipboardSyncSendTask?.cancel()
+        clipboardSyncQueue.removeAll()
+        clipboardSyncQueuedTexts.removeAll()
+        clipboardSyncNotice = automaticScreenClipboardEnabled ? "Copy and paste is automatic during screen sharing" :
+            (clipboardSharingEnabled ? "Clipboard sync is on · plain text only" : nil)
         lastSharedClipboardText = nil
         clipboardObservedChangeCount = screenClipboard.pasteboard.changeCount
-        sendControlAvailability()
-        guard clipboardSyncEnabled else { return }
+        if automaticScreenClipboardEnabled { incomingClipboardTransfer = nil }
+        guard clipboardSharingEnabled else { return }
         startClipboardSyncTask()
     }
 
@@ -1622,7 +1654,7 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
         clipboardSyncTask = Task { @MainActor [weak self] in
             while !Task.isCancelled {
                 do { try await Task.sleep(for: ClipboardSyncPolicy.pollInterval) } catch { return }
-                guard let self, self.connected, self.clipboardSyncEnabled else { return }
+                guard let self, self.clipboardSharingEnabled else { return }
                 self.checkClipboardForChanges()
             }
         }
@@ -1641,7 +1673,7 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
         guard let text = pasteboard.string(forType: .string), !text.isEmpty,
               text != lastSharedClipboardText, text != clipboardSyncInFlightText,
               !clipboardSyncQueuedTexts.contains(text) else { return }
-        guard participants.contains(where: { !$0.isLocal }) else {
+        guard !clipboardSyncRecipients.isEmpty else {
             clipboardSyncNotice = "A teammate needs to join before clipboard text can sync"
             return
         }
@@ -1656,21 +1688,21 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
     }
 
     private func drainClipboardSyncQueue() {
-        guard clipboardSyncSendTask == nil, clipboardSyncEnabled, connected else { return }
+        guard clipboardSyncSendTask == nil, clipboardSharingEnabled else { return }
         clipboardSyncSendTask = Task { @MainActor [weak self] in
             guard let self else { return }
             var firstFailure: String?
             var sentCount = 0
             var failedCount = 0
-            while !Task.isCancelled, self.clipboardSyncEnabled, self.connected,
+            while !Task.isCancelled, self.clipboardSharingEnabled,
                   !self.clipboardSyncQueue.isEmpty {
                 let text = self.clipboardSyncQueue.removeFirst()
                 self.clipboardSyncQueuedTexts.remove(text)
                 self.clipboardSyncInFlightText = text
                 var failed = false
-                for person in self.participants where !person.isLocal {
+                for person in self.clipboardSyncRecipients {
                     guard !Task.isCancelled else { break }
-                    do { try await self.sendClipboard(text: text, to: person.identity) }
+                    do { try await self.sendClipboard(text: text, to: person.identity, screenSharing: self.automaticScreenClipboardEnabled) }
                     catch {
                         failed = true
                         if firstFailure == nil { firstFailure = error.localizedDescription }
@@ -1688,7 +1720,7 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
             }
             self.clipboardSyncInFlightText = nil
             self.clipboardSyncSendTask = nil
-            if self.clipboardSyncEnabled, self.connected, !self.clipboardSyncQueue.isEmpty {
+            if self.clipboardSharingEnabled, !self.clipboardSyncQueue.isEmpty {
                 self.drainClipboardSyncQueue()
             } else if failedCount > 0 {
                 self.clipboardSyncNotice = "Couldn't share \(failedCount) copied clip(s): \(firstFailure ?? "copy again to retry")"
@@ -1707,15 +1739,15 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
     /// now, even if the first interaction still needs a control grant.
     func sendScreenClipboardShortcut(code: UInt16) {
         guard canRequestRemoteControl, !controlTransportFailed, !isReconnecting else { return }
-        guard clipboardSyncEnabled, let sharer = activeSharerIdentity,
-              screenClipboardEnabledBySender[sharer] == true else {
-            error = "Enable Copy & paste for this call on both Macs. The sharing Mac must use a version that supports screen copy and paste."
+        guard activeSharerIdentity != nil else { return }
+        if let sharer = activeSharerIdentity, screenClipboardEnabledBySender[sharer] == false {
+            error = "Update PairDesk on the sharing Mac to use automatic screen copy and paste."
             return
         }
         do {
             let intent: LocalControlIntent
             if code == 8 { intent = .clipboardCopy }
-            else if code == 9 { intent = .clipboardPaste(try screenClipboard.readText()) }
+            else if code == 9 { intent = .clipboardPaste(try screenClipboard.readText(includePrivate: true)) }
             else { return }
             guard localControllerEpoch != nil else { queueIntent(intent); return }
             sendScreenClipboardIntent(intent)
@@ -1723,9 +1755,8 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
     }
 
     private func sendScreenClipboardIntent(_ intent: LocalControlIntent) {
-        guard clipboardSyncEnabled, canRequestRemoteControl, !isReconnecting,
-              let epoch = localControllerEpoch, let sharer = activeSharerIdentity,
-              screenClipboardEnabledBySender[sharer] == true else { return }
+        guard canRequestRemoteControl, !isReconnecting,
+              let epoch = localControllerEpoch, let sharer = activeSharerIdentity else { return }
         beginActiveInput(epoch: epoch)
         switch intent {
         case .clipboardCopy:
@@ -1752,6 +1783,13 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
                         throw ClipboardTransferError.messageTooLarge
                     }
                 }
+                guard let id = messages.first?.clipboard?.id else { return }
+                let timeout = Task { @MainActor [weak self] in
+                    do { try await Task.sleep(for: .seconds(3)) } catch { return }
+                    guard let self, self.pendingScreenPastes.removeValue(forKey: id) != nil else { return }
+                    self.error = "The sharing Mac didn't complete the paste. Check its connection and Accessibility access."
+                }
+                pendingScreenPastes[id] = (epoch, sharer, timeout)
                 for message in messages { sendControl(message, to: sharer) }
             } catch { self.error = error.localizedDescription }
         default: break
@@ -1759,7 +1797,7 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
     }
 
     private func mayUseScreenClipboard(sender: String, epoch: String) -> Bool {
-        connected && !isReconnecting && clipboardSyncEnabled && isSharing && !shareIsWindow &&
+        connected && !isReconnecting && isSharing && !shareIsWindow &&
             !privacyVeilActive && automaticControlEnabled && remoteInputAccessibilityCheck() &&
             controlGate.isActive && controlGate.driverIdentity == sender && controlGate.epoch == epoch
     }
@@ -1773,8 +1811,14 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
                     clipboardObservedChangeCount = screenClipboard.pasteboard.changeCount
                     lastSharedClipboardText = text
                     clipboardSyncNotice = "Text pasted from \(participantName(for: sender))"
+                    sendControl(.init(epoch: message.epoch, sequence: nextSequence(), kind: .clipboardPasted,
+                                      clipboardRequestID: part.id), to: sender)
                 }
-            } catch { self.error = error.localizedDescription }
+            } catch {
+                self.error = error.localizedDescription
+                sendControl(.init(epoch: message.epoch, sequence: nextSequence(), kind: .clipboardFailure,
+                                  clipboardRequestID: part.id), to: sender)
+            }
         } else if message.kind == .clipboardCopy, let id = message.clipboardRequestID {
             screenCopyTask?.cancel()
             screenCopyTask = Task { @MainActor [weak self] in
@@ -1795,12 +1839,24 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
                     self.sendControl(.init(epoch: message.epoch, sequence: self.nextSequence(), kind: .clipboardFailure,
                                            clipboardRequestID: id), to: sender)
                 }
+                self.screenCopyTask = nil
             }
         }
     }
 
     private func receiveScreenCopy(_ message: RemoteControlMessage, sender: String) {
-        guard message.version == 1, connected, !isReconnecting, clipboardSyncEnabled,
+        if let id = message.clipboardRequestID, let pending = pendingScreenPastes[id] {
+            guard message.version == 1, connected, !isReconnecting, sender == activeSharerIdentity,
+                  sender == pending.sharer, message.epoch == pending.epoch, localControllerEpoch == pending.epoch,
+                  message.kind == .clipboardPasted || message.kind == .clipboardFailure else { return }
+            pending.timeout.cancel()
+            pendingScreenPastes[id] = nil
+            if message.kind == .clipboardPasted {
+                clipboardSyncNotice = "Paste sent to \(participantName(for: sender))'s shared app"
+            } else { error = "The sharing Mac couldn't paste into the destination app. Check its Accessibility access." }
+            return
+        }
+        guard message.version == 1, connected, !isReconnecting,
               let pending = pendingScreenCopy, sender == pending.sharer, sender == activeSharerIdentity,
               message.epoch == pending.epoch, localControllerEpoch == pending.epoch,
               message.clipboardRequestID == pending.id, let localIdentity else { return }
@@ -1835,6 +1891,8 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
         screenCopyTask?.cancel()
         screenCopyTask = nil
         clearPendingScreenCopy()
+        for pending in pendingScreenPastes.values { pending.timeout.cancel() }
+        pendingScreenPastes.removeAll()
         screenClipboard.reset()
         queuedLocalIntents.removeAll {
             switch $0 { case .clipboardCopy, .clipboardPaste: return true; default: return false }
@@ -1981,7 +2039,7 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
             localHeldKeys.removeAll()
             localHeldButtons.removeAll()
             controlState = .hostPermissionRequired
-        case .clipboardCopied, .clipboardFailure:
+        case .clipboardCopied, .clipboardPasted, .clipboardFailure:
             receiveScreenCopy(message, sender: sender)
         case .heartbeat, .pointer, .key, .button, .scroll, .releaseAll, .release, .clipboardCopy, .clipboardPaste:
             guard isSharing,
@@ -2417,7 +2475,7 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
             guard !Task.isCancelled, let self, self.localControllerEpoch == epoch else { return }
             guard RemoteControlLeasePolicy.canExpireIdleLease(heldKeyCount: self.localHeldKeys.count,
                                                               heldButtonCount: self.localHeldButtons.count),
-                  self.pendingScreenCopy == nil else {
+                  self.pendingScreenCopy == nil, self.pendingScreenPastes.isEmpty else {
                 self.controllerIdleTask = nil
                 self.scheduleLocalIdleExpiry(epoch: epoch)
                 return
@@ -2607,12 +2665,12 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
 
     #if DEBUG
     /// Synthetic clipboard fixture: isolate both Macs' pasteboards and replace
-    /// only the OS shortcut boundary. Transport, consent and lease checks stay real.
+    /// only the OS shortcut boundary. Transport and lease checks stay real.
     func debugConfigureScreenClipboard(pasteboard: NSPasteboard, peer: String, epoch: String,
                                        sharing: Bool, controllerGranted: Bool = true,
                                        postShortcut: @escaping (UInt16) -> Bool) {
         screenClipboard = ScreenClipboard(pasteboard: pasteboard, postShortcut: postShortcut)
-        // Exercise directed operations independently of the periodic sync path.
+        // Reset the polling baseline before installing the synthetic share.
         clipboardSyncTask?.cancel()
         clipboardSyncTask = nil
         clipboardObservedChangeCount = pasteboard.changeCount
@@ -2635,6 +2693,11 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
     }
 
     func debugReceiveControl(_ message: RemoteControlMessage, sender: String) { receive(message, sender: sender) }
+    func debugEndScreenClipboardShare() {
+        emergencyStop()
+        isSharing = false
+        activeSharerIdentity = nil
+    }
     var debugControlEpoch: String? { controlGate.epoch }
 
     var debugHostCursorPanel: NSPanel? { hostCursorOverlay.panel }

@@ -11,7 +11,8 @@ LOCAL_SIGNING_IDENTITY="PairDesk Local Signing"
 SIGNING_KEYCHAIN=${PAIRDESK_SIGNING_KEYCHAIN:-"$HOME/Library/Keychains/login.keychain-db"}
 WHISPER_RUNTIME="$ROOT/.cache/whisper/runtime"
 BUILD_PATH=${PAIRDESK_BUILD_PATH:-"$MACOS/.build"}
-FRAMEWORKS_SOURCE="$BUILD_PATH/artifacts"
+BUILD_ARCHS="arm64 x86_64"
+UNIVERSAL_BIN="$ROOT/dist/.PairDesk-universal-bin.$$"
 MODEL_SHA1="bd577a113a864445d4c299885e0cb97d4ba92b5f"
 
 fail() {
@@ -38,13 +39,35 @@ if [ -z "$SIGNING_IDENTITY" ]; then
   fi
 fi
 
-if [ "${PAIRDESK_SKIP_BUILD:-0}" != "1" ]; then
-  (cd "$MACOS" && swift build --scratch-path "$BUILD_PATH" -c "$CONFIGURATION")
+if [ "${PAIRDESK_SKIP_BUILD:-0}" = "1" ]; then
+  BIN_PATH=${PAIRDESK_BIN_PATH:-$(cd "$MACOS" && swift build --scratch-path "$BUILD_PATH" --show-bin-path -c "$CONFIGURATION")}
+  EXECUTABLE="$BIN_PATH/PairDesk"
+  BRIDGE_EXECUTABLE="$BIN_PATH/pairdesk-agent-mcp"
+  FRAMEWORKS_SOURCE="$BUILD_PATH/artifacts"
+  CHECKOUTS="$BUILD_PATH/checkouts"
+else
+  ARM_BIN_PATH=
+  X86_BIN_PATH=
+  for arch in $BUILD_ARCHS; do
+    case "$arch" in arm64|x86_64) ;; *) fail "unsupported build architecture: $arch" ;; esac
+    arch_build_path="$BUILD_PATH/$arch"
+    (cd "$MACOS" && swift build --triple "$arch-apple-macosx14.0" --scratch-path "$arch_build_path" -c "$CONFIGURATION")
+    arch_bin_path=$(cd "$MACOS" && swift build --triple "$arch-apple-macosx14.0" --scratch-path "$arch_build_path" --show-bin-path -c "$CONFIGURATION")
+    case "$arch" in
+      arm64) ARM_BIN_PATH=$arch_bin_path ;;
+      x86_64) X86_BIN_PATH=$arch_bin_path ;;
+    esac
+  done
+  mkdir -p "$UNIVERSAL_BIN"
+  lipo -create "$ARM_BIN_PATH/PairDesk" "$X86_BIN_PATH/PairDesk" -output "$UNIVERSAL_BIN/PairDesk"
+  lipo -create "$ARM_BIN_PATH/pairdesk-agent-mcp" "$X86_BIN_PATH/pairdesk-agent-mcp" -output "$UNIVERSAL_BIN/pairdesk-agent-mcp"
+  BIN_PATH=$ARM_BIN_PATH
+  EXECUTABLE="$UNIVERSAL_BIN/PairDesk"
+  BRIDGE_EXECUTABLE="$UNIVERSAL_BIN/pairdesk-agent-mcp"
+  FRAMEWORKS_SOURCE="$BUILD_PATH/arm64/artifacts"
+  CHECKOUTS="$BUILD_PATH/arm64/checkouts"
 fi
-BIN_PATH=${PAIRDESK_BIN_PATH:-$(cd "$MACOS" && swift build --scratch-path "$BUILD_PATH" --show-bin-path -c "$CONFIGURATION")}
-EXECUTABLE="$BIN_PATH/PairDesk"
 test -x "$EXECUTABLE" || fail "SwiftPM executable is missing at $EXECUTABLE"
-BRIDGE_EXECUTABLE="$BIN_PATH/pairdesk-agent-mcp"
 test -x "$BRIDGE_EXECUTABLE" || fail "SwiftPM MCP helper is missing at $BRIDGE_EXECUTABLE"
 
 test -x "$WHISPER_RUNTIME/whisper-cli" || fail "run scripts/prepare-whisper.sh first"
@@ -56,6 +79,7 @@ mkdir -p "$ROOT/dist"
 mkdir -p "$STAGING/Contents/MacOS" "$STAGING/Contents/Frameworks" "$STAGING/Contents/Resources/whisper" "$STAGING/Contents/Resources/ThirdPartyNotices"
 cleanup() {
   if [ -d "$STAGING" ]; then rm -rf "$STAGING"; fi
+  if [ -d "$UNIVERSAL_BIN" ]; then rm -rf "$UNIVERSAL_BIN"; fi
   if [ -n "${BACKUP:-}" ] && [ -e "$BACKUP" ] && [ ! -e "$OUTPUT" ]; then mv "$BACKUP" "$OUTPUT"; fi
 }
 trap cleanup EXIT HUP INT TERM
@@ -139,7 +163,6 @@ for bundled_executable in "$APP_EXECUTABLE" "$CONTENTS/MacOS/pairdesk-agent-mcp"
 done
 
 NOTICES="$RESOURCES/ThirdPartyNotices"
-CHECKOUTS="$BUILD_PATH/checkouts"
 copy_notice() {
   source=$1
   target=$2
@@ -161,11 +184,16 @@ plutil -lint "$CONTENTS/Info.plist"
 /usr/libexec/PlistBuddy -c 'Print :CFBundleIconFile' "$CONTENTS/Info.plist" | grep -Fx 'PairDesk' >/dev/null
 /usr/libexec/PlistBuddy -c 'Print :NSCameraUsageDescription' "$CONTENTS/Info.plist" | grep -F 'turn on video during a call' >/dev/null || fail "camera usage description is missing or unclear"
 ARCHS=$(lipo -archs "$APP_EXECUTABLE")
+for arch in $BUILD_ARCHS; do
+  lipo "$APP_EXECUTABLE" -verify_arch "$arch" || fail "PairDesk is missing $arch"
+  lipo "$CONTENTS/MacOS/pairdesk-agent-mcp" -verify_arch "$arch" || fail "pairdesk-agent-mcp is missing $arch"
+  lipo "$RESOURCES/whisper/whisper-cli" -verify_arch "$arch" || fail "Whisper runtime is missing $arch"
+done
 for framework in "$FRAMEWORKS"/*.framework; do
   [ -d "$framework" ] || continue
   framework_binary="$framework/$(basename "$framework" .framework)"
   for arch in $ARCHS; do
-    lipo -verify_arch "$arch" "$framework_binary" || fail "$(basename "$framework") is missing $arch"
+    lipo "$framework_binary" -verify_arch "$arch" || fail "$(basename "$framework") is missing $arch"
   done
 done
 

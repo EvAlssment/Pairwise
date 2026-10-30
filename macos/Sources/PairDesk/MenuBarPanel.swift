@@ -233,7 +233,7 @@ struct MenuBarPanel: View {
             if let notice = rtc.cameraDeviceNotice {
                 Text(notice).font(.caption).foregroundStyle(Theme.textMuted).fixedSize(horizontal: false, vertical: true)
             }
-            if rtc.clipboardSyncEnabled { clipboardSyncStatus }
+            if rtc.clipboardSharingEnabled { clipboardSyncStatus }
             HStack {
                 if !store.canAddPerson {
                     Text("Call is full · four people").font(.caption).foregroundStyle(Theme.textMuted)
@@ -273,7 +273,9 @@ struct MenuBarPanel: View {
             Label(rtc.clipboardSyncNotice ?? "Clipboard sync is on", systemImage: "doc.on.clipboard")
                 .font(.caption).foregroundStyle(Theme.textMuted).lineLimit(1)
             Spacer(minLength: 4)
-            Button("Turn off") { rtc.setClipboardSyncEnabled(false) }.buttonStyle(QuietButtonStyle(compact: true))
+            if !rtc.automaticScreenClipboardEnabled {
+                Button("Turn off") { rtc.setClipboardSyncEnabled(false) }.buttonStyle(QuietButtonStyle(compact: true))
+            }
         }
     }
 

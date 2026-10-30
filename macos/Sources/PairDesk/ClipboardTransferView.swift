@@ -17,6 +17,7 @@ struct ClipboardTransferView: View {
     let clipboardSyncEnabled: Bool
     let clipboardSyncNotice: String?
     let onToggleSync: (Bool) -> Void
+    var screenSharingActive = false
 
     @State private var selectedPeerIdentity = ""
     @State private var status: String?
@@ -33,15 +34,22 @@ struct ClipboardTransferView: View {
                     Text("⌘V  Paste there")
                 }
                 .font(.callout.weight(.medium))
-                Toggle("Sync clipboard text for this call", isOn: Binding(
-                    get: { clipboardSyncEnabled },
-                    set: onToggleSync
-                ))
-                .font(.callout.weight(.medium))
-                Text(clipboardSyncEnabled
-                     ? "Turn this on on both Macs for automatic plain-text sync. It turns off when the call ends."
-                     : "For automatic sync, both Macs must opt in. Otherwise, send a clip once and let the other person approve copying it.")
-                    .font(.caption).foregroundStyle(.secondary)
+                if screenSharingActive {
+                    Label("Automatic during screen sharing", systemImage: "checkmark.circle.fill")
+                        .font(.callout.weight(.medium))
+                    Text("Copy and paste works directly. No clipboard approval or extra setup is needed.")
+                        .font(.caption).foregroundStyle(.secondary)
+                } else {
+                    Toggle("Sync clipboard text for this call", isOn: Binding(
+                        get: { clipboardSyncEnabled },
+                        set: onToggleSync
+                    ))
+                    .font(.callout.weight(.medium))
+                    Text(clipboardSyncEnabled
+                         ? "Turn this on on both Macs for automatic plain-text sync. It turns off when the call ends."
+                         : "For automatic sync outside screen sharing, both Macs must opt in. Otherwise, send a clip once and let the other person approve copying it.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
                 Text("On a shared display: select text and press ⌘C to copy here. Copy locally, click the remote app, then press ⌘V to paste there.")
                     .font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -49,7 +57,7 @@ struct ClipboardTransferView: View {
             .padding(12)
             .background(.quaternary, in: RoundedRectangle(cornerRadius: 10))
 
-            if !peers.isEmpty {
+            if !screenSharingActive, !peers.isEmpty {
                 VStack(alignment: .leading, spacing: 8) {
                     Label("Send text once", systemImage: "paperplane")
                         .font(.callout.weight(.medium))
@@ -66,12 +74,12 @@ struct ClipboardTransferView: View {
                     Text("They approve copying it to their clipboard, then press ⌘V.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
-            } else {
+            } else if !screenSharingActive {
                 Text("Start a call with a teammate to share text.")
                     .font(.caption).foregroundStyle(.secondary)
             }
 
-            if let incoming {
+            if !screenSharingActive, let incoming {
                 VStack(alignment: .leading, spacing: 6) {
                     Label("Text from \(incoming.senderName)", systemImage: "doc.text")
                         .font(.callout.weight(.semibold))
