@@ -40,14 +40,16 @@ type Room struct {
 	CreatedAt     time.Time         `json:"createdAt"`
 }
 type CallInvitation struct {
-	ID        string    `json:"id"`
-	CallerID  string    `json:"callerId"`
-	TargetID  string    `json:"targetId"`
-	RoomID    string    `json:"roomId"`
-	Status    string    `json:"status"`
-	CreatedAt time.Time `json:"createdAt"`
-	UpdatedAt time.Time `json:"updatedAt"`
-	ExpiresAt time.Time `json:"expiresAt"`
+	ID        string     `json:"id"`
+	CallerID  string     `json:"callerId"`
+	TargetID  string     `json:"targetId"`
+	RoomID    string     `json:"roomId"`
+	Status    string     `json:"status"`
+	CreatedAt time.Time  `json:"createdAt"`
+	UpdatedAt time.Time  `json:"updatedAt"`
+	ExpiresAt time.Time  `json:"expiresAt"`
+	StartedAt *time.Time `json:"startedAt,omitempty"`
+	EndedAt   *time.Time `json:"endedAt,omitempty"`
 }
 type CallJoinRequest struct {
 	ID          string    `json:"id"`

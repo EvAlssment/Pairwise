@@ -398,12 +398,16 @@ struct MenuBarPanel: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(person.name).font(.system(size: 12, weight: .medium)).lineLimit(1)
                         HStack(spacing: 5) {
-                            Text(callHistoryLabel(invitation, incoming: incoming))
+                            Text(invitation.historyStatusLabel(incoming: incoming))
                                 .foregroundStyle(missed ? Theme.attention : Theme.textMuted)
-                            Text("·")
-                            Text(invitation.createdDate, style: .relative)
-                                .foregroundStyle(Theme.textMuted)
+                            if let duration = invitation.historyDurationText {
+                                Text("·")
+                                Text(duration).foregroundStyle(Theme.textMuted)
+                            }
                         }.font(.caption).lineLimit(1)
+                        if let time = invitation.historyDateText {
+                            Text(time).font(.caption2).foregroundStyle(Theme.textMuted).lineLimit(1)
+                        }
                     }
                     Spacer(minLength: 4)
                     if person.online == true && person.busy != true {
@@ -412,14 +416,6 @@ struct MenuBarPanel: View {
                     }
                 }.padding(.horizontal, 8).frame(minHeight: 38)
             }
-        }
-    }
-
-    private func callHistoryLabel(_ invitation: CallInvitation, incoming: Bool) -> String {
-        switch invitation.status {
-        case "expired": incoming ? "Missed call" : "No answer"
-        case "declined": incoming ? "Declined" : "Call declined"
-        default: "Call ended"
         }
     }
 

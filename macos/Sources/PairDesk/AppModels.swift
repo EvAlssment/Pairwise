@@ -45,6 +45,17 @@ struct APIError: LocalizedError {
     var errorDescription: String? { message }
 }
 
+/// Go's RFC 3339 timestamps can contain up to nine fractional-second digits.
+enum ServerDate {
+    static func parse(_ value: String?) -> Date? {
+        guard let value else { return nil }
+        // Before Swift 6.2, parsing requires fractional seconds to match the
+        // format style exactly. Accept both forms on every supported macOS.
+        return (try? Date(value, strategy: Date.ISO8601FormatStyle(includingFractionalSeconds: true)))
+            ?? (try? Date(value, strategy: .iso8601))
+    }
+}
+
 struct CallInvitation: Decodable, Identifiable, Equatable {
     let id: String
     let status: String
@@ -52,6 +63,8 @@ struct CallInvitation: Decodable, Identifiable, Equatable {
     let target: TeamUser
     let room: PairRoom
     var createdAt: String? = nil
+    var startedAt: String? = nil
+    var endedAt: String? = nil
     let expiresAt: String
     init(id: String, status: String, caller: TeamUser, target: TeamUser, room: PairRoom, expiresAt: String) {
         self.id = id
@@ -70,12 +83,40 @@ struct CallInvitation: Decodable, Identifiable, Equatable {
         target = try values.decode(TeamUser.self, forKey: .target)
         room = try values.decode(PairRoom.self, forKey: .room)
         createdAt = try values.decodeIfPresent(String.self, forKey: .createdAt)
+        startedAt = try values.decodeIfPresent(String.self, forKey: .startedAt)
+        endedAt = try values.decodeIfPresent(String.self, forKey: .endedAt)
         expiresAt = try values.decode(String.self, forKey: .expiresAt)
     }
-    private enum CodingKeys: String, CodingKey { case id, status, caller, target, room, createdAt, expiresAt }
-    var createdDate: Date {
-        guard let createdAt else { return .distantPast }
-        return ISO8601DateFormatter().date(from: createdAt) ?? .distantPast
+    private enum CodingKeys: String, CodingKey { case id, status, caller, target, room, createdAt, startedAt, endedAt, expiresAt }
+    var createdDate: Date? { ServerDate.parse(createdAt) }
+    var endedDate: Date? { ServerDate.parse(endedAt) }
+
+    var historyDurationText: String? {
+        guard status == "cancelled" else { return nil }
+        guard let start = ServerDate.parse(startedAt), let end = endedDate, end >= start else {
+            // A new unanswered attempt has an end time but no answer time.
+            // Older completed calls have no reliable duration; never guess it.
+            return startedAt == nil && endedAt != nil ? nil : "Duration unavailable"
+        }
+        let seconds = Int(end.timeIntervalSince(start))
+        let duration = seconds >= 3600
+            ? String(format: "%d:%02d:%02d", seconds / 3600, seconds / 60 % 60, seconds % 60)
+            : String(format: "%d:%02d", seconds / 60, seconds % 60)
+        return "Duration \(duration)"
+    }
+
+    var historyDateText: String? {
+        if let endedDate { return "Ended \(endedDate.formatted(.relative(presentation: .named, unitsStyle: .abbreviated)))" }
+        if let createdDate { return "Called \(createdDate.formatted(.relative(presentation: .named, unitsStyle: .abbreviated)))" }
+        return nil
+    }
+
+    func historyStatusLabel(incoming: Bool) -> String {
+        switch status {
+        case "expired": incoming ? "Missed call" : "No answer"
+        case "declined": incoming ? "Declined" : "Call declined"
+        default: startedAt == nil && endedAt != nil ? "Cancelled" : "Call ended"
+        }
     }
 }
 struct CallResponse: Decodable { let call: CallInvitation }

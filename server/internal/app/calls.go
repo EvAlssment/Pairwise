@@ -26,13 +26,27 @@ type apiRoom struct {
 	Participants     []participant `json:"participants"`
 }
 type apiCall struct {
-	ID        string    `json:"id"`
-	Status    string    `json:"status"`
-	Caller    apiUser   `json:"caller"`
-	Target    apiUser   `json:"target"`
-	Room      apiRoom   `json:"room"`
-	CreatedAt time.Time `json:"createdAt"`
-	ExpiresAt string    `json:"expiresAt"`
+	ID        string     `json:"id"`
+	Status    string     `json:"status"`
+	Caller    apiUser    `json:"caller"`
+	Target    apiUser    `json:"target"`
+	Room      apiRoom    `json:"room"`
+	CreatedAt time.Time  `json:"createdAt"`
+	ExpiresAt string     `json:"expiresAt"`
+	StartedAt *time.Time `json:"startedAt,omitempty"`
+	EndedAt   *time.Time `json:"endedAt,omitempty"`
+}
+
+// finish preserves the answer timestamp on accepted records from older servers.
+// Before startedAt existed, UpdatedAt remained the acceptance time until teardown.
+func (invite *CallInvitation) finish(status string, now time.Time) {
+	if invite.Status == callAccepted && invite.StartedAt == nil && !invite.UpdatedAt.IsZero() {
+		started := invite.UpdatedAt
+		invite.StartedAt = &started
+	}
+	invite.Status = status
+	invite.UpdatedAt = now
+	invite.EndedAt = &now
 }
 
 func (s *Server) calls(w http.ResponseWriter, r *http.Request, u User) {
@@ -197,8 +211,8 @@ func (s *Server) callAction(w http.ResponseWriter, r *http.Request, u User) {
 		return
 	}
 	if invite.Status == callPending && !now.Before(invite.ExpiresAt) {
-		invite.Status = callExpired
-		invite.UpdatedAt = now
+		invite.finish(callExpired, now)
+		invite.EndedAt = &invite.ExpiresAt
 		s.store.s.Calls[id] = invite
 		changed = true
 	}
@@ -226,8 +240,7 @@ func (s *Server) callAction(w http.ResponseWriter, r *http.Request, u User) {
 		}
 		caller, exists := s.store.s.Users[invite.CallerID]
 		if !exists || !caller.Enabled || (!s.userOnlineLocked(caller.ID, now) && !activeMemberInRoomLocked(s.store.s, caller.ID, invite.RoomID, now)) {
-			invite.Status = callCancelled
-			invite.UpdatedAt = now
+			invite.finish(callCancelled, now)
 			s.store.s.Calls[id] = invite
 			_ = s.store.save()
 			fail(w, 409, "caller is no longer available")
@@ -243,6 +256,7 @@ func (s *Server) callAction(w http.ResponseWriter, r *http.Request, u User) {
 		}
 		invite.Status = callAccepted
 		invite.UpdatedAt = now
+		invite.StartedAt = &now
 		invite.ExpiresAt = now.Add(reservationTTL)
 		rm.Members[u.ID] = Member{UserID: u.ID, LastSeen: now}
 		s.store.s.Rooms[rm.ID] = rm
@@ -256,8 +270,7 @@ func (s *Server) callAction(w http.ResponseWriter, r *http.Request, u User) {
 			fail(w, 409, "call is not waiting for an answer")
 			return
 		}
-		invite.Status = callDeclined
-		invite.UpdatedAt = now
+		invite.finish(callDeclined, now)
 		s.store.s.Calls[id] = invite
 	case "cancel":
 		if u.ID != invite.CallerID && u.ID != invite.TargetID {
@@ -288,8 +301,7 @@ func (s *Server) callAction(w http.ResponseWriter, r *http.Request, u User) {
 			delete(rm.Members, target.ID)
 			s.store.s.Rooms[rm.ID] = rm
 		}
-		invite.Status = callCancelled
-		invite.UpdatedAt = now
+		invite.finish(callCancelled, now)
 		s.store.s.Calls[id] = invite
 	default:
 		fail(w, 404, "not found")
@@ -307,7 +319,7 @@ func (s *Server) callAction(w http.ResponseWriter, r *http.Request, u User) {
 }
 func (s *Server) callSnapshotLocked(invite CallInvitation, now time.Time) apiCall {
 	room := s.store.s.Rooms[invite.RoomID]
-	return apiCall{ID: invite.ID, Status: invite.Status, Caller: pub(s.store.s.Users[invite.CallerID]), Target: pub(s.store.s.Users[invite.TargetID]), Room: s.roomSnapshotLocked(room, now), ExpiresAt: invite.ExpiresAt.UTC().Format(time.RFC3339), CreatedAt: invite.CreatedAt}
+	return apiCall{ID: invite.ID, Status: invite.Status, Caller: pub(s.store.s.Users[invite.CallerID]), Target: pub(s.store.s.Users[invite.TargetID]), Room: s.roomSnapshotLocked(room, now), ExpiresAt: invite.ExpiresAt.UTC().Format(time.RFC3339), CreatedAt: invite.CreatedAt, StartedAt: invite.StartedAt, EndedAt: invite.EndedAt}
 }
 func (s *Server) roomSnapshotLocked(rm Room, now time.Time) apiRoom {
 	ps := []participant{}
@@ -324,8 +336,8 @@ func (s *Server) pruneCallsLocked(now time.Time) bool {
 	changed := false
 	for id, invite := range s.store.s.Calls {
 		if invite.Status == callPending && !now.Before(invite.ExpiresAt) {
-			invite.Status = callExpired
-			invite.UpdatedAt = now
+			invite.finish(callExpired, now)
+			invite.EndedAt = &invite.ExpiresAt
 			s.store.s.Calls[id] = invite
 			// A missed-call alert is a separate, durable event from the short
 			// ringing notification. It is addressed only to the invited user and
@@ -334,8 +346,7 @@ func (s *Server) pruneCallsLocked(now time.Time) bool {
 			changed = true
 		}
 		if invite.Status == callAccepted && !acceptedCallActiveLocked(s.store.s, invite, now) {
-			invite.Status = callCancelled
-			invite.UpdatedAt = now
+			invite.finish(callCancelled, now)
 			s.store.s.Calls[id] = invite
 			changed = true
 		}
@@ -521,8 +532,7 @@ func cancelPendingCallsForCallerLocked(state *State, userID, roomID string, now 
 	changed := false
 	for id, invite := range state.Calls {
 		if invite.RoomID == roomID && invite.CallerID == userID && invite.Status == callPending {
-			invite.Status = callCancelled
-			invite.UpdatedAt = now
+			invite.finish(callCancelled, now)
 			state.Calls[id] = invite
 			changed = true
 		}
@@ -533,8 +543,7 @@ func cancelAcceptedCallForTargetLocked(state *State, userID, roomID string, now 
 	changed := false
 	for id, invite := range state.Calls {
 		if invite.RoomID == roomID && invite.TargetID == userID && invite.Status == callAccepted {
-			invite.Status = callCancelled
-			invite.UpdatedAt = now
+			invite.finish(callCancelled, now)
 			state.Calls[id] = invite
 			changed = true
 		}
@@ -590,8 +599,7 @@ func (s *Server) leaveDirectRoomLocked(rm *Room, user User, now time.Time) error
 	rm.Members = map[string]Member{}
 	for id, invite := range s.store.s.Calls {
 		if invite.RoomID == rm.ID && (invite.Status == callPending || invite.Status == callAccepted) {
-			invite.Status = callCancelled
-			invite.UpdatedAt = now
+			invite.finish(callCancelled, now)
 			s.store.s.Calls[id] = invite
 		}
 	}
