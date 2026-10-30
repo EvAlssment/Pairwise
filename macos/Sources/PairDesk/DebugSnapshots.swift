@@ -62,7 +62,7 @@ enum UISnapshots {
         ]
         let room = PairRoom(id: "room", name: "Direct call", participantCount: 1, participants: [])
         func store(_ configure: (AppStore) -> Void = { _ in }) -> AppStore {
-            let store = AppStore()
+            let store = AppStore(callAudio: CallAudioFeedback { _ in nil })
             store.serverAddress = "snapshot.invalid"
             configure(store)
             return store
@@ -88,6 +88,19 @@ enum UISnapshots {
 
         snapshot("menu-signed-out", to: directory, compact: true) { MenuBarPanel(store: signedOut, rtc: signedOut.rtc, loginItem: loginItem) }
         snapshot("menu-roster", to: directory, compact: true) { MenuBarPanel(store: idle, rtc: idle.rtc, loginItem: loginItem) }
+        let recent = store {
+            $0.user = me; $0.users = [me]; $0.directoryStatus = "Team connected"
+            let end = Date().addingTimeInterval(-60)
+            var completed = CallInvitation(id: "completed", status: "cancelled", caller: me, target: harshit, room: room, expiresAt: "")
+            completed.createdAt = end.addingTimeInterval(-215).ISO8601Format(.iso8601)
+            completed.startedAt = end.addingTimeInterval(-185).ISO8601Format(.iso8601)
+            completed.endedAt = end.ISO8601Format(.iso8601)
+            var missed = CallInvitation(id: "missed", status: "expired", caller: harshit, target: me, room: room, expiresAt: "")
+            missed.endedAt = end.addingTimeInterval(-600).ISO8601Format(.iso8601)
+            let legacy = CallInvitation(id: "legacy", status: "cancelled", caller: me, target: harshit, room: room, expiresAt: "")
+            $0.callInvitations = [completed, missed, legacy]
+        }
+        snapshot("menu-recent-call-duration", to: directory, compact: true) { MenuBarPanel(store: recent, rtc: recent.rtc, loginItem: loginItem) }
         let pair = store {
             $0.user = me; $0.directoryStatus = "Team connected"
             $0.users = [me, harshit, TeamUser(id: "saurab", name: "Saurab", email: "saurab@example.com", online: false, busy: false, enabled: true)]

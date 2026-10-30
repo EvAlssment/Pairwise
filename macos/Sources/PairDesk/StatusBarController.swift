@@ -134,8 +134,11 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
             muteItem = created
         }
         let micOn = rtc.isMicrophoneEnabled
-        muteItem?.button?.image = NSImage(systemSymbolName: micOn ? "mic.fill" : "mic.slash.fill", accessibilityDescription: micOn ? "Mute" : "Unmute")
-        muteItem?.button?.contentTintColor = micOn ? nil : NSColor(Theme.attention)
+        let image = NSImage(systemSymbolName: micOn ? "mic.fill" : "mic.slash.fill", accessibilityDescription: micOn ? "Mute" : "Unmute")
+        // Let macOS keep both states legible against the menu bar background.
+        image?.isTemplate = true
+        muteItem?.button?.image = image
+        muteItem?.button?.contentTintColor = nil
         muteItem?.button?.toolTip = micOn ? "Mute microphone" : "Unmute microphone"
     }
 

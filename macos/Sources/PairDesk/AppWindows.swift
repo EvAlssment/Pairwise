@@ -46,7 +46,7 @@ final class AppWindows {
     }
 
     func showSharedScreen(store: AppStore) {
-        show("screen") {
+        let window = show("screen") {
             let root = SharedScreenWindow(store: store, rtc: store.rtc, transcripts: store.transcripts, agentBridge: store.agentBridge)
                 .frame(minWidth: 700, minHeight: 450)
             let window = Self.hosted(root, title: "PairDesk · Shared screen", fixedSize: false)
@@ -58,6 +58,14 @@ final class AppWindows {
             window.center()
             return window
         }
+        if window.isMiniaturized { window.deminiaturize(nil) }
+    }
+
+    /// Close the viewer, including its full-screen Space, without leaving the
+    /// call. Retain the window so the next share can reopen at the same size.
+    func closeSharedScreen() {
+        guard let window = windows["screen"], window.isVisible || window.isMiniaturized else { return }
+        window.close()
     }
 
     func showCameraGallery(rtc: RTCService) {

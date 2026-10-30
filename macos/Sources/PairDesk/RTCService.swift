@@ -55,6 +55,7 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
     @Published private(set) var isSharing = false {
         didSet {
             if !isSharing {
+                shareDisplayConfiguration = nil
                 sharingIndicator.hide()
                 hostCursorOverlay.hide()
                 privacyVeilAppNames = []
@@ -62,7 +63,10 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
                 privacyVeilNotificationsHidden = false
                 privacyVeilProtectedBundleIDs = []
             }
-            else { updateHostCursors() }
+            else {
+                shareDisplayConfiguration = .current
+                updateHostCursors()
+            }
         }
     }
     @Published private(set) var participants: [CallParticipant] = [] { didSet { updateHostCursors() } }
@@ -159,6 +163,7 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
     private var remoteControlManuallyPaused = false
     private var resumeControlAfterReconnect = false
     private var shareBounds: CGRect?
+    private var shareDisplayConfiguration: ScreenShareDisplayConfiguration?
     private var shareIsWindow = false
     private var controlGate = RemoteControlGate()
     private var controlArbiter = RemoteControlArbiter()
@@ -286,9 +291,7 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
         })
         notificationTokens.append(appCenter.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor [weak self] in
-                guard let self, self.isSharing else { return }
-                self.emergencyStop()
-                await self.stopScreenShare()
+                await self?.handleScreenParametersChange(.current)
             }
         })
         let workspaceCenter = NSWorkspace.shared.notificationCenter
@@ -924,6 +927,14 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
             self.error = "Screen sharing failed: \(error.localizedDescription)"
             throw error
         }
+    }
+
+    func handleScreenParametersChange(_ configuration: ScreenShareDisplayConfiguration) async {
+        // App/full-screen Space switches can send this notification without
+        // changing the displays. Keep the capture and control lease in that case.
+        guard isSharing, configuration != shareDisplayConfiguration else { return }
+        emergencyStop()
+        await stopScreenShare()
     }
 
     func stopScreenShare() async {
@@ -2701,6 +2712,13 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
     var debugControlEpoch: String? { controlGate.epoch }
 
     var debugHostCursorPanel: NSPanel? { hostCursorOverlay.panel }
+
+    /// Native viewer fixtures use synthetic tracks without recording a desktop.
+    func debugSetScreenShare(track: VideoTrack?, sharer: String?, local: Bool = false) {
+        screenTrack = track
+        activeSharerIdentity = sharer
+        isSharing = local
+    }
 
     /// Exercise real cursor packets and native presentation without recording a desktop.
     func debugStartCursorShare(bounds: CGRect, session: String, hiddenApplicationNames: [String] = []) {
