@@ -18,6 +18,57 @@ type countedBlockingSender struct {
 	release chan struct{}
 }
 
+func TestPostgresVerifiedSignupAcrossStores(t *testing.T) {
+	dsn := os.Getenv("PAIRDESK_TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("set PAIRDESK_TEST_DATABASE_URL to a disposable PostgreSQL database")
+	}
+	ctx := context.Background()
+	first, err := OpenPostgresStore(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer first.Close()
+	second, err := OpenPostgresStore(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer second.Close()
+	state, _ := json.Marshal(emptyState())
+	statePath := t.TempDir() + "/state.json"
+	if err := os.WriteFile(statePath, state, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := first.ImportJSON(statePath); err != nil {
+		t.Fatal(err)
+	}
+	requestServer := New(first)
+	confirmServer := New(second)
+	requestServer.signupVerifyEmail = true
+	confirmServer.signupVerifyEmail = true
+	var code string
+	requestServer.sendSignupCode = func(_ context.Context, _, c string) error { code = c; return nil }
+	w := request(requestServer.Handler(), "POST", "/v1/signup-code", "", `{"email":"new@example.com"}`)
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("start: %d %s", w.Code, w.Body)
+	}
+	var result struct {
+		ID string `json:"challengeId"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	body, _ := json.Marshal(map[string]string{"name": "New", "email": "new@example.com", "password": "a-strong-password", "challengeId": result.ID, "code": code})
+	w = request(confirmServer.Handler(), "POST", "/v1/signup", "", string(body))
+	if w.Code != http.StatusCreated {
+		t.Fatalf("confirm through second store: %d %s", w.Code, w.Body)
+	}
+	w = request(requestServer.Handler(), "POST", "/v1/signup", "", string(body))
+	if w.Code == http.StatusCreated {
+		t.Fatal("consumed code was accepted by first store")
+	}
+}
+
 func (s *countedBlockingSender) Send(ctx context.Context, _ DeviceRegistration, _, _ string, _ time.Time) error {
 	s.calls.Add(1)
 	select {
