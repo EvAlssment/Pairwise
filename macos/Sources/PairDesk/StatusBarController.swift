@@ -18,8 +18,7 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
     private let popover = NSPopover()
     private let popoverBackground = SurfaceView()
     private var subscriptions = Set<AnyCancellable>()
-    /// System uptime when AppKit last dismissed the popover (a click outside
-    /// it, including on the icon); closes made here are not recorded.
+    /// System uptime when AppKit dismissed the popover at the status icon.
     private var popoverDismissedAt: TimeInterval = -.infinity
     private var closingPopoverFromCode = false
 
@@ -78,8 +77,7 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
         showPopover()
     }
 
-    /// A click's mouse-up follows its mouse-down within this long. A dismissal
-    /// further back came from something else, such as a click elsewhere.
+    /// Ignore the mouse-up that follows an icon click which dismissed the popover.
     nonisolated static let dismissalClickWindow: TimeInterval = 0.5
 
     nonisolated static func clickDismissedPopover(now: TimeInterval, dismissedAt: TimeInterval) -> Bool {
@@ -165,7 +163,17 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
 
     func popoverWillClose(_ notification: Notification) {
         guard !closingPopoverFromCode else { return }
-        popoverDismissedAt = ProcessInfo.processInfo.systemUptime
+        guard let button = item.button, let window = button.window else {
+            popoverDismissedAt = -.infinity
+            return
+        }
+        let buttonFrame = window.convertToScreen(button.convert(button.bounds, to: nil))
+        popoverDismissedAt = Self.dismissalWasOnStatusItem(mouseLocation: NSEvent.mouseLocation, buttonFrame: buttonFrame)
+            ? ProcessInfo.processInfo.systemUptime : -.infinity
+    }
+
+    nonisolated static func dismissalWasOnStatusItem(mouseLocation: NSPoint, buttonFrame: NSRect) -> Bool {
+        buttonFrame.contains(mouseLocation)
     }
 
     /// Paint the popover frame, arrow included, in the panel's surface color

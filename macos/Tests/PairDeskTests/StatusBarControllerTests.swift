@@ -27,4 +27,11 @@ final class StatusBarControllerTests: XCTestCase {
         // Never dismissed.
         XCTAssertFalse(StatusBarController.clickDismissedPopover(now: 1000.0, dismissedAt: -.infinity))
     }
+
+    func testOutsideDismissalDoesNotSuppressAQuickSubsequentStatusClick() {
+        let buttonFrame = NSRect(x: 100, y: 900, width: 25, height: 25)
+        XCTAssertTrue(StatusBarController.dismissalWasOnStatusItem(mouseLocation: NSPoint(x: 110, y: 910), buttonFrame: buttonFrame))
+        XCTAssertFalse(StatusBarController.dismissalWasOnStatusItem(mouseLocation: NSPoint(x: 400, y: 400), buttonFrame: buttonFrame))
+        XCTAssertFalse(StatusBarController.clickDismissedPopover(now: 1000.08, dismissedAt: -.infinity))
+    }
 }
