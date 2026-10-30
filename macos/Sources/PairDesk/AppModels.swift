@@ -111,6 +111,12 @@ struct CallInvitation: Decodable, Identifiable, Equatable {
         return nil
     }
 
+    var historyDurationHelp: String {
+        historyDurationText == "Duration unavailable"
+            ? "Answer and end times are missing or unreadable for this call. Older calls may not have recorded them."
+            : "Time from answer to end, excluding ringing."
+    }
+
     func historyStatusLabel(incoming: Bool) -> String {
         switch status {
         case "expired": incoming ? "Missed call" : "No answer"

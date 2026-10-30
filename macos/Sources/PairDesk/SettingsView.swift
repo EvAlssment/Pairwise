@@ -27,7 +27,7 @@ struct SettingsView: View {
     @ObservedObject var rtc: RTCService
     @ObservedObject var loginItem: LoginItemManager
     @ObservedObject private var permissions = PermissionManager.shared
-    @ObservedObject private var privacyVeil = PrivacyVeilPreferences.shared
+    @ObservedObject private var privacyVeil: PrivacyVeilPreferences
     @StateObject private var microphoneTest: MicrophoneTestController
     @StateObject private var speakerTest: SpeakerTestController
     @StateObject private var cameraTest: CameraPreviewTestController
@@ -35,10 +35,12 @@ struct SettingsView: View {
     @State private var selection: PairDeskSettingsSection?
 
     init(store: AppStore, rtc: RTCService, loginItem: LoginItemManager,
-         initialSection: PairDeskSettingsSection = .general, mediaTests: SettingsMediaTests? = nil) {
+         initialSection: PairDeskSettingsSection = .general, mediaTests: SettingsMediaTests? = nil,
+         privacyVeil: PrivacyVeilPreferences? = nil) {
         self.store = store
         self.rtc = rtc
         self.loginItem = loginItem
+        self.privacyVeil = privacyVeil ?? .shared
         let mediaTests = mediaTests ?? SettingsMediaTests()
         self.mediaTests = mediaTests
         _microphoneTest = StateObject(wrappedValue: mediaTests.microphone)
@@ -62,7 +64,7 @@ struct SettingsView: View {
                 }
                 .frame(maxWidth: 620, alignment: .leading)
                 .padding(30)
-                .frame(maxWidth: .infinity, alignment: .topLeading)
+                .frame(maxWidth: .infinity, alignment: .top)
             }
             .background(Theme.surface)
         }
@@ -409,7 +411,8 @@ struct SettingsView: View {
                 if #available(macOS 15.2, *) {
                     if privacyVeil.applications.isEmpty {
                         ContentUnavailableView("No hidden apps", systemImage: "eye", description: Text("Add apps such as Messages or a password manager. Their windows will be excluded when you share a display."))
-                            .frame(minHeight: 130)
+                            .frame(maxWidth: .infinity, minHeight: 130)
+                            .multilineTextAlignment(.center)
                     } else {
                         ForEach(privacyVeil.applications) { app in
                             HStack(spacing: 12) {
@@ -428,14 +431,16 @@ struct SettingsView: View {
                             if app.id != privacyVeil.applications.last?.id { Divider() }
                         }
                     }
-                    HStack {
+                    HStack(spacing: 16) {
                         Text("App exclusions hide every window of that app. To share just one window, choose Window when you share.")
                             .font(.caption).foregroundStyle(Theme.textMuted)
-                        Spacer()
+                            .fixedSize(horizontal: false, vertical: true)
+                        Spacer(minLength: 0)
                         Button { privacyVeil.addApplicationsFromPanel() } label: {
                             Label("Add apps", systemImage: "plus")
                         }
                         .buttonStyle(PrimaryButtonStyle())
+                        .fixedSize()
                     }
                 } else {
                     Label("App hiding requires macOS 15.2 or later", systemImage: "info.circle")

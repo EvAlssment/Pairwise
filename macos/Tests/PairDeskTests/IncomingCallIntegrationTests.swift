@@ -8,6 +8,44 @@ import Testing
                             "Run scripts/test-call.sh for API, media, and popup integration"))
 struct IncomingCallIntegrationTests {
     @Test @MainActor
+    func testNewCompletedCallHasStableDurationForBothClients() async throws {
+        try await withClients { clients in
+            let caller = clients[0], recipient = clients[1]
+            let person = try #require(caller.users.first { $0.id == recipient.user?.id })
+            await caller.call(person)
+            #expect(caller.error == nil)
+            await recipient.refreshInvitations()
+            let invitation = try #require(recipient.incomingCall)
+            await recipient.acceptCall(invitation)
+            #expect(recipient.error == nil)
+            try await settle { caller.rtc.participants.count == 2 && recipient.rtc.participants.count == 2 }
+            try await Task.sleep(for: .seconds(1))
+            await caller.leave()
+            try await settle { !recipient.rtc.connected }
+
+            var completed: [CallInvitation] = []
+            for client in [caller, recipient] {
+                await client.refreshInvitations()
+                let call = try #require(client.callInvitations.first { $0.id == invitation.id })
+                let start = try #require(ServerDate.parse(call.startedAt))
+                let end = try #require(call.endedDate)
+                #expect(end.timeIntervalSince(start) >= 1)
+                #expect(call.historyStatusLabel(incoming: client === recipient) == "Call ended")
+                #expect(call.historyDurationText?.hasPrefix("Duration ") == true)
+                #expect(call.historyDurationText != "Duration unavailable")
+                #expect(call.historyDateText?.hasPrefix("Ended ") == true)
+                completed.append(call)
+                await client.refreshInvitations()
+                #expect(client.callInvitations.first { $0.id == call.id } == call,
+                        "Polling must not change the saved end time or duration")
+            }
+            #expect(completed[0].startedAt == completed[1].startedAt)
+            #expect(completed[0].endedAt == completed[1].endedAt)
+            #expect(completed[0].historyDurationText == completed[1].historyDurationText)
+        }
+    }
+
+    @Test @MainActor
     func testDeclineSoundsOnBothSidesAndGroupDepartureSoundsOnce() async throws {
         let saved = UserDefaults.standard.object(forKey: "playCallSounds")
         defer { UserDefaults.standard.set(saved, forKey: "playCallSounds") }

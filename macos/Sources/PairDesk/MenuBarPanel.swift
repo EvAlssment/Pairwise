@@ -7,6 +7,7 @@ struct MenuBarPanel: View {
     @ObservedObject var loginItem: LoginItemManager
     @ObservedObject private var permissions = PermissionManager.shared
     @State private var searchText = ""
+    @State var recentCallsExpanded = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -336,9 +337,6 @@ struct MenuBarPanel: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 10) {
-                    // The call log leads the roster so a missed call is the first
-                    // thing seen; a search shows only the matching people.
-                    if searchText.isEmpty && !recentCalls.isEmpty { recentCallsSection }
                     if filteredTeammates.isEmpty {
                         VStack(spacing: 7) {
                             Text(teamConnected ? (searchText.isEmpty ? "No teammates yet" : "No matching teammates") : "Loading teammates…")
@@ -351,6 +349,7 @@ struct MenuBarPanel: View {
                         if store.activeRoom == nil && !store.activeTeamCalls.isEmpty { activeCallsSection }
                         if !offlineTeammates.isEmpty { contactSection("Offline", people: offlineTeammates) }
                     }
+                    if searchText.isEmpty && !recentCalls.isEmpty { recentCallsSection }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -382,36 +381,48 @@ struct MenuBarPanel: View {
     }
 
     private var recentCallsSection: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            sectionHeader("RECENT CALLS")
-            ForEach(recentCalls) { invitation in
-                let incoming = invitation.target.id == store.user?.id
-                let person = incoming ? invitation.caller : invitation.target
-                let missed = incoming && invitation.status == "expired"
-                HStack(spacing: 9) {
-                    PersonAvatar(name: person.name, id: person.id, size: 27).opacity(missed ? 1 : 0.7)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(person.name).font(.system(size: 12, weight: .medium)).lineLimit(1)
-                        HStack(spacing: 5) {
-                            Text(invitation.historyStatusLabel(incoming: incoming))
-                                .foregroundStyle(missed ? Theme.attention : Theme.textMuted)
-                            if let duration = invitation.historyDurationText {
-                                Text("·")
-                                Text(duration).foregroundStyle(Theme.textMuted)
+        DisclosureGroup(isExpanded: $recentCallsExpanded) {
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(recentCalls) { invitation in
+                    let incoming = invitation.target.id == store.user?.id
+                    let person = incoming ? invitation.caller : invitation.target
+                    let missed = incoming && invitation.status == "expired"
+                    HStack(spacing: 9) {
+                        PersonAvatar(name: person.name, id: person.id, size: 27).opacity(missed ? 1 : 0.7)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(person.name).font(.system(size: 12, weight: .medium)).lineLimit(1)
+                            HStack(spacing: 5) {
+                                Text(invitation.historyStatusLabel(incoming: incoming))
+                                    .foregroundStyle(missed ? Theme.attention : Theme.textMuted)
+                                if let duration = invitation.historyDurationText {
+                                    Text("·")
+                                    Text(duration).foregroundStyle(Theme.textMuted)
+                                        .help(invitation.historyDurationHelp)
+                                }
+                            }.font(.caption).lineLimit(1)
+                            if let time = invitation.historyDateText {
+                                Text(time).font(.caption2).foregroundStyle(Theme.textMuted).lineLimit(1)
                             }
-                        }.font(.caption).lineLimit(1)
-                        if let time = invitation.historyDateText {
-                            Text(time).font(.caption2).foregroundStyle(Theme.textMuted).lineLimit(1)
                         }
-                    }
-                    Spacer(minLength: 4)
-                    if person.online == true && person.busy != true {
-                        Button("Call back") { Task { await store.call(person) } }
-                            .buttonStyle(QuietButtonStyle(compact: true)).disabled(store.busy)
-                    }
-                }.padding(.horizontal, 8).frame(minHeight: 38)
+                        Spacer(minLength: 4)
+                        if person.online == true && person.busy != true {
+                            Button("Call back") { Task { await store.call(person) } }
+                                .buttonStyle(QuietButtonStyle(compact: true)).disabled(store.busy)
+                        }
+                    }.padding(.horizontal, 8).frame(minHeight: 38)
+                }
             }
+            .padding(.top, 4)
+        } label: {
+            HStack {
+                Text("Recent Calls").font(.system(size: 11, weight: .semibold))
+                Spacer()
+                Text("\(recentCalls.count)").font(.caption.monospacedDigit())
+            }
+            .foregroundStyle(Theme.textMuted)
+            .contentShape(Rectangle())
         }
+        .accessibilityIdentifier("recent-calls")
     }
 
     private var joinRequestSection: some View {

@@ -89,7 +89,7 @@ enum UISnapshots {
         snapshot("menu-signed-out", to: directory, compact: true) { MenuBarPanel(store: signedOut, rtc: signedOut.rtc, loginItem: loginItem) }
         snapshot("menu-roster", to: directory, compact: true) { MenuBarPanel(store: idle, rtc: idle.rtc, loginItem: loginItem) }
         let recent = store {
-            $0.user = me; $0.users = [me]; $0.directoryStatus = "Team connected"
+            $0.user = me; $0.users = team; $0.directoryStatus = "Team connected"
             let end = Date().addingTimeInterval(-60)
             var completed = CallInvitation(id: "completed", status: "cancelled", caller: me, target: harshit, room: room, expiresAt: "")
             completed.createdAt = end.addingTimeInterval(-215).ISO8601Format(.iso8601)
@@ -100,7 +100,8 @@ enum UISnapshots {
             let legacy = CallInvitation(id: "legacy", status: "cancelled", caller: me, target: harshit, room: room, expiresAt: "")
             $0.callInvitations = [completed, missed, legacy]
         }
-        snapshot("menu-recent-call-duration", to: directory, compact: true) { MenuBarPanel(store: recent, rtc: recent.rtc, loginItem: loginItem) }
+        snapshot("menu-recent-calls-collapsed", to: directory, compact: true) { MenuBarPanel(store: recent, rtc: recent.rtc, loginItem: loginItem) }
+        snapshot("menu-recent-call-duration", to: directory, compact: true) { MenuBarPanel(store: recent, rtc: recent.rtc, loginItem: loginItem, recentCallsExpanded: true) }
         let pair = store {
             $0.user = me; $0.directoryStatus = "Team connected"
             $0.users = [me, harshit, TeamUser(id: "saurab", name: "Saurab", email: "saurab@example.com", online: false, busy: false, enabled: true)]
@@ -121,6 +122,9 @@ enum UISnapshots {
                                 microphoneEnabled: true)
         }
         snapshot("menu-in-call", to: directory, compact: true) { MenuBarPanel(store: inCall, rtc: inCall.rtc, loginItem: loginItem) }
+        inCall.callInvitations = recent.callInvitations
+        snapshot("menu-in-call-recent-calls-collapsed", to: directory, compact: true) { MenuBarPanel(store: inCall, rtc: inCall.rtc, loginItem: loginItem) }
+        snapshot("menu-in-call-recent-calls-expanded", to: directory, compact: true) { MenuBarPanel(store: inCall, rtc: inCall.rtc, loginItem: loginItem, recentCallsExpanded: true) }
         func invitingStore(viewer: TeamUser) -> AppStore {
             store {
                 $0.user = viewer; $0.users = team; $0.directoryStatus = "Team connected"
@@ -213,6 +217,25 @@ enum UISnapshots {
         }
         snapshot("window-settings-screen-share", to: directory, size: CGSize(width: 960, height: 660)) {
             SettingsView(store: idle, rtc: idle.rtc, loginItem: loginItem, initialSection: .screenShare)
+        }
+        let privacySuite = "PairDesk.UISnapshots.Privacy.\(UUID().uuidString)"
+        let privacyDefaults = UserDefaults(suiteName: privacySuite)!
+        defer { privacyDefaults.removePersistentDomain(forName: privacySuite) }
+        let emptyPrivacy = PrivacyVeilPreferences(defaults: privacyDefaults)
+        for (name, size) in [("window-settings-privacy-empty", CGSize(width: 960, height: 760)),
+                             ("window-settings-privacy-minimum", CGSize(width: 850, height: 580)),
+                             ("window-settings-privacy-wide", CGSize(width: 1200, height: 820))] {
+            snapshot(name, to: directory, size: size) {
+                SettingsView(store: idle, rtc: idle.rtc, loginItem: loginItem, initialSection: .privacy, privacyVeil: emptyPrivacy)
+            }
+        }
+        let hiddenApps = [HiddenApplication(bundleIdentifier: "com.example.messages", name: "Messages"),
+                          HiddenApplication(bundleIdentifier: "com.example.password-manager.personal", name: "Personal Password Manager")]
+        privacyDefaults.set(try? JSONEncoder().encode(hiddenApps), forKey: PrivacyVeilPreferences.defaultsKey)
+        privacyDefaults.set(true, forKey: PrivacyVeilPreferences.hideNotificationsDefaultsKey)
+        let configuredPrivacy = PrivacyVeilPreferences(defaults: privacyDefaults)
+        snapshot("window-settings-privacy-configured", to: directory, size: CGSize(width: 960, height: 760)) {
+            SettingsView(store: idle, rtc: idle.rtc, loginItem: loginItem, initialSection: .privacy, privacyVeil: configuredPrivacy)
         }
         snapshot("window-settings-camera-test", to: directory, size: CGSize(width: 960, height: 660)) {
             SettingsView(store: idle, rtc: idle.rtc, loginItem: loginItem, initialSection: .camera)
