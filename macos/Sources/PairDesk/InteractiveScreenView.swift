@@ -153,6 +153,16 @@ final class ScreenCanvas: NSView {
         keyDown(with: event)
         return true
     }
+    /// AppKit's Edit menu can route standard actions through the responder
+    /// chain without calling keyDown. Keep those on the same remote path.
+    @objc func copy(_ sender: Any?) {
+        guard driving, window?.firstResponder === self else { return }
+        rtc?.sendScreenClipboardShortcut(code: 8)
+    }
+    @objc func paste(_ sender: Any?) {
+        guard driving, window?.firstResponder === self else { return }
+        rtc?.sendScreenClipboardShortcut(code: 9)
+    }
     override func keyUp(with event: NSEvent) {
         if clipboardShortcutKeys.remove(event.keyCode) != nil { return }
         guard rtc != nil else { return }

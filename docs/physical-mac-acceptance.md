@@ -146,5 +146,5 @@ Run the [two-Mac clipboard procedure](clipboard-sharing.md#two-mac-acceptance) f
 | Local copy → shared-display paste | The selected remote app receives the latest plain text exactly once, including text copied before the call. | Not run |
 | Remote selection → local copy | `⌘C` returns the current remote selection; local `⌘V` pastes it correctly. | Not run |
 | First interaction, Unicode, multiline and near-limit text | A new control grant preserves the clipboard operation and text remains intact. | Not run |
-| Consent, control, Accessibility and lifecycle changes | Opt-out, pause, permission revocation, source change and disconnect prevent delayed clipboard writes or pastes. | Not run |
+| Consent, control, Accessibility and lifecycle changes | Ending the share, pausing control, permission revocation, source change and disconnect prevent delayed clipboard writes or pastes. No extra clipboard approval is requested during sharing. | Not run |
 | Focus, unsupported clipboard and timeout | Local fields keep their shortcuts; images/files, oversized or unchanged remote copies never paste unrelated stale text. | Not run |

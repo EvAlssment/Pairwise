@@ -32,9 +32,9 @@ that record or make a feature accepted by itself.
 - Exercise remote input on a blank text editor: hover each independent cursor,
   click, double-click, type synthetic text, drag, and scroll. Verify the host
   can immediately take over and that control stops when the host pauses it.
-- If clipboard sharing is enabled, explicitly enable it and copy only harmless
-  synthetic text. Confirm the receiving Mac gets it once; then turn clipboard
-  sharing off.
+- Leave call-wide clipboard toggles off. While sharing, copy harmless synthetic
+  text in both directions and paste into the remote editor directly. Verify no
+  extra clipboard approval appears and automatic sync stops when sharing ends.
 - Ask a third teammate to request joining the active call. Verify the call
   participants see the request and that approval admits the requester.
 - End the call from one side and confirm the other side can start a new call

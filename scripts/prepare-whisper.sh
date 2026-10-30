@@ -47,7 +47,7 @@ fi
 "$CMAKE" --build "$BUILD" --config Release --target whisper-cli --parallel 2
 install -m 755 "$BUILD/bin/whisper-cli" "$OUTPUT/whisper-cli"
 install -m 644 "$MODEL" "$OUTPUT/ggml-tiny.bin"
-lipo -verify_arch arm64 "$OUTPUT/whisper-cli"
-lipo -verify_arch x86_64 "$OUTPUT/whisper-cli"
+lipo "$OUTPUT/whisper-cli" -verify_arch arm64
+lipo "$OUTPUT/whisper-cli" -verify_arch x86_64
 test "$(shasum -a 1 "$OUTPUT/ggml-tiny.bin" | awk '{print $1}')" = "$MODEL_SHA1"
 printf 'Ready (universal arm64+x86_64): %s\nModel SHA-1: %s\n' "$OUTPUT" "$MODEL_SHA1"

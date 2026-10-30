@@ -179,7 +179,7 @@ enum UISnapshots {
                 peers: [ClipboardPeer(identity: "harshit", name: "Harshit"), ClipboardPeer(identity: "bharat", name: "Bharat")],
                 incoming: nil,
                 onSend: { _, _ in }, onPaste: {}, onDismiss: {},
-                clipboardSyncEnabled: false, clipboardSyncNotice: nil, onToggleSync: { _ in }
+                clipboardSyncEnabled: false, clipboardSyncNotice: nil, onToggleSync: { _ in }, screenSharingActive: true
             )
             .padding(20)
             .frame(width: 480)
