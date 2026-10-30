@@ -61,6 +61,8 @@ jobs:
         run: python3 -m unittest discover -s scripts/tests -p 'test_validate_release_tag.py'
       - name: Test production API deploy and rollback logic
         run: python3 -m unittest discover -s scripts/tests -p 'test_manage_deploy_api.py'
+      - name: Test signup configuration preservation
+        run: python3 -m unittest discover -s scripts/tests -p 'test_signup_config.py'
 
   ios:
     runs-on: macos-15

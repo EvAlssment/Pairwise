@@ -158,6 +158,7 @@ enum UISnapshots {
         snapshot("window-incoming-join-request", to: directory) { IncomingCallView(store: joinRequestCall) }
         snapshot("window-sign-in", to: directory) { RootView(store: signedOut).environmentObject(loginItem) }
         snapshot("window-sign-up", to: directory) { LoginView(store: signedOut, creatingAccount: true) }
+        snapshot("window-sign-up-verification", to: directory) { LoginView(store: signedOut, creatingAccount: true, verificationRequired: true) }
         snapshot("window-signed-in", to: directory) { RootView(store: idle).environmentObject(loginItem) }
         snapshot("window-settings", to: directory, size: CGSize(width: 960, height: 660)) {
             SettingsView(store: idle, rtc: idle.rtc, loginItem: loginItem)

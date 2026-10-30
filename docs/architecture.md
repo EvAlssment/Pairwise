@@ -24,7 +24,7 @@ Audio renderer callbacks copy normalized mono PCM, then enter a local inference 
 
 ## Account and media services
 
-One Go API with a synchronized atomic JSON store is enough for this team's account and room metadata. It is not intended for multiple API replicas. There is no public signup or email sender. bcrypt verifies passwords; opaque random sessions authorize requests. Admin membership is checked server-side.
+One Go API with a synchronized atomic JSON store is enough for this team's account and room metadata. It is not intended for multiple API replicas. Self-service signup can be restricted and configured to verify email through Resend. bcrypt verifies passwords; opaque random sessions authorize requests. Admin membership is checked server-side.
 
 The API uses LiveKit's RoomService to create/recreate rooms with maxParticipants=4 and update publication permissions. Join grants camera, microphone, and data; a sharing claim adds screen video to one participant. Screen-share audio remains unavailable. Human admission reservations use heartbeat expiry; LiveKit supplies the final connected participant cap.
 

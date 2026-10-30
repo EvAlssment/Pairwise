@@ -42,6 +42,10 @@ type Server struct {
 	hitMu                        sync.Mutex
 	signupEnabled                bool
 	signupAllowedDomains         map[string]struct{}
+	accessAllowedDomains         map[string]struct{}
+	accessAllowedEmails          map[string]struct{}
+	signupVerifyEmail            bool
+	sendSignupCode               func(context.Context, string, string) error
 }
 
 func New(st *Store) *Server {
@@ -60,7 +64,10 @@ func New(st *Store) *Server {
 	if value := strings.TrimSpace(os.Getenv("PAIRDESK_SIGNUP_ENABLED")); value != "" {
 		enabled = strings.EqualFold(value, "true") || value == "1"
 	}
-	return &Server{store: st, push: configuredPushFromEnv(), pushWake: make(chan struct{}, 1), liveURL: os.Getenv("LIVEKIT_URL"), liveAPIURL: apiURL, liveKey: os.Getenv("LIVEKIT_API_KEY"), liveSecret: os.Getenv("LIVEKIT_API_SECRET"), dummyHash: h, hits: map[string][]time.Time{}, signupEnabled: enabled, signupAllowedDomains: domains}
+	accessDomains := parseAllowedValues(os.Getenv("PAIRDESK_ACCESS_ALLOWED_DOMAINS"))
+	accessEmails := parseAllowedValues(os.Getenv("PAIRDESK_ACCESS_ALLOWED_EMAILS"))
+	verify := strings.EqualFold(os.Getenv("PAIRDESK_SIGNUP_VERIFY_EMAIL"), "true") || os.Getenv("PAIRDESK_SIGNUP_VERIFY_EMAIL") == "1"
+	return &Server{store: st, push: configuredPushFromEnv(), pushWake: make(chan struct{}, 1), liveURL: os.Getenv("LIVEKIT_URL"), liveAPIURL: apiURL, liveKey: os.Getenv("LIVEKIT_API_KEY"), liveSecret: os.Getenv("LIVEKIT_API_SECRET"), dummyHash: h, hits: map[string][]time.Time{}, signupEnabled: enabled, signupAllowedDomains: domains, accessAllowedDomains: accessDomains, accessAllowedEmails: accessEmails, signupVerifyEmail: verify, sendSignupCode: configuredSignupMailer()}
 }
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
@@ -75,6 +82,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/readyz", s.ready)
 	mux.HandleFunc("/v1/login", s.login)
 	mux.HandleFunc("/v1/signup", s.signup)
+	mux.HandleFunc("/v1/signup-code", s.signupCode)
 	mux.HandleFunc("/v1/signup-policy", s.signupPolicy)
 	mux.HandleFunc("/v1/me", s.auth(s.me))
 	mux.HandleFunc("/v1/users", s.auth(s.users))
@@ -118,7 +126,7 @@ func (s *Server) signupPolicy(w http.ResponseWriter, r *http.Request) {
 		domains = append(domains, domain)
 	}
 	sort.Strings(domains)
-	writeJSON(w, http.StatusOK, map[string]any{"enabled": s.signupEnabled, "allowedDomains": domains})
+	writeJSON(w, http.StatusOK, map[string]any{"enabled": s.signupEnabled, "allowedDomains": domains, "verificationRequired": s.signupVerifyEmail})
 }
 
 func (s *Server) signup(w http.ResponseWriter, r *http.Request) {
@@ -131,9 +139,11 @@ func (s *Server) signup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	type req struct {
-		Name     string `json:"name"`
-		Email    string `json:"email"`
-		Password string `json:"password"`
+		Name        string `json:"name"`
+		Email       string `json:"email"`
+		Password    string `json:"password"`
+		ChallengeID string `json:"challengeId,omitempty"`
+		Code        string `json:"code,omitempty"`
 	}
 	var q req
 	if decode(r, &q) != nil || len(q.Name) > 100 || len(q.Email) > 254 || len(q.Password) > 1024 {
@@ -153,10 +163,20 @@ func (s *Server) signup(w http.ResponseWriter, r *http.Request) {
 			fail(w, http.StatusBadRequest, "email domain is not allowed for this team")
 			return
 		}
-		if _, ok := s.signupAllowedDomains[parts[1]]; !ok {
+		_, domainAllowed := s.signupAllowedDomains[parts[1]]
+		_, emailException := s.accessAllowedEmails[email]
+		if !domainAllowed && !emailException {
 			fail(w, http.StatusForbidden, "email domain is not allowed for this team")
 			return
 		}
+	}
+	if !s.emailAllowed(email) {
+		fail(w, http.StatusForbidden, "email address is not allowed for this team")
+		return
+	}
+	if s.signupVerifyEmail {
+		s.finishVerifiedSignup(w, r, name, email, q.Password, q.ChallengeID, q.Code)
+		return
 	}
 	ip, _, _ := net.SplitHostPort(r.RemoteAddr)
 	if ip == "" {
@@ -311,7 +331,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	}
 	s.store.unlock()
 	err := bcrypt.CompareHashAndPassword(hash, []byte(q.Password))
-	if err != nil || !found || !u.Enabled {
+	if err != nil || !found || !u.Enabled || !s.emailAllowed(email) {
 		s.recordLoginFailure(ip)
 		fail(w, 401, "invalid email or password")
 		return
@@ -397,7 +417,7 @@ func (s *Server) auth(next func(http.ResponseWriter, *http.Request, User)) http.
 		s.store.lock()
 		sess, ok := s.store.s.Sessions[h]
 		u := s.store.s.Users[sess.UserID]
-		if ok && time.Now().Before(sess.ExpiresAt) && u.Enabled {
+		if ok && time.Now().Before(sess.ExpiresAt) && u.Enabled && s.emailAllowed(u.Email) {
 		} else {
 			ok = false
 		}

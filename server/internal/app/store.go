@@ -86,16 +86,23 @@ type AdminAuditEvent struct {
 	Action     string    `json:"action"`
 	OccurredAt time.Time `json:"occurredAt"`
 }
+type SignupChallenge struct {
+	Email     string    `json:"email"`
+	CodeHash  string    `json:"codeHash"`
+	ExpiresAt time.Time `json:"expiresAt"`
+	Attempts  int       `json:"attempts"`
+}
 type State struct {
-	Users        map[string]User               `json:"users"`
-	Sessions     map[string]Session            `json:"sessions"`
-	Rooms        map[string]Room               `json:"rooms"`
-	Presence     map[string]time.Time          `json:"presence"`
-	Calls        map[string]CallInvitation     `json:"calls"`
-	JoinRequests map[string]CallJoinRequest    `json:"joinRequests,omitempty"`
-	Devices      map[string]DeviceRegistration `json:"devices,omitempty"`
-	PushJobs     map[string]PushJob            `json:"pushJobs,omitempty"`
-	AdminAudit   []AdminAuditEvent             `json:"adminAudit,omitempty"`
+	Users            map[string]User               `json:"users"`
+	Sessions         map[string]Session            `json:"sessions"`
+	Rooms            map[string]Room               `json:"rooms"`
+	Presence         map[string]time.Time          `json:"presence"`
+	Calls            map[string]CallInvitation     `json:"calls"`
+	JoinRequests     map[string]CallJoinRequest    `json:"joinRequests,omitempty"`
+	Devices          map[string]DeviceRegistration `json:"devices,omitempty"`
+	PushJobs         map[string]PushJob            `json:"pushJobs,omitempty"`
+	AdminAudit       []AdminAuditEvent             `json:"adminAudit,omitempty"`
+	SignupChallenges map[string]SignupChallenge    `json:"signupChallenges,omitempty"`
 }
 type Store struct {
 	mu   sync.Mutex
@@ -106,10 +113,13 @@ type Store struct {
 }
 
 func emptyState() State {
-	return State{Users: map[string]User{}, Sessions: map[string]Session{}, Rooms: map[string]Room{}, Presence: map[string]time.Time{}, Calls: map[string]CallInvitation{}, JoinRequests: map[string]CallJoinRequest{}, Devices: map[string]DeviceRegistration{}, PushJobs: map[string]PushJob{}}
+	return State{Users: map[string]User{}, Sessions: map[string]Session{}, Rooms: map[string]Room{}, Presence: map[string]time.Time{}, Calls: map[string]CallInvitation{}, JoinRequests: map[string]CallJoinRequest{}, Devices: map[string]DeviceRegistration{}, PushJobs: map[string]PushJob{}, SignupChallenges: map[string]SignupChallenge{}}
 }
 
 func normalizeState(s *State) {
+	if s.SignupChallenges == nil {
+		s.SignupChallenges = map[string]SignupChallenge{}
+	}
 	if s.Users == nil {
 		s.Users = map[string]User{}
 	}

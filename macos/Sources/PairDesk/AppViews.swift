@@ -18,7 +18,7 @@ struct RootView: View {
 }
 
 struct LoginView: View {
-    private struct SignupPolicy: Decodable { let enabled: Bool; let allowedDomains: [String] }
+    private struct SignupPolicy: Decodable { let enabled: Bool; let allowedDomains: [String]; let verificationRequired: Bool? }
     @ObservedObject var store: AppStore
     @State private var creatingAccount = false
     @State private var name = ""
@@ -27,11 +27,15 @@ struct LoginView: View {
     @State private var confirmPassword = ""
     @State private var signupEnabled = true
     @State private var signupDomains: [String] = []
+    @State private var verificationRequired = false
+    @State private var challengeId: String?
+    @State private var verificationCode = ""
     @State private var serverExpanded = false
     @FocusState private var focused: Bool
-    init(store: AppStore, creatingAccount: Bool = false) {
+    init(store: AppStore, creatingAccount: Bool = false, verificationRequired: Bool = false) {
         self.store = store
         _creatingAccount = State(initialValue: creatingAccount)
+        _verificationRequired = State(initialValue: verificationRequired)
     }
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -56,6 +60,21 @@ struct LoginView: View {
                 Text("EMAIL").font(.system(size: 10, weight: .bold)).foregroundStyle(Theme.textMuted)
                 TextField("you@team.com", text: $email).textFieldStyle(.roundedBorder).focused($focused)
             }.padding(.top, 12)
+            if creatingAccount && verificationRequired {
+                HStack {
+                    TextField("8-digit email code", text: $verificationCode).textFieldStyle(.roundedBorder)
+                    Button(challengeId == nil ? "Send code" : "Resend") {
+                        let submittedEmail = email
+                        Task {
+                            if let id = await store.requestSignupCode(email: submittedEmail), email == submittedEmail {
+                                challengeId = id
+                                verificationCode = ""
+                            }
+                        }
+                    }.disabled(store.busy || email.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+                if challengeId != nil { Text("Check your email for your code.").font(.system(size: 11)).foregroundStyle(Theme.textMuted) }
+            }
             VStack(alignment: .leading, spacing: 8) {
                 Text("PASSWORD").font(.system(size: 10, weight: .bold)).foregroundStyle(Theme.textMuted)
                 SecureField(creatingAccount ? "At least 12 characters" : "Your password", text: $password).textFieldStyle(.roundedBorder)
@@ -73,14 +92,16 @@ struct LoginView: View {
                 if creatingAccount {
                     let submittedName = name
                     confirmPassword = ""
-                    Task { await store.signUp(name: submittedName, email: submittedEmail, password: submitted) }
+                    let submittedChallenge = challengeId
+                    let submittedCode = verificationCode.trimmingCharacters(in: .whitespacesAndNewlines)
+                    Task { await store.signUp(name: submittedName, email: submittedEmail, password: submitted, challengeId: submittedChallenge, code: verificationRequired ? submittedCode : nil) }
                 } else {
                     Task { await store.login(email: submittedEmail, password: submitted) }
                 }
             } label: {
                 HStack { Spacer(); if store.busy { ProgressView().controlSize(.small) } else { Text(creatingAccount ? "Create account" : "Sign in").fontWeight(.semibold); Image(systemName: "arrow.right") }; Spacer() }
                     .padding(.vertical, 10)
-            }.buttonStyle(.borderedProminent).disabled(store.busy || email.isEmpty || password.isEmpty || (creatingAccount && (name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || password.count < 12 || password != confirmPassword)))
+            }.buttonStyle(.borderedProminent).disabled(store.busy || email.isEmpty || password.isEmpty || (creatingAccount && (name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || password.count < 12 || password != confirmPassword || (verificationRequired && (challengeId == nil || verificationCode.trimmingCharacters(in: .whitespacesAndNewlines).count != 8)))))
                 .keyboardShortcut(.defaultAction)
             DisclosureGroup("Server address", isExpanded: $serverExpanded) {
                 TextField("https://pair.yourteam.com", text: $store.serverAddress).textFieldStyle(.roundedBorder).padding(.top, 8)
@@ -91,6 +112,8 @@ struct LoginView: View {
             .onAppear { focused = true }
             .task { await loadSignupPolicy() }
             .onChange(of: store.serverAddress) { _, _ in Task { await loadSignupPolicy() } }
+            .onChange(of: email) { _, _ in challengeId = nil; verificationCode = "" }
+            .onChange(of: store.serverAddress) { _, _ in challengeId = nil; verificationCode = "" }
     }
 
     private func authTab(_ title: String, selected: Bool, action: @escaping () -> Void) -> some View {
@@ -107,7 +130,7 @@ struct LoginView: View {
     private var signupNote: String {
         guard signupEnabled else { return "Self-service signup is turned off for this team. Contact your team administrator." }
         let domainNote = signupDomains.isEmpty ? "Use the email address you use with your team." : "Use an email ending in " + signupDomains.map { "@\($0)" }.joined(separator: " or ") + "."
-        return domainNote + " Email verification is not currently enabled."
+        return domainNote + (verificationRequired ? " Verify your email to create your account." : " Email verification is not currently enabled.")
     }
 
     @MainActor
@@ -116,6 +139,7 @@ struct LoginView: View {
               let policy: SignupPolicy = try? await client.request("v1/signup-policy") else { return }
         signupEnabled = policy.enabled
         signupDomains = policy.allowedDomains
+        verificationRequired = policy.verificationRequired ?? false
         if !signupEnabled { creatingAccount = false }
     }
 }

@@ -35,7 +35,11 @@ def render(api, media, turn, public_ip, contact, output):
     push_values = {name: existing.get(name, '') for name in [
         'PAIRDESK_APNS_TEAM_ID', 'PAIRDESK_APNS_KEY_ID', 'PAIRDESK_APNS_TOPIC',
         'PAIRDESK_APNS_PRIVATE_KEY_HOST_FILE', 'PAIRDESK_APNS_HOST',
-        'PAIRDESK_FCM_PROJECT_ID', 'PAIRDESK_FCM_SERVICE_ACCOUNT_HOST_FILE']}
+        'PAIRDESK_FCM_PROJECT_ID', 'PAIRDESK_FCM_SERVICE_ACCOUNT_HOST_FILE',
+        'PAIRDESK_SIGNUP_ENABLED', 'PAIRDESK_SIGNUP_ALLOWED_DOMAINS',
+        'PAIRDESK_ACCESS_ALLOWED_DOMAINS', 'PAIRDESK_ACCESS_ALLOWED_EMAILS',
+        'PAIRDESK_SIGNUP_VERIFY_EMAIL', 'PAIRDESK_RESEND_FROM',
+        'PAIRDESK_RESEND_API_KEY_HOST_FILE']}
     safe_patterns = {
         'PAIRDESK_APNS_TEAM_ID': r'[A-Za-z0-9]{0,20}',
         'PAIRDESK_APNS_KEY_ID': r'[A-Za-z0-9]{0,20}',
@@ -44,6 +48,13 @@ def render(api, media, turn, public_ip, contact, output):
         'PAIRDESK_APNS_HOST': r'(https://[A-Za-z0-9.-]+(:[0-9]{1,5})?)?',
         'PAIRDESK_FCM_PROJECT_ID': r'([a-z][a-z0-9-]{0,62})?',
         'PAIRDESK_FCM_SERVICE_ACCOUNT_HOST_FILE': r'(/[A-Za-z0-9._-]+)*',
+        'PAIRDESK_SIGNUP_ENABLED': r'(true|false|1|0)?',
+        'PAIRDESK_SIGNUP_VERIFY_EMAIL': r'(true|false|1|0)?',
+        'PAIRDESK_SIGNUP_ALLOWED_DOMAINS': r'[A-Za-z0-9.,-]*',
+        'PAIRDESK_ACCESS_ALLOWED_DOMAINS': r'[A-Za-z0-9.,-]*',
+        'PAIRDESK_ACCESS_ALLOWED_EMAILS': r'[A-Za-z0-9@._+,-]*',
+        'PAIRDESK_RESEND_FROM': r'[A-Za-z0-9@._+%-]*',
+        'PAIRDESK_RESEND_API_KEY_HOST_FILE': r'(/[A-Za-z0-9._-]+)*',
     }
     for name, value in push_values.items():
         if not re.fullmatch(safe_patterns[name], value):

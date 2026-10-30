@@ -276,17 +276,31 @@ final class AppStore: ObservableObject {
         busy = false
     }
 
-    func signUp(name: String, email: String, password: String) async {
+    func requestSignupCode(email: String) async -> String? {
+        guard !busy else { return nil }
+        busy = true
+        error = nil
+        defer { busy = false }
+        struct Body: Encodable { let email: String }
+        struct Response: Decodable { let challengeId: String }
+        do {
+            let client = try APIClient(server: serverAddress)
+            let response: Response = try await client.post("v1/signup-code", body: Body(email: email.trimmingCharacters(in: .whitespacesAndNewlines)))
+            return response.challengeId
+        } catch { self.error = error.localizedDescription; return nil }
+    }
+
+    func signUp(name: String, email: String, password: String, challengeId: String? = nil, code: String? = nil) async {
         guard !busy else { return }
         busy = true
         error = nil
-        struct Body: Encodable { let name: String; let email: String; let password: String }
+        struct Body: Encodable { let name: String; let email: String; let password: String; let challengeId: String?; let code: String? }
         do {
             let client = try APIClient(server: serverAddress)
             let response: LoginResponse = try await client.post("v1/signup", body: Body(
                 name: name.trimmingCharacters(in: .whitespacesAndNewlines),
                 email: email.trimmingCharacters(in: .whitespacesAndNewlines),
-                password: password
+                password: password, challengeId: challengeId, code: code
             ))
             let saved = SavedSession(token: response.token, server: serverAddress)
             if persistsSession {
