@@ -247,6 +247,10 @@ func (s *Server) ready(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"ok": false, "dependency": "storage"})
 		return
 	}
+	if s.signupEnabled && s.signupVerifyEmail && s.sendSignupCode == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"ok": false, "dependency": "signup-email"})
+		return
+	}
 	status, _, err := s.livekitCallResult("ListRooms", map[string]any{"names": []string{}})
 	if err != nil || status < 200 || status >= 300 {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"ok": false, "dependency": "media"})

@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -126,6 +127,13 @@ func TestHealthAndReadinessDistinguishLivenessFromMediaDependency(t *testing.T) 
 	if w := request(h, "GET", "/readyz", "", ""); w.Code != 200 || !strings.Contains(w.Body.String(), `"media":true`) {
 		t.Fatalf("readiness failed: %d %s", w.Code, w.Body)
 	}
+	s.signupEnabled = true
+	s.signupVerifyEmail = true
+	s.sendSignupCode = nil
+	if w := request(h, "GET", "/readyz", "", ""); w.Code != 503 || !strings.Contains(w.Body.String(), `"dependency":"signup-email"`) {
+		t.Fatalf("unavailable signup email dependency was not reported safely: %d %s", w.Code, w.Body)
+	}
+	s.sendSignupCode = func(context.Context, string, string) error { return nil }
 	s.liveSecret = ""
 	if w := request(h, "GET", "/readyz", "", ""); w.Code != 503 || strings.Contains(w.Body.String(), "secret") {
 		t.Fatalf("unavailable media dependency was not reported safely: %d %s", w.Code, w.Body)
