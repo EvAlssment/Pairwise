@@ -31,6 +31,7 @@ done
 while IFS= read -r library; do
   codesign --force --options runtime --timestamp --sign "$IDENTITY" "$library"
 done < <(find "$APP/Contents/Frameworks" -maxdepth 1 -type f -name '*.dylib')
+codesign --force --options runtime --timestamp --sign "$IDENTITY" "$APP/Contents/MacOS/pairdesk-agent-mcp"
 codesign --force --options runtime --timestamp --sign "$IDENTITY" "$APP/Contents/Resources/whisper/whisper-cli"
 codesign --force --options runtime --timestamp --entitlements "$ROOT/macos/Release.entitlements" --sign "$IDENTITY" "$APP"
 codesign --verify --deep --strict --verbose=2 "$APP"
@@ -52,6 +53,8 @@ ditto -c -k --keepParent "$APP" "$STAGING/PairDesk.zip"
 PAIRDESK_DISTRIBUTION_APP="$APP" \
 PAIRDESK_DMG_OUTPUT="$STAGING/PairDesk.dmg" \
   bash "$ROOT/scripts/create-dmg.sh"
+codesign --force --timestamp --sign "$IDENTITY" "$STAGING/PairDesk.dmg"
+codesign --verify --verbose=2 "$STAGING/PairDesk.dmg"
 xcrun notarytool submit "$STAGING/PairDesk.dmg" --keychain-profile "$PROFILE" --wait --output-format json > "$STAGING/dmg-notarization.json"
 python3 - "$STAGING/dmg-notarization.json" <<'PY'
 import json, sys
