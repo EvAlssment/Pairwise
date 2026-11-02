@@ -146,7 +146,7 @@ func resendSMTPSignupMailerWithDial(dial func(context.Context) (signupSMTPClient
 		if err != nil {
 			return fmt.Errorf("Resend could not start the message: %w", err)
 		}
-		message := fmt.Sprintf("From: %s\r\nTo: %s\r\nSubject: Your PairDesk verification code\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nYour PairDesk verification code is %s. It expires in 10 minutes. If you didn't request it, ignore this email.\r\n", fromAddress.String(), toAddress.Address, code)
+		message := fmt.Sprintf("From: %s\r\nTo: %s\r\nSubject: Your Pairwise verification code\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nYour Pairwise verification code is %s. It expires in 10 minutes. If you didn't request it, ignore this email.\r\n\r\n— The Pairwise team\r\n", fromAddress.String(), toAddress.Address, code)
 		if _, err := io.WriteString(writer, message); err != nil {
 			_ = writer.Close()
 			return fmt.Errorf("write Resend message: %w", err)
@@ -160,7 +160,7 @@ func resendSMTPSignupMailerWithDial(dial func(context.Context) (signupSMTPClient
 
 func resendSignupMailer(client *http.Client, endpoint, key, from string) func(context.Context, string, string) error {
 	return func(ctx context.Context, email, code string) error {
-		body, err := json.Marshal(map[string]any{"from": from, "to": []string{email}, "subject": "Your PairDesk verification code", "text": "Your PairDesk verification code is " + code + ". It expires in 10 minutes. If you didn't request it, ignore this email."})
+		body, err := json.Marshal(map[string]any{"from": from, "to": []string{email}, "subject": "Your Pairwise verification code", "text": "Your Pairwise verification code is " + code + ". It expires in 10 minutes. If you didn't request it, ignore this email.\n\n— The Pairwise team"})
 		if err != nil {
 			return err
 		}

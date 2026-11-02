@@ -54,7 +54,7 @@ func TestResendSMTPMailerAuthenticatesAndSendsVerificationCode(t *testing.T) {
 		t.Fatalf("unexpected SMTP transaction: from=%q to=%q quit=%t", client.from, client.to, client.quit)
 	}
 	message := client.dataWriter.String()
-	for _, expected := range []string{"PairDesk", "onboarding@resend.dev", "delivered@resend.dev", "Subject: Your PairDesk verification code", "01234567"} {
+	for _, expected := range []string{"Pairwise", "onboarding@resend.dev", "delivered@resend.dev", "Subject: Your Pairwise verification code", "The Pairwise team", "01234567"} {
 		if !strings.Contains(message, expected) {
 			t.Fatalf("message missing %q", expected)
 		}
