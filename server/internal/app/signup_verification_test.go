@@ -54,7 +54,7 @@ func TestResendSMTPMailerAuthenticatesAndSendsVerificationCode(t *testing.T) {
 		t.Fatalf("unexpected SMTP transaction: from=%q to=%q quit=%t", client.from, client.to, client.quit)
 	}
 	message := client.dataWriter.String()
-	for _, expected := range []string{"Pairwise", "onboarding@resend.dev", "delivered@resend.dev", "Subject: Your Pairwise verification code", "The Pairwise team", "01234567"} {
+	for _, expected := range []string{"From: Pairwise <onboarding@resend.dev>", "delivered@resend.dev", "Subject: Your Pairwise verification code", "The Pairwise team", "01234567"} {
 		if !strings.Contains(message, expected) {
 			t.Fatalf("message missing %q", expected)
 		}
@@ -85,7 +85,7 @@ func TestResendMailerSendsCodeAndReportsProviderFailure(t *testing.T) {
 			To   []string `json:"to"`
 			Text string   `json:"text"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.From != "pair@example.com" || len(body.To) != 1 || body.To[0] != "new@example.com" || !strings.Contains(body.Text, "01234567") {
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.From != "Pairwise <pair@example.com>" || len(body.To) != 1 || body.To[0] != "new@example.com" || !strings.Contains(body.Text, "01234567") || !strings.Contains(body.Text, "Pairwise") {
 			t.Error("provider request payload incorrect")
 		}
 		w.WriteHeader(status)
