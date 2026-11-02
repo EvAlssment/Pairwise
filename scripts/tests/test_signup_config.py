@@ -22,15 +22,15 @@ class SignupConfigTest(unittest.TestCase):
                 f.write('PAIRDESK_ACCESS_ALLOWED_DOMAINS=futurepath.ai\n')
                 f.write('PAIRDESK_ACCESS_ALLOWED_EMAILS=akshatsahu1@gmail.com\n')
                 f.write('PAIRDESK_SIGNUP_VERIFY_EMAIL=true\n')
-                f.write('PAIRDESK_RESEND_FROM=noreply@futurepath.ai\n')
-                f.write('PAIRDESK_RESEND_API_KEY_HOST_FILE=/var/lib/pairdesk/resend-key\n')
+                f.write('PAIRDESK_SENDGRID_FROM=no-reply@futurepath.ai\n')
+                f.write('PAIRDESK_SENDGRID_API_KEY_HOST_FILE=/var/lib/pairdesk/sendgrid-key\n')
             config.render(*args)
             text = env.read_text()
             self.assertIn('PAIRDESK_ACCESS_ALLOWED_EMAILS=akshatsahu1@gmail.com\n', text)
             self.assertIn('PAIRDESK_SIGNUP_VERIFY_EMAIL=true\n', text)
-            self.assertIn('PAIRDESK_RESEND_API_KEY_HOST_FILE=/var/lib/pairdesk/resend-key\n', text)
+            self.assertIn('PAIRDESK_SENDGRID_API_KEY_HOST_FILE=/var/lib/pairdesk/sendgrid-key\n', text)
             with env.open('a') as f:
-                f.write('PAIRDESK_RESEND_FROM=$(unsafe)\n')
+                f.write('PAIRDESK_SENDGRID_FROM=$(unsafe)\n')
             with self.assertRaises(ValueError):
                 config.render(*args)
 

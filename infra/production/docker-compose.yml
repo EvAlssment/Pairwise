@@ -34,8 +34,8 @@ services:
       PAIRDESK_ACCESS_ALLOWED_DOMAINS: ${PAIRDESK_ACCESS_ALLOWED_DOMAINS:-}
       PAIRDESK_ACCESS_ALLOWED_EMAILS: ${PAIRDESK_ACCESS_ALLOWED_EMAILS:-}
       PAIRDESK_SIGNUP_VERIFY_EMAIL: ${PAIRDESK_SIGNUP_VERIFY_EMAIL:-true}
-      PAIRDESK_RESEND_FROM: ${PAIRDESK_RESEND_FROM:-}
-      PAIRDESK_RESEND_API_KEY_FILE: /run/secrets/pairdesk-resend-key
+      PAIRDESK_SENDGRID_FROM: ${PAIRDESK_SENDGRID_FROM:-}
+      PAIRDESK_SENDGRID_API_KEY_FILE: /run/secrets/pairdesk-sendgrid-key
       # Set to a private Cloud SQL PostgreSQL DSN before running more than one
       # API replica. Empty keeps the existing single-writer JSON-volume mode.
       PAIRDESK_DATABASE_URL: ${PAIRDESK_DATABASE_URL:-}
@@ -54,7 +54,7 @@ services:
       - pairdesk-data:/data
       - ${PAIRDESK_APNS_PRIVATE_KEY_HOST_FILE:-/dev/null}:/run/secrets/pairdesk-apns-auth-key:ro
       - ${PAIRDESK_FCM_SERVICE_ACCOUNT_HOST_FILE:-/dev/null}:/run/secrets/pairdesk-fcm-service-account.json:ro
-      - ${PAIRDESK_RESEND_API_KEY_HOST_FILE:-/dev/null}:/run/secrets/pairdesk-resend-key:ro
+      - ${PAIRDESK_SENDGRID_API_KEY_HOST_FILE:-/dev/null}:/run/secrets/pairdesk-sendgrid-key:ro
     restart: unless-stopped
     depends_on: [livekit]
 volumes:

@@ -12,24 +12,32 @@ import (
 	"time"
 )
 
-func TestResendMailerSendsCodeAndReportsProviderFailure(t *testing.T) {
+func TestSendGridMailerSendsCodeAndReportsProviderFailure(t *testing.T) {
 	status := http.StatusOK
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.Header.Get("Authorization") != "Bearer test-key" {
 			t.Error("provider request authorization or method incorrect")
 		}
-		var body struct {
-			From string   `json:"from"`
-			To   []string `json:"to"`
-			Text string   `json:"text"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.From != "pair@example.com" || len(body.To) != 1 || body.To[0] != "new@example.com" || !strings.Contains(body.Text, "01234567") {
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body["subject"] != "Your PairDesk verification code" {
 			t.Error("provider request payload incorrect")
+		}
+		personalizations := body["personalizations"].([]any)
+		recipients := personalizations[0].(map[string]any)["to"].([]any)
+		if recipients[0].(map[string]any)["email"] != "new@example.com" {
+			t.Error("SendGrid recipient incorrect")
+		}
+		if body["from"].(map[string]any)["email"] != "pair@example.com" {
+			t.Error("SendGrid sender incorrect")
+		}
+		content := body["content"].([]any)[0].(map[string]any)["value"].(string)
+		if !strings.Contains(content, "01234567") {
+			t.Error("verification code missing")
 		}
 		w.WriteHeader(status)
 	}))
 	defer provider.Close()
-	send := resendSignupMailer(provider.Client(), provider.URL, "test-key", "pair@example.com")
+	send := sendGridSignupMailer(provider.Client(), provider.URL, "test-key", "pair@example.com")
 	if err := send(context.Background(), "new@example.com", "01234567"); err != nil {
 		t.Fatal(err)
 	}

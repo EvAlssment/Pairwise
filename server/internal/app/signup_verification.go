@@ -8,6 +8,7 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math/big"
 	"net"
@@ -47,25 +48,38 @@ func (s *Server) emailAllowed(email string) bool {
 }
 
 func configuredSignupMailer() func(context.Context, string, string) error {
-	key := strings.TrimSpace(os.Getenv("PAIRDESK_RESEND_API_KEY"))
-	if path := os.Getenv("PAIRDESK_RESEND_API_KEY_FILE"); path != "" {
+	key := strings.TrimSpace(os.Getenv("PAIRDESK_SENDGRID_API_KEY"))
+	if path := os.Getenv("PAIRDESK_SENDGRID_API_KEY_FILE"); path != "" {
 		data, err := os.ReadFile(path)
 		if err != nil {
 			return nil
 		}
 		key = strings.TrimSpace(string(data))
 	}
-	from := strings.TrimSpace(os.Getenv("PAIRDESK_RESEND_FROM"))
+	from := strings.TrimSpace(os.Getenv("PAIRDESK_SENDGRID_FROM"))
 	if key == "" || from == "" {
 		return nil
 	}
 	client := &http.Client{Timeout: 10 * time.Second}
-	return resendSignupMailer(client, "https://api.resend.com/emails", key, from)
+	return sendGridSignupMailer(client, "https://api.sendgrid.com/v3/mail/send", key, from)
 }
 
-func resendSignupMailer(client *http.Client, endpoint, key, from string) func(context.Context, string, string) error {
+func sendGridSignupMailer(client *http.Client, endpoint, key, from string) func(context.Context, string, string) error {
 	return func(ctx context.Context, email, code string) error {
-		body, err := json.Marshal(map[string]any{"from": from, "to": []string{email}, "subject": "Your PairDesk verification code", "text": "Your PairDesk verification code is " + code + ". It expires in 10 minutes. If you didn't request it, ignore this email."})
+		fromAddress, err := mail.ParseAddress(from)
+		if err != nil {
+			return errors.New("invalid SendGrid sender address")
+		}
+		toAddress, err := mail.ParseAddress(email)
+		if err != nil || toAddress.Address != email {
+			return errors.New("invalid signup recipient address")
+		}
+		body, err := json.Marshal(map[string]any{
+			"personalizations": []any{map[string]any{"to": []any{map[string]string{"email": toAddress.Address}}}},
+			"from":             map[string]string{"email": fromAddress.Address, "name": "PairDesk"},
+			"subject":          "Your PairDesk verification code",
+			"content":          []any{map[string]string{"type": "text/plain", "value": "Your PairDesk verification code is " + code + ". It expires in 10 minutes. If you didn't request it, ignore this email."}},
+		})
 		if err != nil {
 			return err
 		}
@@ -81,7 +95,7 @@ func resendSignupMailer(client *http.Client, endpoint, key, from string) func(co
 		}
 		defer resp.Body.Close()
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			return fmt.Errorf("email provider returned HTTP %d", resp.StatusCode)
+			return fmt.Errorf("SendGrid returned HTTP %d", resp.StatusCode)
 		}
 		return nil
 	}
