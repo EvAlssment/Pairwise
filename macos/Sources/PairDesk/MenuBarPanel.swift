@@ -7,7 +7,12 @@ struct MenuBarPanel: View {
     @ObservedObject var loginItem: LoginItemManager
     @ObservedObject private var permissions = PermissionManager.shared
     @State private var searchText = ""
+    @State private var isUpdatingMicrophone = false
+    @State private var isUpdatingCamera = false
     @State var recentCallsExpanded = false
+    @FocusState private var searchFocused: Bool
+    @AppStorage("favoriteTeammateIDs") private var favoriteIDsStorage = ""
+    @AppStorage("rosterFilter") private var rosterFilterStorage = RosterFilter.all.rawValue
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -168,7 +173,7 @@ struct MenuBarPanel: View {
                     PendingCallParticipantRow(store: store, invitation: invitation)
                 }
             }
-            CameraStrip(feeds: rtc.cameraFeeds) { AppWindows.shared.showCameraGallery(store: store) }
+                    CameraStrip(feeds: rtc.cameraFeeds) { AppWindows.shared.showCameraGallery(rtc: rtc) }
             Button { show("transcript") } label: {
                 Label("Transcript and local agent access…", systemImage: "text.quote")
                     .font(.system(size: 11, weight: .medium))
@@ -241,12 +246,18 @@ struct MenuBarPanel: View {
                         }
                     }
                     Divider()
-                    ScreenShareQualityMenuItems(
-                        quality: rtc.screenShareQuality,
-                        adaptiveQualityEnabled: rtc.adaptiveQualityEnabled,
-                        onSelectQuality: { rtc.setScreenShareQuality($0) },
-                        onAdaptiveQualityChanged: { rtc.setAdaptiveQualityEnabled($0) }
-                    )
+                    Picker("Maximum resolution", selection: Binding(
+                        get: { rtc.screenShareQuality },
+                        set: { rtc.setScreenShareQuality($0) }
+                    )) {
+                        ForEach(ScreenShareQuality.allCases) { quality in
+                            Text(quality.title).tag(quality)
+                        }
+                    }
+                    Toggle("Adapt quality to network", isOn: Binding(
+                        get: { rtc.adaptiveQualityEnabled },
+                        set: { rtc.setAdaptiveQualityEnabled($0) }
+                    ))
                 }
                 Spacer(minLength: 0)
             }
@@ -429,8 +440,27 @@ struct MenuBarPanel: View {
         guard !query.isEmpty else { return teammates }
         return teammates.filter { $0.name.localizedCaseInsensitiveContains(query) || $0.email.localizedCaseInsensitiveContains(query) }
     }
+    private var visibleTeammates: [TeamUser] {
+        switch RosterFilter(rawValue: rosterFilterStorage) ?? .all {
+        case .all: filteredTeammates
+        case .online: filteredTeammates.filter { $0.online == true }
+        case .busy: filteredTeammates.filter { $0.busy == true }
+        case .favorites: filteredTeammates.filter(isFavorite)
+        }
+    }
     private var onlineTeammates: [TeamUser] { filteredTeammates.filter { $0.online == true } }
     private var offlineTeammates: [TeamUser] { filteredTeammates.filter { $0.online != true } }
+    private var favoriteIDs: Set<String> { Set(favoriteIDsStorage.split(separator: "\n").map(String.init)) }
+    private func isFavorite(_ person: TeamUser) -> Bool { favoriteIDs.contains(person.id) }
+    private func toggleFavorite(_ person: TeamUser) {
+        var updated = favoriteIDs
+        if !updated.insert(person.id).inserted { updated.remove(person.id) }
+        favoriteIDsStorage = updated.sorted().joined(separator: "\n")
+    }
+    private func copyToClipboard(_ value: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(value, forType: .string)
+    }
     private var recentCalls: [CallInvitation] {
         store.callInvitations.filter { ["expired", "declined", "cancelled"].contains($0.status) }.prefix(8).map { $0 }
     }

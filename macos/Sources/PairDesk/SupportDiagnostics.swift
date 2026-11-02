@@ -4,6 +4,14 @@ import LiveKit
 import SwiftUI
 
 enum SupportDiagnostics {
+    static func outgoingScreenSummary(isSharing: Bool, metrics: ScreenShareSenderMetrics) -> String {
+        isSharing ? metrics.summary : "unavailable"
+    }
+
+    static func noiseSuppressionSummary(preferenceEnabled: Bool, status: String) -> String {
+        "preference \(preferenceEnabled ? "enabled" : "disabled") · \(status)"
+    }
+
     @MainActor
     static func report(store: AppStore, rtc: RTCService, apiBuildCommit: String? = nil, now: Date = .now) -> String {
         let info = Bundle.main.infoDictionary ?? [:]

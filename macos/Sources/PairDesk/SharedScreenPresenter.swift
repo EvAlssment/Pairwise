@@ -1,6 +1,14 @@
 import Combine
 import Foundation
 
+enum SharedScreenWindowLayout {
+    static func initialContentSize(available: CGSize) -> CGSize {
+        let width = min(max(available.width - 32, 700), 2400)
+        let height = max(available.height - 48, 450)
+        return CGSize(width: width, height: height)
+    }
+}
+
 /// The viewer follows remote screen-share sessions, while the call remains in
 /// the menu bar. Repeated updates must not reopen a manually dismissed viewer.
 @MainActor

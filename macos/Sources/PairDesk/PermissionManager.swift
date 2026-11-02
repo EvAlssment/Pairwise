@@ -108,6 +108,44 @@ struct DuplicateAppCopyWarning: View {
     }
 }
 
+struct MediaPermissionAuthorization: Equatable {
+    let status: AVAuthorizationStatus
+
+    init(_ status: AVAuthorizationStatus) {
+        self.status = status
+    }
+
+    static let notDetermined = Self(.notDetermined)
+    var isAuthorized: Bool { status == .authorized }
+
+    var actionTitle: String {
+        switch status {
+        case .notDetermined: "Allow"
+        case .authorized: "Settings"
+        case .denied, .restricted: "Open Settings"
+        @unknown default: "Open Settings"
+        }
+    }
+}
+
+struct AccessibilityPromptGate {
+    static let defaultsKey = "pairdesk.accessibility-system-prompt-requested"
+
+    private let defaults: UserDefaults
+
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+    }
+
+    var wasRequested: Bool { defaults.bool(forKey: Self.defaultsKey) }
+
+    func shouldPrompt(isTrusted: Bool) -> Bool {
+        guard !isTrusted, !wasRequested else { return false }
+        defaults.set(true, forKey: Self.defaultsKey)
+        return true
+    }
+}
+
 @MainActor
 final class PermissionManager: ObservableObject {
     static let shared = PermissionManager()

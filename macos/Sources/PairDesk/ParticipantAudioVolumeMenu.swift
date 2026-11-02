@@ -18,6 +18,9 @@ struct ParticipantAudioVolumeMenu: View {
     }
 
     private var volume: Double { rtc.participantAudioVolume(for: participantIdentity) }
+    private func isSelected(_ preset: ParticipantAudioVolumePreset) -> Bool {
+        abs(volume - preset.rawValue) < 0.001
+    }
 
     var body: some View {
         Menu {
@@ -26,7 +29,8 @@ struct ParticipantAudioVolumeMenu: View {
                     Button {
                         rtc.setParticipantAudioVolume(preset.rawValue, for: participantIdentity)
                     } label: {
-                        if abs(volume - preset.rawValue) < 0.001 {
+                        let selected = isSelected(preset)
+                        if selected {
                             Label(preset.title, systemImage: "checkmark")
                         } else {
                             Text(preset.title)

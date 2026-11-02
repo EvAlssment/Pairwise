@@ -1,15 +1,6 @@
 import AppKit
 import SwiftUI
 
-enum SharedScreenWindowLayout {
-    static func initialContentSize(available: CGSize) -> CGSize {
-        CGSize(
-            width: min(max(available.width - 32, 700), 2_400),
-            height: min(max(available.height - 48, 450), 1_600)
-        )
-    }
-}
-
 /// The app's windows, created on demand with AppKit so they can be opened
 /// from the status item, the Dock, and state changes, none of which have
 /// SwiftUI's openWindow. Each id has one window that is reused.
@@ -54,17 +45,6 @@ final class AppWindows {
         show("transcript") { Self.hosted(TranscriptWindow(store: store), title: "PairDesk · Transcript and agent access") }
     }
 
-    func showCameraGallery(store: AppStore) {
-        show("cameras") {
-            let window = Self.hosted(CameraGalleryWindow(store: store, rtc: store.rtc), title: "PairDesk · Camera gallery", fixedSize: false)
-            window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
-            window.contentMinSize = NSSize(width: 720, height: 460)
-            window.setContentSize(NSSize(width: 1_080, height: 720))
-            window.center()
-            return window
-        }
-    }
-
     func showSharedScreen(store: AppStore) {
         let window = show("screen") {
             let root = SharedScreenWindow(store: store, rtc: store.rtc, transcripts: store.transcripts, agentBridge: store.agentBridge)
@@ -74,7 +54,7 @@ final class AppWindows {
             window.collectionBehavior.insert(.fullScreenPrimary)
             window.contentMinSize = NSSize(width: 700, height: 450)
             let available = (NSScreen.main?.visibleFrame.size ?? NSSize(width: 1440, height: 900))
-            window.setContentSize(SharedScreenWindowLayout.initialContentSize(available: available))
+            window.setContentSize(NSSize(width: min(1440, available.width - 40), height: min(900, available.height - 40)))
             window.center()
             return window
         }

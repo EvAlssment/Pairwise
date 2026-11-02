@@ -16,7 +16,6 @@ struct ClipboardTransferView: View {
     let onDismiss: () -> Void
     let clipboardSyncEnabled: Bool
     let clipboardSyncNotice: String?
-    let canRetrySync: Bool
     let onToggleSync: (Bool) -> Void
     var screenSharingActive = false
 
@@ -99,23 +98,7 @@ struct ClipboardTransferView: View {
                 .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
             }
 
-            if let clipboardSyncNotice {
-                let presentation = ClipboardSyncNoticePresentation.resolve(clipboardSyncNotice)
-                HStack(spacing: 8) {
-                    Label(clipboardSyncNotice, systemImage: presentation.symbol)
-                        .font(.caption)
-                        .foregroundStyle(noticeColor(presentation.tone))
-                        .lineLimit(2)
-                    Spacer(minLength: 0)
-                    if canRetrySync {
-                        Button(action: onRetrySync) {
-                            Label("Retry failed", systemImage: "arrow.clockwise")
-                        }
-                        .buttonStyle(QuietButtonStyle(compact: true))
-                        .accessibilityLabel("Retry clipboard sync only for teammates who did not receive the last copy")
-                    }
-                }
-            }
+            if let clipboardSyncNotice { Text(clipboardSyncNotice).font(.caption).foregroundStyle(.secondary) }
             if let status { Text(status).font(.caption).foregroundStyle(.secondary) }
         }
         .onChange(of: peers) { _, newPeers in
@@ -149,14 +132,6 @@ struct ClipboardTransferView: View {
             do { try await onSend(text, peer); status = "Sent to \(peerName). They can approve it in the call." }
             catch { status = error.localizedDescription }
             sending = false
-        }
-    }
-
-    private func noticeColor(_ tone: ClipboardSyncNoticeTone) -> Color {
-        switch tone {
-        case .warning: Theme.attention
-        case .success: Theme.online
-        case .neutral, .progress: Theme.textMuted
         }
     }
 

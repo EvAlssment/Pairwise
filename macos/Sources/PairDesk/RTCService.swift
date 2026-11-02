@@ -81,6 +81,9 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
         }
     }
     @Published private(set) var participants: [CallParticipant] = [] { didSet { updateHostCursors() } }
+    @Published private(set) var isLocalHandRaised = false
+    @Published private(set) var isUpdatingLocalHandRaise = false
+    @Published private(set) var raisedHandIdentities = Set<String>()
     private var knownRemoteParticipants = Set<String>()
     @Published private(set) var screenTrack: VideoTrack?
     @Published private(set) var cameraTracks: [String: VideoTrack] = [:]
@@ -177,8 +180,9 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
     var onAudioBuffer: ((String, String, [Float], Double) -> Void)?
     private var audioForwardingConsented = false
     private var remoteAudioQualityMonitorTask: Task<Void, Never>?
-
-    func dismissError() { error = nil }
+    private let clipboardPasteboard: NSPasteboard
+    private var clipboardSyncDeliveryTasks: [String: Task<Void, Never>] = [:]
+    private var clipboardSyncDeliveryIDs: [String: UUID] = [:]
 
     private var room: Room?
     private var localAudioRenderer: PCMForwarder?
@@ -1910,6 +1914,17 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
             }
             return
         }
+        if topic == Self.handRaiseTopic, data.count <= CallHandRaiseMessage.maximumWireBytes,
+           let sender = participant?.identity?.stringValue,
+           let message = CallHandRaiseMessage.decode(data) {
+            Task { @MainActor [weak self] in
+                guard let self, self.room === room,
+                      room.remoteParticipants.values.contains(where: { $0.identity?.stringValue == sender }) else { return }
+                if message.raised { self.raisedHandIdentities.insert(sender) }
+                else { self.raisedHandIdentities.remove(sender) }
+            }
+            return
+        }
         guard topic == Self.controlTopic, data.count <= ClipboardTransferMessage.maximumWireBytes,
               let message = try? JSONDecoder().decode(RemoteControlMessage.self, from: data),
               (data.count <= 2_048 || message.kind == .clipboardPaste || message.kind == .clipboardCopied),
@@ -1925,8 +1940,90 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
 
     nonisolated private static let controlTopic = "pairdesk.control.v1"
     nonisolated private static let annotationTopic = "pairdesk.annotation.v1"
+    nonisolated private static let handRaiseTopic = "pairdesk.handraise.v1"
     nonisolated private static let clipboardTopic = "pairdesk.clipboard.v1"
+    nonisolated private static let clipboardReceiptTopic = "pairdesk.clipboard.receipt.v1"
     nonisolated private static let screenClipboardTopic = "pairdesk.screen-clipboard.v1"
+
+    func setLocalHandRaised(_ raised: Bool) async {
+        guard connected, let room, !isUpdatingLocalHandRaise, raised != isLocalHandRaised else { return }
+        isUpdatingLocalHandRaise = true
+        defer { isUpdatingLocalHandRaise = false }
+        do {
+            let data = try CallHandRaiseMessage(raised: raised).encoded()
+            let options = DataPublishOptions(name: "PairDesk raised hand", topic: Self.handRaiseTopic, reliable: true)
+            try await room.localParticipant.publish(data: data, options: options)
+            guard self.room === room else { return }
+            isLocalHandRaised = raised
+            if let localIdentity {
+                if raised { raisedHandIdentities.insert(localIdentity) }
+                else { raisedHandIdentities.remove(localIdentity) }
+            }
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    private func publishLocalHandRaiseState() {
+        guard connected, let room,
+              let data = try? CallHandRaiseMessage(raised: isLocalHandRaised).encoded() else { return }
+        let options = DataPublishOptions(name: "PairDesk raised hand", topic: Self.handRaiseTopic, reliable: true)
+        Task { try? await room.localParticipant.publish(data: data, options: options) }
+    }
+
+    func participantAudioVolume(for identity: String) -> Double {
+        participantAudioVolumes[identity] ?? ParticipantAudioVolume.default
+    }
+
+    func setParticipantAudioVolume(_ value: Double, for identity: String) {
+        guard connected, !identity.isEmpty, identity != localIdentity,
+              let participantAudioVolumeScope else { return }
+        let volume = ParticipantAudioVolume.clamped(value)
+        participantAudioVolumes[identity] = volume
+        participantAudioVolumePreferences.save(participantAudioVolumes, scope: participantAudioVolumeScope)
+        let tracks = remoteAudioRenderers.values.filter { $0.identity == identity }.map(\.track)
+        remoteAudioVolumeQueue.async {
+            for track in tracks { track.volume = volume }
+        }
+    }
+
+    func refreshRemoteAudioQuality() {
+        var measurementsByIdentity: [String: [AudioStreamQualityMetrics?]] = [:]
+        let sampledAt = ProcessInfo.processInfo.systemUptime
+        for (trackID, attachment) in remoteAudioRenderers {
+            guard let statistics = attachment.track.statistics else {
+                remoteAudioQualityWindow.reset(streamID: trackID)
+                measurementsByIdentity[attachment.identity, default: []].append(nil)
+                continue
+            }
+            let audio = statistics.inboundRtpStream.first(where: { $0.kind == "audio" })
+                ?? statistics.inboundRtpStream.first
+            guard let audio else {
+                remoteAudioQualityWindow.reset(streamID: trackID)
+                measurementsByIdentity[attachment.identity, default: []].append(nil)
+                continue
+            }
+            let measurement = remoteAudioQualityWindow.record(streamID: trackID,
+                                                              packetsReceived: audio.packetsReceived,
+                                                              packetsLost: audio.packetsLost,
+                                                              jitterSeconds: audio.jitter,
+                                                              at: sampledAt)
+            measurementsByIdentity[attachment.identity, default: []].append(measurement)
+        }
+        participantAudioQuality = measurementsByIdentity.compactMapValues { AudioQualitySummary(streams: $0).warningMetrics }
+    }
+
+    private func startRemoteAudioQualityMonitoring() {
+        guard remoteAudioQualityMonitorTask == nil else { return }
+        refreshRemoteAudioQuality()
+        remoteAudioQualityMonitorTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                do { try await Task.sleep(for: .seconds(2)) } catch { return }
+                guard let self, self.connected else { return }
+                self.refreshRemoteAudioQuality()
+            }
+        }
+    }
 
     /// Sends text only after the user explicitly presses Send clipboard.
     func sendClipboard(text: String, to identity: String, screenSharing: Bool = false) async throws {

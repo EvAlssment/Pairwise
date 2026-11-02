@@ -14,7 +14,7 @@ VALIDATOR = Path(__file__).resolve().parents[1] / "validate-media-benchmark.py"
 
 def benchmark(profile: str, participants: int) -> dict:
     constrained = profile == "constrained"
-    return {
+    report = {
         "schemaVersion": 6,
         "classification": f"synthetic-{profile}-ci",
         "networkProfile": profile,

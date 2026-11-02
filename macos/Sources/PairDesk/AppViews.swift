@@ -85,80 +85,6 @@ struct LoginView: View {
                     SecureField("Enter your password again", text: $confirmPassword).textFieldStyle(.roundedBorder)
                 }
             }
-            if mode != .verificationPending {
-                authField("EMAIL") {
-                    TextField("you@futurepath.ai", text: $email).textFieldStyle(.roundedBorder)
-                        .textContentType(.emailAddress).autocorrectionDisabled().focused($emailFocused)
-                }
-            } else {
-                Label(email, systemImage: "envelope.badge")
-                    .font(.system(size: 13, weight: .medium)).textSelection(.enabled)
-                    .padding(.vertical, 5)
-            }
-            if mode == .signIn || mode == .createAccount {
-                authField("PASSWORD") {
-                    SecureField(mode == .createAccount ? "At least 12 characters" : "Your password", text: $password)
-                        .textFieldStyle(.roundedBorder).textContentType(mode == .signIn ? .password : .newPassword)
-                }
-                if mode == .createAccount { PasswordRequirementsHint(password: password) }
-            }
-
-            if let authMessage {
-                Label(authMessage, systemImage: authMessageIsSuccess ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
-                    .font(.system(size: 12)).foregroundStyle(authMessageIsSuccess ? Theme.online : Theme.attention)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            authActions
-
-            DisclosureGroup("Server address", isExpanded: $serverExpanded) {
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack(spacing: 8) {
-                        TextField("https://pair.yourteam.com", text: $store.serverAddress)
-                            .textFieldStyle(.roundedBorder)
-                        Button { testServer() } label: {
-                            if serverCheckRunning { ProgressView().controlSize(.small) } else { Text("Test") }
-                        }
-                        .disabled(serverCheckRunning || store.busy)
-                        .help("Check that the configured API and call media service are ready.")
-                    }
-                    if let serverCheckMessage {
-                        Label(serverCheckMessage,
-                              systemImage: serverCheckReady == true ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
-                            .font(.system(size: 11))
-                            .foregroundStyle(serverCheckReady == true ? Theme.online : Theme.attention)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    Text("Use the HTTPS address provided by your team administrator.")
-                        .font(.system(size: 10)).foregroundStyle(Theme.textMuted)
-                }
-                .padding(.top, 8)
-            }.font(.system(size: 12)).foregroundStyle(Theme.textMuted).disabled(store.busy)
-            if ServerReadinessCheck.isLocalOnly(store.serverAddress) {
-                Label("This build points to \(ServerReadinessCheck.displayAddress(store.serverAddress)), which only works on this Mac. Ask your administrator for the team server URL.", systemImage: "exclamationmark.triangle.fill")
-                    .font(.system(size: 11)).foregroundStyle(Theme.attention)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            if mode == .createAccount {
-                Text("Only approved team addresses can create accounts. Ask your team administrator if yours isn’t accepted.")
-                    .font(.system(size: 11)).foregroundStyle(Theme.textMuted).fixedSize(horizontal: false, vertical: true)
-            }
-        }
-        .padding(32).frame(width: 420)
-        .onAppear {
-            if ServerReadinessCheck.isLocalOnly(store.serverAddress) { serverExpanded = true }
-            if mode == .createAccount { nameFocused = true } else if mode != .verificationPending { emailFocused = true }
-        }
-        .onChange(of: store.serverAddress) { _, _ in
-            serverCheckMessage = nil
-            serverCheckReady = nil
-        }
-    }
-
-    @ViewBuilder
-    private var authActions: some View {
-        switch mode {
-        case .signIn:
             Button {
                 let submitted = password
                 password = ""
@@ -227,17 +153,11 @@ struct SharedScreenWindow: View {
     @State private var showClipboard = false
     @State private var permissions = false
     @State private var sourcePicker = false
-    @State private var showTeammatePicker = false
     @State private var annotationMode = false
     @State private var laserMode = false
     @State private var annotationStrokeID: String?
-    @State private var screenZoom: CGFloat = 1
-    @State private var screenPan = CGSize.zero
-    @State private var screenPanStart: CGSize?
-    @State private var isPanningScreen = false
     private var shareStatus: String? {
         guard let sharer = rtc.activeSharerIdentity else { return nil }
-        if isPanningScreen { return "Panning screen · remote input paused" }
         switch rtc.controlState {
         case .granted:
             return "You have control of \(rtc.participantName(for: sharer))'s Mac"
@@ -262,13 +182,6 @@ struct SharedScreenWindow: View {
         VStack(spacing: 0) {
             HStack(spacing: 10) {
                 Text("Call · \(max(1, rtc.participants.count))").font(.headline).lineLimit(1)
-                if !rtc.raisedHandIdentities.isEmpty {
-                    Label("\(rtc.raisedHandIdentities.count)", systemImage: "hand.raised.fill")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(Theme.accent)
-                        .help("\(rtc.raisedHandIdentities.count) people raised their hands")
-                        .accessibilityLabel("\(rtc.raisedHandIdentities.count) people raised their hands")
-                }
                 if rtc.isReconnecting {
                     Label(rtc.isSharing ? "Reconnecting · control paused" : "Reconnecting", systemImage: "arrow.triangle.2.circlepath")
                         .font(.caption).foregroundStyle(.orange).lineLimit(1)
@@ -295,26 +208,10 @@ struct SharedScreenWindow: View {
                         Label("Quality", systemImage: "waveform.path")
                             .foregroundStyle(networkQualityColor)
                     }
-                    .buttonStyle(QuietButtonStyle(compact: true))
-                    .help("Stop controlling this Mac and return control to its owner")
-                    .accessibilityLabel("Give back remote control")
-                }
-                Spacer(minLength: 0)
-                if rtc.isSharing {
-                    ScreenShareSenderStatus(
-                        metrics: rtc.screenShareSenderMetrics,
-                        localProcessCPU: rtc.screenShareProcessCPU,
-                        quality: rtc.screenShareQuality,
-                        adaptiveQualityEnabled: rtc.adaptiveQualityEnabled,
-                        onSelectQuality: { rtc.setScreenShareQuality($0) },
-                        onAdaptiveQualityChanged: { rtc.setAdaptiveQualityEnabled($0) }
-                    )
-                } else if rtc.screenTrack != nil {
-                    ScreenQualityStatusButton(networkQuality: rtc.screenNetworkQuality,
-                                              controlChannelRTT: rtc.controlChannelLatency.summary,
-                                              streamMetrics: rtc.screenStreamMetrics.summary,
-                                              localProcessCPU: rtc.screenShareProcessCPU.summary,
-                                              firstFrameMilliseconds: rtc.screenTimeToFirstFrameMilliseconds)
+                    .menuStyle(.borderlessButton)
+                    .menuIndicator(.hidden)
+                    .help("Shared-screen quality details")
+                    .accessibilityLabel("Shared-screen quality details")
                 }
             }
             .padding(.horizontal, 14).padding(.vertical, 7)
@@ -326,20 +223,9 @@ struct SharedScreenWindow: View {
                     Label(rtc.isMicrophoneEnabled ? "Mute" : "Unmute", systemImage: rtc.isMicrophoneEnabled ? "mic.fill" : "mic.slash.fill")
                 }
                 .buttonStyle(.bordered)
-                .labelStyle(.iconOnly)
                 .tint(rtc.isMicrophoneEnabled ? Theme.accent : Theme.attention)
                 .help(rtc.isMicrophoneEnabled ? "Mute microphone" : "Unmute microphone")
                 .accessibilityLabel(rtc.isMicrophoneEnabled ? "Mute microphone" : "Unmute microphone")
-                Button {
-                    Task { await rtc.setLocalHandRaised(!rtc.isLocalHandRaised) }
-                } label: {
-                    Image(systemName: rtc.isLocalHandRaised ? "hand.raised.fill" : "hand.raised")
-                }
-                .buttonStyle(.bordered)
-                .tint(rtc.isLocalHandRaised ? Theme.accent : nil)
-                .disabled(!rtc.connected || rtc.isUpdatingLocalHandRaise)
-                .help(rtc.isLocalHandRaised ? "Lower your hand" : "Signal that you want to speak")
-                .accessibilityLabel(rtc.isLocalHandRaised ? "Lower hand" : "Raise hand")
                 Button {
                     annotationMode.toggle()
                     laserMode = false
@@ -370,18 +256,8 @@ struct SharedScreenWindow: View {
                     Label(rtc.isCameraEnabled ? "Camera off" : "Camera on", systemImage: rtc.isCameraEnabled ? "video.fill" : "video.slash.fill")
                 }
                 .buttonStyle(.bordered)
-                .labelStyle(.iconOnly)
                 .tint(rtc.isCameraEnabled ? Theme.accent : nil)
                 .help(rtc.isCameraEnabled ? "Turn camera off" : "Turn camera on")
-                .accessibilityLabel(rtc.isCameraEnabled ? "Turn camera off" : "Turn camera on")
-                Button {
-                    AppWindows.shared.showCameraGallery(store: store)
-                } label: {
-                    Image(systemName: "square.grid.2x2")
-                }
-                .buttonStyle(.bordered)
-                .help("Open camera gallery")
-                .accessibilityLabel("Open camera gallery")
                 if rtc.isCameraEnabled && rtc.cameraDevices.count > 1 {
                     Menu {
                         ForEach(rtc.cameraDevices) { device in
@@ -432,75 +308,31 @@ struct SharedScreenWindow: View {
                     .padding(16)
                     .frame(width: 420)
                 }
-                Button { showTeammatePicker.toggle() } label: {
+                Menu {
+                    if store.availablePeople.isEmpty {
+                        Text("No one else is available right now")
+                    } else {
+                        ForEach(store.availablePeople) { person in
+                            Button { Task { await store.call(person) } } label: {
+                                Label(person.name, systemImage: "phone.fill")
+                            }
+                        }
+                    }
+                } label: {
                     Label("Add", systemImage: "person.badge.plus")
                 }
-                .labelStyle(.iconOnly)
-                .disabled(store.busy || store.activeRoom == nil)
-                .help("See your team and add someone to this call")
+                .disabled(!store.canAddPerson || store.busy)
+                .help(store.canAddPerson ? "Add someone to this call" : "This call is full")
                 .accessibilityLabel("Add teammate")
-                .popover(isPresented: $showTeammatePicker, arrowEdge: .bottom) {
-                    CallTeammatePicker(store: store, rtc: rtc) { person in
-                        showTeammatePicker = false
-                        Task { await store.call(person) }
-                    }
-                    .frame(width: 330, height: 390)
-                }
                 Button { if rtc.isSharing { Task { await store.stopSharing() } } else { sourcePicker = true } } label: {
                     Label(rtc.isSharing ? "Stop share" : "Share screen", systemImage: rtc.isSharing ? "rectangle.on.rectangle.slash" : "rectangle.on.rectangle")
                 }
                 .buttonStyle(.bordered)
-                .labelStyle(.iconOnly)
                 .help(rtc.isSharing ? "Stop sharing your screen" : "Share your screen")
-                .accessibilityLabel(rtc.isSharing ? "Stop sharing your screen" : "Share your screen")
-                if rtc.isSharing {
-                    Button {
-                        Task { await store.changeScreenSource() }
-                    } label: {
-                        Image(systemName: "arrow.triangle.2.circlepath")
-                    }
-                    .buttonStyle(.bordered)
-                    .disabled(store.busy)
-                    .help("Switch to another display or window without ending the call")
-                    .accessibilityLabel("Change shared screen source")
-                }
                 Menu {
-                    Button { screenZoom = 1 } label: {
-                        if screenZoom == 1 { Label("Fit to window", systemImage: "checkmark") }
-                        else { Text("Fit to window") }
+                    if rtc.isSharing {
+                        Button("Change source…") { Task { await store.changeScreenSource() } }.disabled(store.busy)
                     }
-                    Button { screenZoom = 1.25 } label: {
-                        if screenZoom == 1.25 { Label("Zoom 1.25×", systemImage: "checkmark") }
-                        else { Text("Zoom 1.25×") }
-                    }
-                    Button { screenZoom = 1.5 } label: {
-                        if screenZoom == 1.5 { Label("Zoom 1.5×", systemImage: "checkmark") }
-                        else { Text("Zoom 1.5×") }
-                    }
-                    Button { screenZoom = 2 } label: {
-                        if screenZoom == 2 { Label("Zoom 2×", systemImage: "checkmark") }
-                        else { Text("Zoom 2×") }
-                    }
-                    Divider()
-                    Button {
-                        isPanningScreen.toggle()
-                        screenPanStart = nil
-                    } label: {
-                        if isPanningScreen { Label("Finish panning", systemImage: "checkmark") }
-                        else { Text("Pan zoomed screen") }
-                    }
-                    .disabled(screenZoom <= 1 || rtc.screenTrack == nil || rtc.isSharing)
-                } label: {
-                    Image(systemName: isPanningScreen ? "hand.draw.fill" : "plus.magnifyingglass")
-                        .frame(width: 26, height: 26)
-                        .contentShape(Rectangle())
-                }
-                .menuStyle(.borderlessButton)
-                .menuIndicator(.hidden)
-                .help(isPanningScreen ? "Panning screen · remote input paused" :
-                      (screenZoom == 1 ? "Screen zoom · fit to window" : "Screen zoom · \(screenZoom)×"))
-                .accessibilityLabel("Screen zoom and pan controls")
-                Menu {
                     if !rtc.screenAnnotations.isEmpty || !rtc.screenAnnotationLasers.isEmpty {
                         Button("Clear marks") { rtc.clearScreenAnnotations() }
                     }
@@ -521,7 +353,6 @@ struct SharedScreenWindow: View {
                     .help("Leave this call")
             }
             .buttonStyle(.borderless)
-            .controlSize(.small)
             .padding(.horizontal, 12).padding(.vertical, 7)
             .background(Theme.surface)
             if rtc.participants.contains(where: { !$0.isLocal }) || !store.pendingCallInvitations.isEmpty {
@@ -541,31 +372,18 @@ struct SharedScreenWindow: View {
                 }.fixedSize(horizontal: false, vertical: true)
                     .background(Theme.surface)
             }
-            CameraStrip(feeds: rtc.cameraFeeds) { AppWindows.shared.showCameraGallery(store: store) }
-                .padding(.horizontal, 12).padding(.vertical, 4)
+            CameraStrip(feeds: rtc.cameraFeeds) {
+                AppWindows.shared.showCameraGallery(rtc: rtc)
+            }
+            .padding(.horizontal, 12).padding(.vertical, 4)
             if let notice = rtc.cameraDeviceNotice {
                 Text(notice).font(.caption).foregroundStyle(.secondary).padding(.horizontal, 16)
-            }
-            if let notice = rtc.audioDeviceNotice {
-                HStack(alignment: .top, spacing: 8) {
-                    Label(notice, systemImage: "exclamationmark.triangle.fill")
-                        .font(.caption).foregroundStyle(Theme.attention)
-                    Spacer(minLength: 0)
-                    Button { rtc.dismissAudioDeviceNotice() } label: {
-                        Image(systemName: "xmark.circle.fill")
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(Theme.textMuted)
-                    .help("Dismiss audio device notice")
-                    .accessibilityLabel("Dismiss audio device notice")
-                }
-                .padding(.horizontal, 16)
             }
             HStack(spacing: 0) {
                 ZStack {
                     Color.black
                     if let track = rtc.screenTrack, !rtc.isSharing {
-                        InteractiveScreenView(track: track, rtc: rtc, zoomScale: screenZoom, panOffset: screenPan)
+                        InteractiveScreenView(track: track, rtc: rtc)
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                             .overlay {
                                 if let dimensions = track.dimensions {
@@ -608,55 +426,18 @@ struct SharedScreenWindow: View {
                                     .allowsHitTesting((annotationMode || laserMode) && rtc.canAnnotateScreen)
                                 }
                             }
-                            .scaleEffect(screenZoom, anchor: .center)
-                            .offset(screenPan)
-                            .clipped()
                     } else {
                         VStack(spacing: 16) {
                             Image(systemName: rtc.isSharing ? "display.and.arrow.up" : "phone").font(.system(size: 44))
                             Text(rtc.isSharing ? (rtc.isSharingWindow ? "Your window is shared" : "Your display is shared") : (store.activeRoom == nil ? "Call ended" : "Waiting for a screen share"))
-                            Text(rtc.isSharing ? (rtc.isSharingWindow ? "Window sharing is view-only. Use Stop share in the toolbar to finish." : "Your teammates can control your shared display. Use Stop share in the toolbar to finish.") : (store.activeRoom == nil ? "Start a new call from the PairDesk menu bar." : "Your teammate can start sharing any time. Call and screen controls stay in this window.")).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                            Text(rtc.isSharing ? (rtc.isSharingWindow ? "Window sharing is view-only. Use the menu bar to stop sharing." : "Your teammates can control your shared display. Use the menu bar to stop control.") : (store.activeRoom == nil ? "Start a new call from the PairDesk menu bar." : "Your teammate can start sharing at any time. Call controls and your team are in the PairDesk menu bar.")).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                         }.padding(30)
-                    }
-                    if isPanningScreen, screenZoom > 1,
-                       let track = rtc.screenTrack, !rtc.isSharing,
-                       let dimensions = track.dimensions {
-                        GeometryReader { geometry in
-                            Color.clear
-                                .contentShape(Rectangle())
-                                .gesture(DragGesture(minimumDistance: 0)
-                                    .onChanged { value in
-                                        if screenPanStart == nil { screenPanStart = screenPan }
-                                        let start = screenPanStart ?? screenPan
-                                        screenPan = ScreenCoordinateMapper.clampedPanOffset(
-                                            CGSize(width: start.width + value.translation.width,
-                                                   height: start.height + value.translation.height),
-                                            container: CGRect(origin: .zero, size: geometry.size),
-                                            contentSize: CGSize(width: Int(dimensions.width), height: Int(dimensions.height)),
-                                            zoomScale: screenZoom
-                                        )
-                                    }
-                                    .onEnded { _ in screenPanStart = nil })
-                                .accessibilityLabel("Drag to pan the zoomed shared screen")
-                                .zIndex(2)
-                        }
                     }
                 }.frame(maxWidth: .infinity, maxHeight: .infinity)
                 if showTranscript { TranscriptPanel(transcriber: transcripts, rtc: rtc, bridge: agentBridge).frame(width: 300) }
             }
             if let error = rtc.error { HStack { Text(error).font(.caption).foregroundStyle(.orange); Spacer(); Button("Permissions") { permissions = true } }.padding(8) }
         }.background(Theme.surface).tint(Theme.accent)
-        .onChange(of: screenZoom) { _, _ in
-            screenPan = .zero
-            screenPanStart = nil
-            isPanningScreen = false
-        }
-        .onChange(of: store.activeRoom?.id) { _, _ in
-            screenZoom = 1
-            screenPan = .zero
-            screenPanStart = nil
-            isPanningScreen = false
-        }
         .task {
             while !Task.isCancelled {
                 rtc.refreshScreenNetworkQuality()
@@ -681,273 +462,13 @@ struct SharedScreenWindow: View {
         return [RemotePointer(id: identity, x: point.x, y: point.y, updatedAt: .now)]
     }
 
-}
-
-struct CallTeammatePicker: View {
-    @ObservedObject var store: AppStore
-    @ObservedObject var rtc: RTCService
-    let onInvite: (TeamUser) -> Void
-    @State private var searchText = ""
-
-    private var people: [TeamUser] {
-        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        return store.users
-            .filter { $0.id != store.user?.id }
-            .filter { query.isEmpty || $0.name.localizedCaseInsensitiveContains(query) || $0.email.localizedCaseInsensitiveContains(query) }
-            .sorted {
-                let lhs = availability(for: $0)
-                let rhs = availability(for: $1)
-                if lhs.canInvite != rhs.canInvite { return lhs.canInvite }
-                return $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
-            }
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text("Add teammate").font(.headline)
-                Text(store.canAddPerson
-                     ? "Invite someone into this call · up to \(PairRoom.maximumParticipants) people"
-                     : "This call is full · up to \(PairRoom.maximumParticipants) people")
-                    .font(.caption).foregroundStyle(Theme.textMuted)
-            }
-            HStack(spacing: 8) {
-                Image(systemName: "magnifyingglass").foregroundStyle(Theme.textMuted)
-                TextField("Search teammates", text: $searchText)
-                    .textFieldStyle(.plain)
-                    .accessibilityLabel("Search teammates to add")
-            }
-            .padding(.horizontal, 10).padding(.vertical, 8)
-            .background(Theme.surfaceRaised, in: RoundedRectangle(cornerRadius: 8))
-
-            if people.isEmpty {
-                ContentUnavailableView(searchText.isEmpty ? "No teammates yet" : "No matches",
-                                       systemImage: searchText.isEmpty ? "person.2" : "magnifyingglass",
-                                       description: Text(searchText.isEmpty ? "Your team roster will appear here." : "Try another name or email."))
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                ScrollView {
-                    LazyVStack(spacing: 2) {
-                        ForEach(people) { person in
-                            teammateRow(person)
-                        }
-                    }
-                }
-            }
-        }
-        .padding(14)
-        .background(Theme.surface)
-    }
-
-    private func teammateRow(_ person: TeamUser) -> some View {
-        let state = availability(for: person)
-        return HStack(spacing: 9) {
-            PersonAvatar(name: person.name, id: person.id, size: 30,
-                         presence: person.online != true ? .offline : (person.busy == true ? .busy : .online))
-            VStack(alignment: .leading, spacing: 2) {
-                Text(person.name).font(.system(size: 12, weight: .medium)).lineLimit(1)
-                Text(state.title).font(.caption2).foregroundStyle(stateColor(state))
-            }
-            Spacer(minLength: 4)
-            if state.canInvite {
-                Button { onInvite(person) } label: {
-                    Label("Call", systemImage: "phone.fill")
-                }
-                .buttonStyle(QuietButtonStyle(compact: true))
-                .disabled(store.busy)
-                .accessibilityLabel("Add \(person.name) to this call")
-            } else if state == .alreadyInvited,
-                      let invitation = store.outgoingCalls.first(where: { $0.target.id == person.id }) {
-                Button("Cancel") { Task { await store.cancelCall(invitation) } }
-                    .buttonStyle(QuietButtonStyle(compact: true))
-                    .disabled(store.busy)
-                    .accessibilityLabel("Cancel call to \(person.name)")
-            }
-        }
-        .padding(.horizontal, 7).frame(minHeight: 42)
-        .contentShape(Rectangle())
-        .accessibilityElement(children: .contain)
-    }
-
-    private func availability(for person: TeamUser) -> CallInviteAvailability {
-        CallInviteAvailability.resolve(
-            user: person,
-            participantIDs: Set(rtc.participants.map(\.identity)),
-            outgoingInviteIDs: Set(store.outgoingCalls.map { $0.target.id }),
-            canAddPerson: store.canAddPerson
-        )
-    }
-
-    private func stateColor(_ state: CallInviteAvailability) -> Color {
-        switch state {
-        case .available: Theme.online
-        case .callFull: Theme.attention
-        default: Theme.textMuted
-        }
-    }
-}
-
-struct ScreenQualityStatusButton: View {
-    let networkQuality: ScreenNetworkQuality
-    let controlChannelRTT: String
-    let streamMetrics: String
-    let localProcessCPU: String
-    let firstFrameMilliseconds: Int?
-    let history: ScreenQualityHistory
-    @State private var isShowingDetails = false
-
-    init(networkQuality: ScreenNetworkQuality,
-         controlChannelRTT: String,
-         streamMetrics: String,
-         localProcessCPU: String = "unavailable",
-         firstFrameMilliseconds: Int?,
-         history: ScreenQualityHistory = ScreenQualityHistory()) {
-        self.networkQuality = networkQuality
-        self.controlChannelRTT = controlChannelRTT
-        self.streamMetrics = streamMetrics
-        self.localProcessCPU = localProcessCPU
-        self.firstFrameMilliseconds = firstFrameMilliseconds
-        self.history = history
-    }
-
-    private var report: ScreenQualityReport {
-        ScreenQualityReport(networkQuality: networkQuality,
-                            controlChannelRTT: controlChannelRTT,
-                            receivedStream: streamMetrics,
-                            localProcessCPU: localProcessCPU,
-                            firstFrameMilliseconds: firstFrameMilliseconds,
-                            history: history)
-    }
-
-    private var tint: Color {
-        switch networkQuality {
+    private var networkQualityColor: Color {
+        switch rtc.screenNetworkQuality {
         case .measuring: .secondary
         case .good: .green
         case .fair: .orange
         case .highLatency: .red
         }
-    }
-
-    var body: some View {
-        Button {
-            isShowingDetails.toggle()
-        } label: {
-            HStack(spacing: 6) {
-                Circle().fill(tint).frame(width: 7, height: 7)
-                Text(networkQuality.shortTitle)
-                    .font(.system(size: 12, weight: .medium))
-            }
-            .padding(.horizontal, 9)
-            .padding(.vertical, 5)
-            .background(Theme.surfaceRaised, in: Capsule())
-        }
-        .buttonStyle(.plain)
-        .popover(isPresented: $isShowingDetails, arrowEdge: .bottom) {
-            ScreenQualityDetailsView(report: report, tint: tint)
-        }
-        .help("Shared-screen quality details")
-        .accessibilityLabel("Shared-screen network quality: \(networkQuality.label)")
-        .accessibilityHint("Opens screen, control-channel, local app CPU, and first-frame measurements.")
-    }
-}
-
-struct ScreenQualityDetailsView: View {
-    let report: ScreenQualityReport
-    let tint: Color
-    @State private var copied = false
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 9) {
-            Text("Shared-screen quality").font(.headline)
-            Label(report.networkQuality.label, systemImage: "waveform.path")
-                .foregroundStyle(tint)
-            Divider()
-            Text("Control channel RTT · \(report.controlChannelRTT)")
-            Text("Received screen · \(report.receivedStream)")
-            Text("PairDesk CPU · \(report.localProcessCPU) · per core")
-            Text("First frame · \(report.firstFrameMilliseconds.map { "\($0) ms" } ?? "unavailable")")
-            ScreenQualityTrend(history: report.history, tint: tint)
-            Divider()
-            Button {
-                NSPasteboard.general.clearContents()
-                copied = NSPasteboard.general.setString(report.text, forType: .string)
-                guard copied else { return }
-                Task { @MainActor in
-                    try? await Task.sleep(for: .seconds(2))
-                    copied = false
-                }
-            } label: {
-                Label(copied ? "Copied · ready to paste" : "Copy quality report",
-                      systemImage: copied ? "checkmark.circle.fill" : "doc.on.doc")
-            }
-            .buttonStyle(.bordered)
-            .accessibilityHint("Copies screen and control latency metrics without account names or network addresses.")
-        }
-        .font(.callout)
-        .padding(14)
-        .frame(width: 290, alignment: .leading)
-        .fixedSize(horizontal: false, vertical: true)
-    }
-}
-
-private struct ScreenQualityTrend: View {
-    let history: ScreenQualityHistory
-    let tint: Color
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            Text("Selected-path RTT · last minute")
-                .font(.caption.weight(.medium))
-                .foregroundStyle(.secondary)
-            if history.roundTripReadings.count >= 2 {
-                HStack(spacing: 5) {
-                    VStack {
-                        Text("\(history.chartCeilingMilliseconds)")
-                        Spacer(minLength: 0)
-                        Text("0")
-                    }
-                    .font(.system(size: 9, design: .monospaced))
-                    .foregroundStyle(.tertiary)
-                    Canvas { context, size in
-                        let samples = history.samples
-                        guard samples.count > 1 else { return }
-                        let ceiling = Double(history.chartCeilingMilliseconds)
-                        var path = Path()
-                        var hasPreviousPoint = false
-                        for (index, sample) in samples.enumerated() {
-                            guard let milliseconds = sample.roundTripMilliseconds else {
-                                hasPreviousPoint = false
-                                continue
-                            }
-                            let x = size.width * CGFloat(index) / CGFloat(samples.count - 1)
-                            let y = size.height * (1 - CGFloat(min(Double(milliseconds), ceiling) / ceiling))
-                            let point = CGPoint(x: x, y: y)
-                            if hasPreviousPoint { path.addLine(to: point) }
-                            else { path.move(to: point) }
-                            hasPreviousPoint = true
-                        }
-                        context.stroke(path, with: .color(tint), style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
-                    }
-                    .frame(height: 38)
-                    .background {
-                        VStack(spacing: 0) {
-                            Rectangle().fill(Color.primary.opacity(0.08)).frame(height: 1)
-                            Spacer(minLength: 0)
-                            Rectangle().fill(Color.primary.opacity(0.08)).frame(height: 1)
-                        }
-                    }
-                    .accessibilityLabel("Selected-path round-trip time trend")
-                }
-                Text(history.summary)
-                    .font(.system(size: 10, weight: .medium, design: .monospaced))
-                    .foregroundStyle(.secondary)
-            } else {
-                Text("Collecting latency samples…")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .padding(.vertical, 2)
     }
 }
 
@@ -1154,98 +675,6 @@ private struct TranscriptPanel: View {
     }
 }
 
-struct PasswordRequirementsHint: View {
-    let password: String
-
-    var body: some View {
-        Label(PairDeskPasswordPolicy.hint(for: password),
-              systemImage: PairDeskPasswordPolicy.isValid(password) ? "checkmark.circle.fill" : "info.circle")
-            .font(.system(size: 11))
-            .foregroundStyle(PairDeskPasswordPolicy.isValid(password) ? Theme.online : Theme.textMuted)
-            .accessibilityElement(children: .combine)
-    }
-}
-
-struct ScreenShareSenderStatus: View {
-    let metrics: ScreenShareSenderMetrics
-    var localProcessCPU: ScreenShareProcessCPUUsage = .unavailable
-    var quality: ScreenShareQuality = .sharp
-    var adaptiveQualityEnabled = true
-    var onSelectQuality: (ScreenShareQuality) -> Void = { _ in }
-    var onAdaptiveQualityChanged: (Bool) -> Void = { _ in }
-    @State private var reportCopied = false
-    @State private var reportCopyFailed = false
-
-    private var senderReport: String {
-        ScreenShareSenderReport.text(metrics: metrics,
-                                     maximum: quality,
-                                     adaptiveQualityEnabled: adaptiveQualityEnabled,
-                                     localProcessCPU: localProcessCPU)
-    }
-
-    var body: some View {
-        Menu {
-            ScreenShareQualityMenuItems(quality: quality,
-                                        adaptiveQualityEnabled: adaptiveQualityEnabled,
-                                        onSelectQuality: onSelectQuality,
-                                        onAdaptiveQualityChanged: onAdaptiveQualityChanged)
-            Text("Current output · \(metrics.summary)")
-                .foregroundStyle(metrics.limitation == .none ? Theme.textMuted : Theme.attention)
-            Text("PairDesk process CPU · \(localProcessCPU.summary) · per core")
-                .foregroundStyle(Theme.textMuted)
-            Divider()
-            Button {
-                reportCopied = ClipboardPasteboardWriter.writeText(senderReport, to: .general)
-                reportCopyFailed = !reportCopied
-            } label: {
-                Label(reportCopied ? "Copied share report" :
-                      (reportCopyFailed ? "Couldn't copy share report" : "Copy share report"),
-                      systemImage: reportCopied ? "checkmark.circle.fill" :
-                        (reportCopyFailed ? "exclamationmark.triangle.fill" : "doc.on.doc"))
-            }
-            .help("Copies this Mac's encoded screen output, selected maximum, adaptive setting, and local CPU estimate. Review before sharing.")
-        } label: {
-            Label("Sent · \(metrics.summary)", systemImage: "arrow.up.right.video")
-                .font(.caption)
-                .foregroundStyle(metrics.limitation == .none ? Theme.textMuted : Theme.attention)
-                .lineLimit(1)
-                .truncationMode(.tail)
-        }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.visible)
-        .help("Measured output and live screen-share quality controls; the selected quality is a maximum, not a guarantee.")
-        .accessibilityLabel("Outgoing screen share: \(metrics.summary), PairDesk CPU \(localProcessCPU.summary) per core, maximum \(quality.title)")
-        .accessibilityHint("Opens the live screen-share quality controls.")
-    }
-}
-
-struct ScreenShareQualityMenuItems: View {
-    let quality: ScreenShareQuality
-    let adaptiveQualityEnabled: Bool
-    let onSelectQuality: (ScreenShareQuality) -> Void
-    let onAdaptiveQualityChanged: (Bool) -> Void
-
-    var body: some View {
-        Toggle("Adapt quality to network", isOn: Binding(
-            get: { adaptiveQualityEnabled },
-            set: onAdaptiveQualityChanged
-        ))
-        Section("Maximum quality · 30 fps") {
-            ForEach(ScreenShareQuality.allCases) { preset in
-                Button {
-                    onSelectQuality(preset)
-                } label: {
-                    if preset == quality {
-                        Label(preset.title, systemImage: "checkmark")
-                    } else {
-                        Text(preset.title)
-                    }
-                }
-            }
-        }
-    }
-}
-
 struct TranscriptWindow: View {
     @ObservedObject var store: AppStore
     var body: some View {
@@ -1280,10 +709,9 @@ struct AccountView: View {
             Divider()
             Text("Change password").font(.headline)
             SecureField("Current password", text: $current).textFieldStyle(.roundedBorder)
-            SecureField("New password", text: $newPassword).textFieldStyle(.roundedBorder)
-            PasswordRequirementsHint(password: newPassword)
+            SecureField("New password (at least 12 characters)", text: $newPassword).textFieldStyle(.roundedBorder)
             SecureField("Confirm new password", text: $confirmation).textFieldStyle(.roundedBorder)
-            HStack { Button("Sign out") { closeWindow(); Task { await store.logout() } }.disabled(store.busy || saving); Spacer(); Button("Close") { closeWindow() }; Button(saving ? "Saving…" : "Save password") { saving = true; Task { let success = await store.changePassword(current: current, new: newPassword); saving = false; if success { closeWindow() } } }.buttonStyle(.borderedProminent).disabled(saving || current.isEmpty || !PairDeskPasswordPolicy.isValid(newPassword) || newPassword != confirmation) }
+            HStack { Button("Sign out") { closeWindow(); Task { await store.logout() } }.disabled(store.busy || saving); Spacer(); Button("Close") { closeWindow() }; Button(saving ? "Saving…" : "Save password") { saving = true; Task { let success = await store.changePassword(current: current, new: newPassword); saving = false; if success { closeWindow() } } }.buttonStyle(.borderedProminent).disabled(saving || current.isEmpty || newPassword.count < 12 || newPassword != confirmation) }
         }.padding(30).frame(width: 430)
             .sheet(isPresented: $addingMember) { CreateMemberView(store: store) }
             .sheet(isPresented: $managingTeam) { ManageTeamView(store: store) }
@@ -1356,8 +784,7 @@ private struct ManageTeamView: View {
             if let resetMember {
                 Divider()
                 Text("Reset password for \(resetMember.name)").font(.headline)
-                SecureField("New password", text: $newPassword).textFieldStyle(.roundedBorder)
-                PasswordRequirementsHint(password: newPassword)
+                SecureField("New password (12+ characters)", text: $newPassword).textFieldStyle(.roundedBorder)
                 HStack {
                     Button("Cancel") { self.resetMember = nil; newPassword = "" }
                     Spacer()
@@ -1370,7 +797,7 @@ private struct ManageTeamView: View {
                             } catch { self.error = error.localizedDescription }
                             saving = false
                         }
-                    }.buttonStyle(.borderedProminent).disabled(saving || !PairDeskPasswordPolicy.isValid(newPassword))
+                    }.buttonStyle(.borderedProminent).disabled(saving || newPassword.count < 12)
                 }
             }
         }.padding(24).frame(width: 620).task {
@@ -1407,8 +834,7 @@ private struct CreateMemberView: View {
             Text("Give your teammate their email and initial password directly. They can change the password after signing in.").font(.system(size: 12)).foregroundStyle(.secondary)
             TextField("Full name", text: $name).textFieldStyle(.roundedBorder)
             TextField("Email", text: $email).textFieldStyle(.roundedBorder)
-            SecureField("Initial password", text: $password).textFieldStyle(.roundedBorder)
-            PasswordRequirementsHint(password: password)
+            SecureField("Initial password (12+ characters)", text: $password).textFieldStyle(.roundedBorder)
             if let error { Text(error).foregroundStyle(.orange).font(.system(size: 12)) }
             if created { Label("Account created", systemImage: "checkmark.circle.fill").foregroundStyle(Theme.accent) }
             HStack { Spacer(); Button("Close") { dismiss() }; Button(saving ? "Creating…" : "Create account") {
@@ -1419,7 +845,7 @@ private struct CreateMemberView: View {
                     catch { self.error = error.localizedDescription }
                     saving = false
                 }
-            }.buttonStyle(.borderedProminent).disabled(saving || name.trimmingCharacters(in: .whitespaces).isEmpty || email.isEmpty || !PairDeskPasswordPolicy.isValid(password)) }
+            }.buttonStyle(.borderedProminent).disabled(saving || name.trimmingCharacters(in: .whitespaces).isEmpty || email.isEmpty || password.count < 12) }
         }.padding(30).frame(width: 430)
     }
 }

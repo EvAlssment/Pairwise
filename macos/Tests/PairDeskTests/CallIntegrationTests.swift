@@ -761,7 +761,8 @@ private func writeSyntheticBenchmark(_ snapshot: SyntheticVideoReceiver.Snapshot
         harnessProcessCPUPercent: processCPUPercent,
         syntheticReadability: readability,
         runner: BenchmarkRunnerMetadata.current(),
-        unmeasured: ["pointer_to_render_latency", "sender_cpu", "receiver_cpu", "physical_readability"])
+        unmeasured: ["pointer_to_render_latency", "sender_cpu", "receiver_cpu", "physical_readability"],
+        cameraSimulcast: nil)
     let encoder = JSONEncoder()
     encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
     let requestedOutput = URL(fileURLWithPath: path)

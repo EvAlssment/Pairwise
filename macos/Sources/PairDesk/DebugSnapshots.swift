@@ -67,21 +67,12 @@ enum UISnapshots {
             configure(store)
             return store
         }
-        func invitation(from caller: TeamUser, to target: TeamUser, status: String = "pending") -> CallInvitation {
-            CallInvitation(id: "call-\(caller.id)-\(target.id)", status: status, caller: caller, target: target, room: room, expiresAt: "")
+        func invitation(from caller: TeamUser, to target: TeamUser) -> CallInvitation {
+            CallInvitation(id: "call-\(caller.id)-\(target.id)", status: "pending", caller: caller, target: target, room: room, expiresAt: "")
         }
 
         let signedOut = store()
-        let localServerSignIn = store { $0.serverAddress = "http://127.0.0.1:18080" }
         let idle = store { $0.user = me; $0.users = team; $0.directoryStatus = "Team connected" }
-        let missed = store {
-            $0.user = me; $0.users = team; $0.directoryStatus = "Team connected"
-            let createdAt = ISO8601DateFormatter().string(from: Date().addingTimeInterval(-120))
-            let expiredAt = ISO8601DateFormatter().string(from: Date().addingTimeInterval(-75))
-            $0.callInvitations = [CallInvitation(id: "snapshot-missed-\(UUID().uuidString)", status: "expired",
-                                                   caller: harshit, target: me, room: room, createdAt: createdAt,
-                                                   expiresAt: expiredAt)]
-        }
         let ringing = store {
             $0.user = me; $0.users = team; $0.directoryStatus = "Team connected"
             $0.activeRoom = room; $0.callInvitations = [invitation(from: me, to: harshit)]
@@ -128,7 +119,7 @@ enum UISnapshots {
             $0.activeRoom = room; $0.callStartedAt = Date().addingTimeInterval(-185)
             $0.rtc.debugSetCall(participants: [CallParticipant(identity: me.id, name: me.name, isLocal: true),
                                                CallParticipant(identity: harshit.id, name: harshit.name, isLocal: false, isSpeaking: true, isMicrophoneMuted: false)],
-                                microphoneEnabled: true, raisedHands: [harshit.id])
+                                microphoneEnabled: true)
         }
         snapshot("menu-in-call", to: directory, compact: true) { MenuBarPanel(store: inCall, rtc: inCall.rtc, loginItem: loginItem) }
         inCall.callInvitations = recent.callInvitations
@@ -188,21 +179,9 @@ enum UISnapshots {
             $0.activeRoom = room; $0.callStartedAt = Date().addingTimeInterval(-62)
             $0.rtc.debugSetCall(participants: [CallParticipant(identity: me.id, name: me.name, isLocal: true),
                                                CallParticipant(identity: harshit.id, name: harshit.name, isLocal: false)],
-                                microphoneEnabled: false, raisedHands: [harshit.id])
+                                microphoneEnabled: false)
         }
         snapshot("menu-in-call-muted", to: directory, compact: true) { MenuBarPanel(store: muted, rtc: muted.rtc, loginItem: loginItem) }
-        snapshot("call-controls-updating", to: directory, size: CGSize(width: 220, height: 80)) {
-            HStack(spacing: 8) {
-                CallTile(title: "Unmute me", systemImage: "mic.slash.fill", highlight: Theme.attention,
-                         actionBusy: true, action: {}) { EmptyView() }
-                CallTile(title: "Camera on", systemImage: "video.slash.fill", actionBusy: true,
-                         action: {}) { EmptyView() }
-                CallTile(title: "Share screen", systemImage: "rectangle.on.rectangle", actionEnabled: false,
-                         action: {}) { EmptyView() }
-            }
-            .padding(12)
-            .background(Theme.surface)
-        }
         let microphoneStates = store {
             $0.user = me; $0.users = team; $0.directoryStatus = "Team connected"
             $0.activeRoom = room
@@ -210,30 +189,9 @@ enum UISnapshots {
                                                CallParticipant(identity: harshit.id, name: harshit.name, isLocal: false),
                                                CallParticipant(identity: team[2].id, name: team[2].name, isLocal: false, isMicrophoneMuted: false),
                                                CallParticipant(identity: team[3].id, name: team[3].name, isLocal: false, isSpeaking: true, isMicrophoneMuted: false)],
-                                microphoneEnabled: true, raisedHands: [harshit.id, team[3].id])
+                                microphoneEnabled: true)
         }
         snapshot("menu-microphone-states", to: directory, compact: true) { MenuBarPanel(store: microphoneStates, rtc: microphoneStates.rtc, loginItem: loginItem) }
-        snapshot("participant-voice-quality-warning", to: directory, size: CGSize(width: 320, height: 54)) {
-            ParticipantMicrophoneStatus(
-                participant: CallParticipant(identity: "bharat", name: "Bharat", isLocal: false,
-                                             isSpeaking: true, isMicrophoneMuted: false),
-                audioQuality: AudioStreamQualityMetrics(packetLossPercent: 4.2, jitterMilliseconds: 52,
-                                                        windowSampleCount: 3)
-            )
-            .padding(12)
-            .background(Theme.surface)
-        }
-        let audioFallback = store {
-            $0.user = me; $0.users = team; $0.directoryStatus = "Team connected"
-            $0.activeRoom = room
-            $0.rtc.debugSetCall(participants: [CallParticipant(identity: me.id, name: me.name, isLocal: true),
-                                               CallParticipant(identity: harshit.id, name: harshit.name, isLocal: false)],
-                                microphoneEnabled: true)
-            $0.rtc.debugSetAudioDeviceNotice("Selected speaker disconnected; using the system default.")
-        }
-        snapshot("menu-in-call-audio-device-fallback", to: directory, compact: true) {
-            MenuBarPanel(store: audioFallback, rtc: audioFallback.rtc, loginItem: loginItem)
-        }
         let syncing = store {
             $0.user = me; $0.users = team; $0.directoryStatus = "Team connected"
             $0.activeRoom = room; $0.callStartedAt = Date().addingTimeInterval(-410)
@@ -310,78 +268,9 @@ enum UISnapshots {
             .frame(width: 490)
         }
         snapshot("window-account", to: directory) { AccountView(store: idle).environmentObject(loginItem) }
-        snapshot("window-support-diagnostics", to: directory, size: CGSize(width: 610, height: 520)) {
-            SupportDiagnosticsView(store: idle, rtc: idle.rtc)
-        }
         snapshot("window-share-picker", to: directory) { ScreenSharePickerView(store: ringing) }
         snapshot("window-shared-screen", to: directory, size: CGSize(width: 1000, height: 620)) {
             SharedScreenWindow(store: microphoneStates, rtc: microphoneStates.rtc, transcripts: microphoneStates.transcripts)
-        }
-        snapshot("screen-share-sender-quality", to: directory, size: CGSize(width: 440, height: 56)) {
-            ScreenShareSenderStatus(metrics: ScreenShareSenderMetrics(width: 3_840, height: 2_160,
-                                                                       framesPerSecond: 30,
-                                                                       bitrateMegabitsPerSecond: 8.2),
-                                    localProcessCPU: ScreenShareProcessCPUUsage(averagePercent: 24,
-                                                                               peakPercent: 36,
-                                                                               durationSeconds: 10))
-                .padding(12)
-                .background(Theme.surface)
-        }
-        snapshot("screen-share-sender-constrained", to: directory, size: CGSize(width: 440, height: 56)) {
-            ScreenShareSenderStatus(metrics: ScreenShareSenderMetrics(width: 1_920, height: 1_080,
-                                                                       framesPerSecond: 24,
-                                                                       bitrateMegabitsPerSecond: 1.8,
-                                                                       limitation: .cpu),
-                                    localProcessCPU: ScreenShareProcessCPUUsage(averagePercent: 64,
-                                                                               peakPercent: 82,
-                                                                               durationSeconds: 10))
-                .padding(12)
-                .background(Theme.surface)
-        }
-        let drivingCall = store {
-            $0.user = me; $0.users = team; $0.directoryStatus = "Team connected"
-            $0.activeRoom = room
-            let akshat = TeamUser(id: "akshat", name: "Akshat", email: "akshat@example.com", online: true, busy: false, enabled: true)
-            $0.users = team + [TeamUser(id: "saurab", name: "Saurab", email: "saurab@example.com", online: true, busy: false, enabled: true), akshat]
-            $0.callInvitations = [invitation(from: me, to: akshat)]
-            $0.rtc.debugSetCall(participants: [CallParticipant(identity: me.id, name: me.name, isLocal: true),
-                                               CallParticipant(identity: harshit.id, name: harshit.name, isLocal: false)],
-                                microphoneEnabled: true)
-            $0.rtc.debugSetViewerControlGrant(sharerIdentity: harshit.id)
-            $0.rtc.debugSetAudioDeviceNotice("Selected speaker disconnected; using the system default.")
-        }
-        snapshot("call-teammate-picker", to: directory, size: CGSize(width: 330, height: 390)) {
-            CallTeammatePicker(store: drivingCall, rtc: drivingCall.rtc, onInvite: { _ in })
-        }
-        snapshot("window-shared-screen-control-granted", to: directory, size: CGSize(width: 1000, height: 620)) {
-            SharedScreenWindow(store: drivingCall, rtc: drivingCall.rtc, transcripts: drivingCall.transcripts)
-        }
-        var qualityHistory = ScreenQualityHistory()
-        for (index, milliseconds) in [54, 61, 58, 82, 164, 116, 92, 104, 77, 63].enumerated() {
-            qualityHistory.record(ScreenQualitySample(uptimeSeconds: Double(index),
-                                                      roundTripMilliseconds: milliseconds,
-                                                      framesPerSecond: 30,
-                                                      packetLossPercent: 0.2))
-        }
-        snapshot("shared-screen-quality-status", to: directory, size: CGSize(width: 520, height: 100)) {
-            ScreenQualityStatusButton(networkQuality: .fair(roundTripMilliseconds: 212),
-                                      controlChannelRTT: "38 ms",
-                                      streamMetrics: "1920 × 1080 · 30 fps · 4.8 Mbps · 0.4% loss",
-                                      localProcessCPU: "avg 24% · peak 36% · 10s",
-                                      firstFrameMilliseconds: 460,
-                                      history: qualityHistory)
-                .padding(20)
-        }
-        snapshot("shared-screen-quality-details", to: directory, size: CGSize(width: 380, height: 380)) {
-            ScreenQualityDetailsView(
-                report: ScreenQualityReport(networkQuality: .fair(roundTripMilliseconds: 212),
-                                            controlChannelRTT: "38 ms",
-                                            receivedStream: "1920 × 1080 · 30 fps · 4.8 Mbps · 0.4% loss",
-                                            localProcessCPU: "avg 24% · peak 36% · 10s",
-                                            firstFrameMilliseconds: 460,
-                                            history: qualityHistory),
-                tint: .orange
-            )
         }
         snapshot("separate-cursors", to: directory, size: CGSize(width: 1000, height: 620)) {
             ZStack {
