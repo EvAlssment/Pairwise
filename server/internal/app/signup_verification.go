@@ -6,13 +6,17 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
+	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"math/big"
 	"net"
 	"net/http"
 	"net/mail"
+	"net/smtp"
 	"os"
 	"strings"
 	"time"
@@ -59,8 +63,99 @@ func configuredSignupMailer() func(context.Context, string, string) error {
 	if key == "" || from == "" {
 		return nil
 	}
+	if strings.EqualFold(strings.TrimSpace(os.Getenv("PAIRDESK_RESEND_TRANSPORT")), "smtp") {
+		return resendSMTPSignupMailer(key, from)
+	}
 	client := &http.Client{Timeout: 10 * time.Second}
 	return resendSignupMailer(client, "https://api.resend.com/emails", key, from)
+}
+
+const resendSMTPHost = "smtp.resend.com"
+
+type signupSMTPClient interface {
+	Auth(smtp.Auth) error
+	Mail(string) error
+	Rcpt(string) error
+	Data() (io.WriteCloser, error)
+	Quit() error
+}
+
+type deadlineSMTPClient struct {
+	signupSMTPClient
+	stopCancel func() bool
+}
+
+func (c *deadlineSMTPClient) Quit() error {
+	if c.stopCancel != nil {
+		defer c.stopCancel()
+	}
+	return c.signupSMTPClient.Quit()
+}
+
+func resendSMTPSignupMailer(key, from string) func(context.Context, string, string) error {
+	return resendSMTPSignupMailerWithDial(func(ctx context.Context) (signupSMTPClient, error) {
+		dialer := &tls.Dialer{
+			NetDialer: &net.Dialer{Timeout: 10 * time.Second},
+			Config:    &tls.Config{MinVersion: tls.VersionTLS12, ServerName: resendSMTPHost},
+		}
+		conn, err := dialer.DialContext(ctx, "tcp", resendSMTPHost+":465")
+		if err != nil {
+			return nil, err
+		}
+		deadline := time.Now().Add(10 * time.Second)
+		if ctxDeadline, ok := ctx.Deadline(); ok && ctxDeadline.Before(deadline) {
+			deadline = ctxDeadline
+		}
+		_ = conn.SetDeadline(deadline)
+		stopCancel := context.AfterFunc(ctx, func() { _ = conn.SetDeadline(time.Now()) })
+		client, err := smtp.NewClient(conn, resendSMTPHost)
+		if err != nil {
+			stopCancel()
+			_ = conn.Close()
+			return nil, err
+		}
+		return &deadlineSMTPClient{signupSMTPClient: client, stopCancel: stopCancel}, nil
+	}, key, from)
+}
+
+func resendSMTPSignupMailerWithDial(dial func(context.Context) (signupSMTPClient, error), key, from string) func(context.Context, string, string) error {
+	return func(ctx context.Context, email, code string) error {
+		fromAddress, err := mail.ParseAddress(from)
+		if err != nil {
+			return errors.New("invalid Resend sender address")
+		}
+		toAddress, err := mail.ParseAddress(email)
+		if err != nil || toAddress.Address != email {
+			return errors.New("invalid signup recipient address")
+		}
+		client, err := dial(ctx)
+		if err != nil {
+			return fmt.Errorf("connect to Resend SMTP: %w", err)
+		}
+		defer client.Quit()
+		if err := client.Auth(smtp.PlainAuth("", "resend", key, resendSMTPHost)); err != nil {
+			return errors.New("Resend SMTP authentication failed")
+		}
+		if err := client.Mail(fromAddress.Address); err != nil {
+			return fmt.Errorf("Resend rejected the sender: %w", err)
+		}
+		if err := client.Rcpt(toAddress.Address); err != nil {
+			return fmt.Errorf("Resend rejected the recipient: %w", err)
+		}
+		writer, err := client.Data()
+		if err != nil {
+			return fmt.Errorf("Resend could not start the message: %w", err)
+		}
+		message := fmt.Sprintf("From: %s\r\nTo: %s\r\nSubject: Your PairDesk verification code\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nYour PairDesk verification code is %s. It expires in 10 minutes. If you didn't request it, ignore this email.\r\n", fromAddress.String(), toAddress.Address, code)
+		if _, err := io.WriteString(writer, message); err != nil {
+			_ = writer.Close()
+			return fmt.Errorf("write Resend message: %w", err)
+		}
+		if err := writer.Close(); err != nil {
+			return fmt.Errorf("Resend rejected the message: %w", err)
+		}
+		return nil
+	}
 }
 
 func resendSignupMailer(client *http.Client, endpoint, key, from string) func(context.Context, string, string) error {

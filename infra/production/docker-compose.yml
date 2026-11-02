@@ -35,6 +35,7 @@ services:
       PAIRDESK_ACCESS_ALLOWED_EMAILS: ${PAIRDESK_ACCESS_ALLOWED_EMAILS:-}
       PAIRDESK_SIGNUP_VERIFY_EMAIL: ${PAIRDESK_SIGNUP_VERIFY_EMAIL:-true}
       PAIRDESK_RESEND_FROM: ${PAIRDESK_RESEND_FROM:-}
+      PAIRDESK_RESEND_TRANSPORT: ${PAIRDESK_RESEND_TRANSPORT:-api}
       PAIRDESK_RESEND_API_KEY_FILE: /run/secrets/pairdesk-resend-key
       # Set to a private Cloud SQL PostgreSQL DSN before running more than one
       # API replica. Empty keeps the existing single-writer JSON-volume mode.

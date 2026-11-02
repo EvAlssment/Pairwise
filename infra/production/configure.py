@@ -39,7 +39,7 @@ def render(api, media, turn, public_ip, contact, output):
         'PAIRDESK_SIGNUP_ENABLED', 'PAIRDESK_SIGNUP_ALLOWED_DOMAINS',
         'PAIRDESK_ACCESS_ALLOWED_DOMAINS', 'PAIRDESK_ACCESS_ALLOWED_EMAILS',
         'PAIRDESK_SIGNUP_VERIFY_EMAIL', 'PAIRDESK_RESEND_FROM',
-        'PAIRDESK_RESEND_API_KEY_HOST_FILE']}
+        'PAIRDESK_RESEND_API_KEY_HOST_FILE', 'PAIRDESK_RESEND_TRANSPORT']}
     safe_patterns = {
         'PAIRDESK_APNS_TEAM_ID': r'[A-Za-z0-9]{0,20}',
         'PAIRDESK_APNS_KEY_ID': r'[A-Za-z0-9]{0,20}',
@@ -53,8 +53,9 @@ def render(api, media, turn, public_ip, contact, output):
         'PAIRDESK_SIGNUP_ALLOWED_DOMAINS': r'[A-Za-z0-9.,-]*',
         'PAIRDESK_ACCESS_ALLOWED_DOMAINS': r'[A-Za-z0-9.,-]*',
         'PAIRDESK_ACCESS_ALLOWED_EMAILS': r'[A-Za-z0-9@._+,-]*',
-        'PAIRDESK_RESEND_FROM': r'[A-Za-z0-9@._+%-]*',
+        'PAIRDESK_RESEND_FROM': r'[A-Za-z0-9@._+%<> -]*',
         'PAIRDESK_RESEND_API_KEY_HOST_FILE': r'(/[A-Za-z0-9._-]+)*',
+        'PAIRDESK_RESEND_TRANSPORT': r'(api|smtp)?',
     }
     for name, value in push_values.items():
         if not re.fullmatch(safe_patterns[name], value):

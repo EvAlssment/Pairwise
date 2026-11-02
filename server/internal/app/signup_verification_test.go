@@ -1,16 +1,78 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/smtp"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 )
+
+type fakeSignupSMTP struct {
+	from       string
+	to         string
+	dataWriter *signupSMTPDataWriter
+	quit       bool
+	authErr    error
+}
+
+type signupSMTPDataWriter struct{ bytes.Buffer }
+
+func (w *signupSMTPDataWriter) Close() error { return nil }
+
+func (c *fakeSignupSMTP) Auth(auth smtp.Auth) error {
+	mechanism, response, err := auth.Start(&smtp.ServerInfo{Name: resendSMTPHost, TLS: true, Auth: []string{"PLAIN"}})
+	if err != nil || mechanism != "PLAIN" || !bytes.Contains(response, []byte("resend")) || !bytes.Contains(response, []byte("test-key")) {
+		return errors.New("unexpected SMTP authentication")
+	}
+	return c.authErr
+}
+func (c *fakeSignupSMTP) Mail(from string) error { c.from = from; return nil }
+func (c *fakeSignupSMTP) Rcpt(to string) error   { c.to = to; return nil }
+func (c *fakeSignupSMTP) Data() (io.WriteCloser, error) {
+	c.dataWriter = &signupSMTPDataWriter{}
+	return c.dataWriter, nil
+}
+func (c *fakeSignupSMTP) Quit() error { c.quit = true; return nil }
+
+func TestResendSMTPMailerAuthenticatesAndSendsVerificationCode(t *testing.T) {
+	client := &fakeSignupSMTP{}
+	send := resendSMTPSignupMailerWithDial(func(context.Context) (signupSMTPClient, error) {
+		return client, nil
+	}, "test-key", "PairDesk <onboarding@resend.dev>")
+	if err := send(context.Background(), "delivered@resend.dev", "01234567"); err != nil {
+		t.Fatal(err)
+	}
+	if client.from != "onboarding@resend.dev" || client.to != "delivered@resend.dev" || !client.quit {
+		t.Fatalf("unexpected SMTP transaction: from=%q to=%q quit=%t", client.from, client.to, client.quit)
+	}
+	message := client.dataWriter.String()
+	for _, expected := range []string{"PairDesk", "onboarding@resend.dev", "delivered@resend.dev", "Subject: Your PairDesk verification code", "01234567"} {
+		if !strings.Contains(message, expected) {
+			t.Fatalf("message missing %q", expected)
+		}
+	}
+}
+
+func TestResendSMTPMailerFailsClosedOnAuthenticationFailure(t *testing.T) {
+	client := &fakeSignupSMTP{authErr: errors.New("invalid test credentials")}
+	send := resendSMTPSignupMailerWithDial(func(context.Context) (signupSMTPClient, error) {
+		return client, nil
+	}, "test-key", "onboarding@resend.dev")
+	if err := send(context.Background(), "delivered@resend.dev", "01234567"); err == nil || !strings.Contains(err.Error(), "authentication failed") {
+		t.Fatalf("expected authentication failure, got %v", err)
+	}
+	if client.dataWriter != nil || !client.quit {
+		t.Fatal("SMTP failure did not close safely before sending message data")
+	}
+}
 
 func TestResendMailerSendsCodeAndReportsProviderFailure(t *testing.T) {
 	status := http.StatusOK
