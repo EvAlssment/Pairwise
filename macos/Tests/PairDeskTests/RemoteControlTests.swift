@@ -2,6 +2,28 @@ import XCTest
 @testable import PairDesk
 
 final class RemoteControlTests: XCTestCase {
+    func testControlLatencyProbeWireMessagesRoundTrip() throws {
+        let probe = RemoteControlMessage(epoch: "share-session", sequence: 41, kind: .latencyProbe)
+        let acknowledgement = RemoteControlMessage(epoch: "share-session", sequence: 41, kind: .latencyProbeAck)
+
+        XCTAssertEqual(try JSONDecoder().decode(RemoteControlMessage.self, from: JSONEncoder().encode(probe)), probe)
+        XCTAssertEqual(try JSONDecoder().decode(RemoteControlMessage.self, from: JSONEncoder().encode(acknowledgement)), acknowledgement)
+    }
+
+    @MainActor
+    func testStopControlShortcutReleasesViewerLease() {
+        let rtc = RTCService()
+        rtc.debugSetCall(participants: [
+            CallParticipant(identity: "me", name: "Me", isLocal: true),
+            CallParticipant(identity: "sharer", name: "Sharer", isLocal: false),
+        ], microphoneEnabled: false)
+        rtc.debugSetViewerControlGrant(sharerIdentity: "sharer")
+
+        rtc.revokeControl()
+
+        XCTAssertEqual(rtc.controlState, .viewer)
+    }
+
     func testOnlyGrantedIdentityWithCurrentEpochAndIncreasingSequenceIsAccepted() {
         var gate = RemoteControlGate()
         let now: TimeInterval = 1_000

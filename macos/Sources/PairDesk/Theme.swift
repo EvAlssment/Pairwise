@@ -114,6 +114,26 @@ struct QuietButtonStyle: ButtonStyle {
     }
 }
 
+struct CallIconButtonStyle: ButtonStyle {
+    var highlight: Color?
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: 14, weight: .semibold))
+            .foregroundStyle(highlight ?? Color.primary)
+            .frame(width: 36, height: 34)
+            .background(highlight?.opacity(configuration.isPressed ? 0.22 : 0.12)
+                        ?? Theme.surfaceRaised.opacity(configuration.isPressed ? 0.72 : 1),
+                        in: RoundedRectangle(cornerRadius: 8))
+            .overlay {
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(highlight?.opacity(0.4) ?? Color.primary.opacity(0.07))
+            }
+            .opacity(isEnabled ? 1 : 0.5)
+    }
+}
+
 struct DangerButtonStyle: ButtonStyle {
     var filled = false
     @Environment(\.isEnabled) private var isEnabled
@@ -129,42 +149,67 @@ struct DangerButtonStyle: ButtonStyle {
     }
 }
 
-/// A large in-call action with a chevron menu for its options, like Tuple's
-/// "Mute me" and "Share screen" tiles.
+/// A compact in-call icon control with a separate menu target for its options.
 struct CallTile<MenuItems: View>: View {
     let title: String
     let systemImage: String
     var highlight: Color?
     var level: Double?
+    var actionEnabled = true
+    var actionBusy = false
     let action: () -> Void
     @ViewBuilder let menu: () -> MenuItems
+    @State private var isActionHovered = false
 
     var body: some View {
         HStack(spacing: 0) {
             Button(action: action) {
-                VStack(spacing: 6) {
-                    Image(systemName: systemImage).font(.system(size: 18, weight: .medium)).frame(height: 20)
-                    Text(title).font(.system(size: 12, weight: .medium)).lineLimit(1)
-                    if let level {
-                        GeometryReader { geometry in
-                            Capsule().fill(Color.white.opacity(0.25))
-                                .overlay(alignment: .leading) { Capsule().fill(Theme.online).frame(width: geometry.size.width * min(max(level, 0), 1)) }
-                        }.frame(width: 40, height: 3)
+                Group {
+                    if actionBusy {
+                        ProgressView().controlSize(.small).frame(width: 38, height: 36)
+                    } else {
+                        VStack(spacing: 3) {
+                            Image(systemName: systemImage)
+                                .font(.system(size: 15, weight: .semibold))
+                                .foregroundStyle(highlight ?? Color.primary)
+                            if let level {
+                                GeometryReader { geometry in
+                                    Capsule().fill(Theme.textMuted.opacity(0.3))
+                                        .overlay(alignment: .leading) { Capsule().fill(Theme.online).frame(width: geometry.size.width * min(max(level, 0), 1)) }
+                                }.frame(width: 20, height: 2)
+                            }
+                        }
+                        // Keep the hit target comfortable while making the toolbar
+                        // visually compact; the optional mic meter stays secondary.
+                        .frame(width: 38, height: 36).contentShape(Rectangle())
                     }
                 }
-                // Fixed height so tiles with and without a level bar line up.
-                .frame(maxWidth: .infinity).frame(height: 50).padding(.vertical, 10).contentShape(Rectangle())
-            }.buttonStyle(.plain)
-            Rectangle().fill(Color.primary.opacity(0.12)).frame(width: 1, height: 30)
+            }
+            .buttonStyle(.plain)
+            .disabled(!actionEnabled || actionBusy)
+            .onHover { isActionHovered = $0 }
+            .background {
+                RoundedRectangle(cornerRadius: 7)
+                    .fill(highlight.map { $0.opacity(isActionHovered ? 0.2 : 0.12) }
+                          ?? Color.primary.opacity(isActionHovered ? 0.07 : 0))
+            }
+            .animation(.easeOut(duration: 0.12), value: isActionHovered)
+            .help(actionBusy ? "Updating…" : title)
+            .accessibilityLabel(actionBusy ? "Updating \(title.lowercased())" : title)
+            Rectangle().fill(Color.primary.opacity(0.12)).frame(width: 1, height: 22)
             Menu { menu() } label: {
                 Image(systemName: "chevron.down").font(.system(size: 10, weight: .semibold))
-                    .frame(width: 26, height: 44).contentShape(Rectangle())
+                    .frame(width: 14, height: 32).contentShape(Rectangle())
             }
             .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
             .accessibilityLabel("\(title) options")
         }
-        .foregroundStyle(highlight == nil ? Color.primary : Color.white)
-        .background(highlight ?? Theme.surfaceRaised, in: RoundedRectangle(cornerRadius: 10))
-        .frame(maxWidth: .infinity)
+        .foregroundStyle(Color.primary)
+        .background(Theme.surfaceRaised, in: RoundedRectangle(cornerRadius: 9))
+        .overlay {
+            if let highlight {
+                RoundedRectangle(cornerRadius: 9).stroke(highlight.opacity(0.55), lineWidth: 1)
+            }
+        }
     }
 }

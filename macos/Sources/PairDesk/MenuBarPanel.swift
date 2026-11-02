@@ -86,7 +86,11 @@ struct MenuBarPanel: View {
             Text("\(teammates.count)").font(.caption.monospacedDigit()).foregroundStyle(Theme.textMuted)
             Button { Task { await store.refresh() } } label: {
                 Image(systemName: "arrow.clockwise").font(.caption).foregroundStyle(Theme.textMuted)
-            }.buttonStyle(.plain).help("Refresh contacts").accessibilityLabel("Refresh contacts")
+            }
+            .buttonStyle(.plain)
+            .help("Refresh contacts (⌘R)")
+            .accessibilityLabel("Refresh contacts")
+            .keyboardShortcut("r", modifiers: .command)
         }
     }
 
@@ -113,7 +117,9 @@ struct MenuBarPanel: View {
     private var inCall: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 6) {
-                Text(rtc.isSharing || rtc.screenTrack != nil ? "Screen share" : "Audio call").font(.system(size: 13, weight: .semibold))
+                Text(CallMediaMode.title(screenSharing: rtc.isSharing || rtc.screenTrack != nil,
+                                         cameraActive: rtc.isCameraEnabled || !rtc.cameraFeeds.isEmpty))
+                    .font(.system(size: 13, weight: .semibold))
                 if let started = store.callStartedAt {
                     Text("·").foregroundStyle(Theme.textMuted)
                     Text(started, style: .timer).font(.system(size: 13).monospacedDigit()).foregroundStyle(Theme.textMuted)
@@ -123,10 +129,27 @@ struct MenuBarPanel: View {
                     Label(rtc.isSharing ? "Reconnecting · control paused" : "Reconnecting…", systemImage: "arrow.triangle.2.circlepath")
                         .font(.caption).foregroundStyle(Theme.attention).lineLimit(1)
                 }
+                Button {
+                    Task { await rtc.setLocalHandRaised(!rtc.isLocalHandRaised) }
+                } label: {
+                    Label(rtc.isLocalHandRaised ? "Lower hand" : "Raise hand",
+                          systemImage: rtc.isLocalHandRaised ? "hand.raised.fill" : "hand.raised")
+                }
+                .buttonStyle(QuietButtonStyle(compact: true))
+                .disabled(!rtc.connected || rtc.isUpdatingLocalHandRaise)
+                .help(rtc.isLocalHandRaised ? "Lower your hand" : "Signal that you want to speak")
+                .accessibilityLabel(rtc.isLocalHandRaised ? "Lower hand" : "Raise hand")
             }
             if rtc.isSharing, let quality = rtc.adaptiveShareStatus {
                 Text("Screen quality · \(quality)")
                     .font(.caption).foregroundStyle(Theme.textMuted)
+            }
+            if rtc.isSharing {
+                Label("Sent · \(rtc.screenShareSenderMetrics.summary)", systemImage: "arrow.up.right.video")
+                    .font(.caption)
+                    .foregroundStyle(rtc.screenShareSenderMetrics.limitation == .none ? Theme.textMuted : Theme.attention)
+                    .lineLimit(2)
+                    .accessibilityLabel("Measured outgoing screen share: \(rtc.screenShareSenderMetrics.summary)")
             }
             VStack(alignment: .leading, spacing: 8) {
                 sectionHeader("ON THIS CALL · \(rtc.participants.filter { !$0.isLocal }.count + 1)")
@@ -145,7 +168,7 @@ struct MenuBarPanel: View {
                     PendingCallParticipantRow(store: store, invitation: invitation)
                 }
             }
-            CameraStrip(feeds: rtc.cameraFeeds)
+            CameraStrip(feeds: rtc.cameraFeeds) { AppWindows.shared.showCameraGallery(store: store) }
             Button { show("transcript") } label: {
                 Label("Transcript and local agent access…", systemImage: "text.quote")
                     .font(.system(size: 11, weight: .medium))
@@ -170,17 +193,20 @@ struct MenuBarPanel: View {
                 }
             }
             HStack(spacing: 8) {
+                Spacer(minLength: 0)
                 CallTile(title: rtc.isMicrophoneEnabled ? "Mute me" : "Unmute me",
                          systemImage: rtc.isMicrophoneEnabled ? "mic.fill" : "mic.slash.fill",
                          highlight: rtc.isMicrophoneEnabled ? nil : Theme.attention,
                          level: rtc.isMicrophoneEnabled ? rtc.localMicrophoneLevel : nil,
-                         action: { Task { do { try await store.setMicrophoneEnabled(!rtc.isMicrophoneEnabled) } catch { store.error = error.localizedDescription } } }) {
+                         actionBusy: isUpdatingMicrophone,
+                         action: toggleMicrophone) {
                     audioDeviceMenu
                 }
                 CallTile(title: rtc.isCameraEnabled ? "Camera on" : "Camera off",
                          systemImage: rtc.isCameraEnabled ? "video.fill" : "video.slash.fill",
                          highlight: rtc.isCameraEnabled ? Theme.accent : nil,
-                         action: { Task { do { try await rtc.setCameraEnabled(!rtc.isCameraEnabled) } catch { store.error = error.localizedDescription } } }) {
+                         actionBusy: isUpdatingCamera,
+                         action: toggleCamera) {
                     if rtc.isCameraEnabled && rtc.cameraDevices.count > 1 {
                         Section("Choose camera") {
                             ForEach(rtc.cameraDevices) { device in
@@ -202,7 +228,8 @@ struct MenuBarPanel: View {
                 CallTile(title: rtc.isSharing ? "Stop sharing" : "Share screen",
                          systemImage: rtc.isSharing ? "rectangle.on.rectangle.slash" : "rectangle.on.rectangle",
                          highlight: rtc.isSharing ? Theme.accent : nil,
-                         action: { if rtc.isSharing { Task { await store.stopSharing() } } else { show("share") } }) {
+                         actionEnabled: !store.busy,
+                         action: { if rtc.isSharing { Task { await store.stopSharing() } } else { chooseShareSource(.display) } }) {
                     if !rtc.isSharing, rtc.screenTrack != nil {
                         Button("Show shared screen") { show("screen") }
                         Divider()
@@ -213,7 +240,15 @@ struct MenuBarPanel: View {
                                 .disabled(store.busy)
                         }
                     }
+                    Divider()
+                    ScreenShareQualityMenuItems(
+                        quality: rtc.screenShareQuality,
+                        adaptiveQualityEnabled: rtc.adaptiveQualityEnabled,
+                        onSelectQuality: { rtc.setScreenShareQuality($0) },
+                        onAdaptiveQualityChanged: { rtc.setAdaptiveQualityEnabled($0) }
+                    )
                 }
+                Spacer(minLength: 0)
             }
             if !permissions.microphone && !rtc.isMicrophoneEnabled {
                 Button("Microphone access needed to talk…") { show("permissions") }.buttonStyle(.plain).font(.caption).foregroundStyle(Theme.accent)
@@ -232,7 +267,8 @@ struct MenuBarPanel: View {
             if rtc.clipboardSharingEnabled { clipboardSyncStatus }
             HStack {
                 if !store.canAddPerson {
-                    Text("Call is full · four people").font(.caption).foregroundStyle(Theme.textMuted)
+                    Text("Call is full · \(PairRoom.maximumParticipants) people")
+                        .font(.caption).foregroundStyle(Theme.textMuted)
                 }
                 Spacer()
                 Button("End call") { Task { await store.leave() } }.buttonStyle(DangerButtonStyle())
@@ -265,13 +301,22 @@ struct MenuBarPanel: View {
     /// Sync shares every copy with the call, so it stays visible outside the
     /// clipboard sheet, with the way to stop it.
     private var clipboardSyncStatus: some View {
-        HStack(spacing: 8) {
-            Label(rtc.clipboardSyncNotice ?? "Clipboard sync is on", systemImage: "doc.on.clipboard")
-                .font(.caption).foregroundStyle(Theme.textMuted).lineLimit(1)
+        let presentation = ClipboardSyncNoticePresentation.resolve(rtc.clipboardSyncNotice)
+        return HStack(spacing: 8) {
+            Label(rtc.clipboardSyncNotice ?? "Clipboard sync is on", systemImage: presentation.symbol)
+                .font(.caption).foregroundStyle(clipboardNoticeColor(presentation.tone)).lineLimit(1)
             Spacer(minLength: 4)
             if !rtc.automaticScreenClipboardEnabled {
                 Button("Turn off") { rtc.setClipboardSyncEnabled(false) }.buttonStyle(QuietButtonStyle(compact: true))
             }
+        }
+    }
+
+    private func clipboardNoticeColor(_ tone: ClipboardSyncNoticeTone) -> Color {
+        switch tone {
+        case .warning: Theme.attention
+        case .success: Theme.online
+        case .neutral, .progress: Theme.textMuted
         }
     }
 
@@ -326,7 +371,21 @@ struct MenuBarPanel: View {
         VStack(spacing: 10) {
             HStack(spacing: 8) {
                 Image(systemName: "magnifyingglass").foregroundStyle(Theme.textMuted)
-                TextField("Search people…", text: $searchText).textFieldStyle(.plain)
+                TextField("Search people…", text: $searchText)
+                    .textFieldStyle(.plain)
+                    .focused($searchFocused)
+                    .onKeyPress(.escape) {
+                        if !searchText.isEmpty { searchText = "" }
+                        searchFocused = false
+                        return .handled
+                    }
+                Button { searchFocused = true } label: {
+                    Text("⌘F").font(.system(size: 9, weight: .medium, design: .monospaced))
+                        .foregroundStyle(Theme.textMuted)
+                }
+                .buttonStyle(.plain)
+                .help("Focus search")
+                .keyboardShortcut("f", modifiers: .command)
                 if !searchText.isEmpty {
                     Button { searchText = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(Theme.textMuted) }
                         .buttonStyle(.plain).accessibilityLabel("Clear search")
@@ -361,6 +420,7 @@ struct MenuBarPanel: View {
     private var teammates: [TeamUser] {
         store.users.filter { $0.id != store.user?.id }.sorted {
             if ($0.online == true) != ($1.online == true) { return $0.online == true }
+            if isFavorite($0) != isFavorite($1) { return isFavorite($0) }
             return $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
         }
     }
@@ -456,6 +516,7 @@ struct MenuBarPanel: View {
 
     private func activeCallRow(_ room: PairRoom) -> some View {
         let pendingRequest = store.outgoingJoinRequests.first { $0.room.id == room.id }
+        let joinActionIsInRoster = visibleTeammates.contains { joinableCall(for: $0)?.id == room.id }
         return HStack(spacing: 8) {
             HStack(spacing: -7) {
                 ForEach(Array(room.participants.prefix(3))) { participant in
@@ -465,13 +526,19 @@ struct MenuBarPanel: View {
             }
             VStack(alignment: .leading, spacing: 1) {
                 Text(callNames(room)).font(.system(size: 12, weight: .medium)).lineLimit(1)
-                Text(pendingRequest == nil ? "\(room.participantCount) people · active call" : "Request sent · waiting for acceptance")
+                let callStatus = room.participantCount >= PairRoom.maximumParticipants ? "call full" : "active call"
+                Text(pendingRequest == nil ? "\(room.participantCount) people · \(callStatus)" : "Request sent · waiting for acceptance")
                     .font(.caption).foregroundStyle(Theme.textMuted)
             }
             Spacer(minLength: 4)
-            if let pendingRequest {
+            if joinActionIsInRoster {
+                EmptyView()
+            } else if let pendingRequest {
                 Button("Cancel") { Task { await store.cancelJoinRequest(pendingRequest) } }
                     .buttonStyle(QuietButtonStyle(compact: true)).disabled(store.busy)
+            } else if room.participantCount >= PairRoom.maximumParticipants {
+                Button("Full") {}.buttonStyle(QuietButtonStyle(compact: true)).disabled(true)
+                    .help("This call has reached the \(PairRoom.maximumParticipants)-person limit")
             } else {
                 Button("Request to join") { Task { await store.requestToJoin(room) } }
                     .buttonStyle(QuietButtonStyle(compact: true)).disabled(store.busy || store.activeRoom != nil)
@@ -497,20 +564,58 @@ struct MenuBarPanel: View {
 
     private func contactRow(_ person: TeamUser) -> some View {
         let online = person.online == true
+        let joinableCall = joinableCall(for: person)
+        let pendingJoinRequest = joinableCall.flatMap { room in
+            store.outgoingJoinRequests.first { $0.room.id == room.id }
+        }
         return HStack(spacing: 10) {
             PersonAvatar(name: person.name, id: person.id, size: 32, presence: presence(person)).opacity(online ? 1 : 0.55)
             VStack(alignment: .leading, spacing: 2) {
                 Text(person.name).font(.system(size: 13, weight: .medium)).foregroundStyle(online ? Color.primary : Theme.textMuted).lineLimit(1)
-                Text(status(person)).font(.caption).foregroundStyle(Theme.textMuted)
+                Text(pendingJoinRequest == nil ? status(person) : "Join request sent")
+                    .font(.caption).foregroundStyle(Theme.textMuted)
             }
             Spacer(minLength: 4)
-            if canCall(person) {
+            Button { toggleFavorite(person) } label: {
+                Image(systemName: isFavorite(person) ? "star.fill" : "star")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(isFavorite(person) ? Theme.attention : Theme.textMuted)
+                    .frame(width: 28, height: 28)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(isFavorite(person) ? "Remove from favorites" : "Add to favorites")
+            .accessibilityLabel(isFavorite(person) ? "Remove \(person.name) from favorites" : "Add \(person.name) to favorites")
+            if let joinableCall {
+                if let pendingJoinRequest {
+                    Button("Cancel") { Task { await store.cancelJoinRequest(pendingJoinRequest) } }
+                        .buttonStyle(QuietButtonStyle(compact: true))
+                        .disabled(store.busy)
+                } else if joinableCall.participantCount >= PairRoom.maximumParticipants {
+                    Button("Full") {}.buttonStyle(QuietButtonStyle(compact: true)).disabled(true)
+                        .help("This call has reached the \(PairRoom.maximumParticipants)-person limit")
+                } else {
+                    Button {
+                        Task { await store.requestToJoin(joinableCall) }
+                    } label: {
+                        Label("Join", systemImage: "person.2")
+                    }
+                    .buttonStyle(QuietButtonStyle(compact: true))
+                    .help("Ask everyone in this call to let you join")
+                    .accessibilityLabel("Request to join call with \(callNames(joinableCall))")
+                    .disabled(store.busy)
+                }
+            } else if canCall(person) {
                 Button { Task { await store.call(person) } } label: {
                     Label(store.activeRoom == nil ? "Call" : "Add", systemImage: "phone.fill")
                 }.buttonStyle(QuietButtonStyle(compact: true))
             }
         }
         .frame(height: 44).padding(.horizontal, 8).contentShape(Rectangle())
+        .contextMenu {
+            Button("Copy email") { copyToClipboard(person.email) }
+            Button("Copy name") { copyToClipboard(person.name) }
+        }
     }
 
     private func presence(_ person: TeamUser) -> Presence {
@@ -522,6 +627,16 @@ struct MenuBarPanel: View {
             return invitation.status == "accepted" ? "Joining this call" : "Invited to this call"
         }
         return person.online != true ? "Offline" : (person.busy == true ? "In a call" : "Online")
+    }
+    private func joinableCall(for person: TeamUser) -> PairRoom? {
+        guard store.activeRoom == nil else { return nil }
+        return store.activeTeamCalls.first { room in
+            guard room.participants.contains(where: { $0.id == person.id }),
+                  let firstVisibleParticipant = room.participants.first(where: { member in
+                      visibleTeammates.contains(where: { $0.id == member.id })
+                  }) else { return false }
+            return firstVisibleParticipant.id == person.id
+        }
     }
     private func canCall(_ person: TeamUser) -> Bool {
         !store.busy && person.online == true && person.busy != true &&
@@ -553,6 +668,45 @@ struct MenuBarPanel: View {
                 if rtc.isSharing { await store.changeScreenSource(source: source) }
                 else { await store.shareScreen(source: source) }
             }
+        }
+    }
+
+    private func toggleMicrophone() {
+        guard !isUpdatingMicrophone else { return }
+        let enabled = !rtc.isMicrophoneEnabled
+        isUpdatingMicrophone = true
+        Task {
+            defer { isUpdatingMicrophone = false }
+            do { try await store.setMicrophoneEnabled(enabled) }
+            catch { store.error = error.localizedDescription }
+        }
+    }
+
+    private func toggleCamera() {
+        guard !isUpdatingCamera else { return }
+        let enabled = !rtc.isCameraEnabled
+        isUpdatingCamera = true
+        Task {
+            defer { isUpdatingCamera = false }
+            do { try await rtc.setCameraEnabled(enabled) }
+            catch { store.error = error.localizedDescription }
+        }
+    }
+}
+
+private enum RosterFilter: String, CaseIterable, Identifiable {
+    case all
+    case online
+    case busy
+    case favorites
+
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .all: "All"
+        case .online: "Online"
+        case .busy: "In a call"
+        case .favorites: "Favorites"
         }
     }
 }

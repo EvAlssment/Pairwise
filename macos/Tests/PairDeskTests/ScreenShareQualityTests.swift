@@ -2,23 +2,121 @@ import XCTest
 @testable import PairDesk
 
 final class ScreenShareQualityTests: XCTestCase {
-    func testReceivedStreamMetricsFormatMeasuredResolutionFrameRateAndLoss() {
+    func testSenderMetricsReportActualOutputAndEncoderConstraint() {
+        XCTAssertEqual(
+            ScreenShareSenderMetrics(width: 3_840, height: 2_160, framesPerSecond: 30,
+                                     bitrateMegabitsPerSecond: 8.25,
+                                     limitation: .bandwidth).summary,
+            "3840 × 2160 · 30 fps · 8.2 Mbps · network constrained"
+        )
+        XCTAssertEqual(
+            ScreenShareSenderMetrics(width: 1_920, height: 1_080, framesPerSecond: 24,
+                                     bitrateMegabitsPerSecond: 2.4,
+                                     limitation: .cpu).summary,
+            "1920 × 1080 · 24 fps · 2.4 Mbps · Mac load constrained"
+        )
+        XCTAssertEqual(ScreenShareSenderMetrics().summary, "Measuring outbound video")
+        XCTAssertEqual(ScreenShareSenderMetrics(width: 0, height: 2_160, framesPerSecond: .infinity).summary,
+                       "Measuring outbound video")
+        XCTAssertNil(ScreenShareSenderMetrics(bitrateMegabitsPerSecond: .infinity).bitrateMegabitsPerSecond)
+    }
+
+    func testSenderReportContainsOnlyReviewableTechnicalMeasurements() {
+        let report = ScreenShareSenderReport.text(
+            metrics: ScreenShareSenderMetrics(width: 3_840, height: 2_160,
+                                               framesPerSecond: 30,
+                                               bitrateMegabitsPerSecond: 8.2,
+                                               limitation: .bandwidth),
+            maximum: .sharp,
+            adaptiveQualityEnabled: true,
+            localProcessCPU: ScreenShareProcessCPUUsage(averagePercent: 24,
+                                                        peakPercent: 36,
+                                                        durationSeconds: 10)
+        )
+
+        XCTAssertTrue(report.contains("Encoder output: 3840 × 2160 · 30 fps · 8.2 Mbps · network constrained"))
+        XCTAssertTrue(report.contains("Selected maximum: Sharp · 4K"))
+        XCTAssertTrue(report.contains("Adaptive quality: on"))
+        XCTAssertTrue(report.contains("avg 24% · peak 36% · 10s"))
+        XCTAssertTrue(report.contains("no account names, screen content, or network addresses"))
+        XCTAssertFalse(report.localizedCaseInsensitiveContains("email"))
+        XCTAssertFalse(report.localizedCaseInsensitiveContains("token"))
+    }
+
+    func testSenderBitrateUsesByteCounterDeltaAndNeedsTwoSamples() {
+        var estimator = ScreenShareBitrateEstimator()
+        XCTAssertNil(estimator.sample(byteCount: 1_000, at: 10))
+        XCTAssertEqual(try XCTUnwrap(estimator.sample(byteCount: 2_000_000, at: 11)), 15.992, accuracy: 0.001)
+        XCTAssertEqual(try XCTUnwrap(estimator.sample(byteCount: 3_000_000, at: 12)), 8.0, accuracy: 0.001)
+    }
+
+    func testSenderBitrateDropsStaleOrResetCountersAndRebases() {
+        var estimator = ScreenShareBitrateEstimator()
+        XCTAssertNil(estimator.sample(byteCount: 10_000, at: 10))
+        XCTAssertNil(estimator.sample(byteCount: 20_000, at: 10))
+        XCTAssertNil(estimator.sample(byteCount: 2_000, at: 11), "counter reset starts a fresh measurement window")
+        XCTAssertEqual(try XCTUnwrap(estimator.sample(byteCount: 1_002_000, at: 12)), 8.0, accuracy: 0.001)
+        XCTAssertNil(estimator.sample(byteCount: nil, at: 13))
+        XCTAssertNil(estimator.sample(byteCount: 2_000_000, at: 14), "missing stats clear the previous baseline")
+    }
+
+    func testQualityHistoryKeepsOnlyLatestMinuteAndSummarizesLatency() {
+        var history = ScreenQualityHistory()
+        for second in 0..<65 {
+            history.record(ScreenQualitySample(uptimeSeconds: Double(second),
+                                               roundTripMilliseconds: second,
+                                               framesPerSecond: 30,
+                                               packetLossPercent: 0.5))
+        }
+
+        XCTAssertEqual(history.samples.count, 60)
+        XCTAssertEqual(history.samples.first?.uptimeSeconds, 5)
+        XCTAssertEqual(history.medianRoundTripMilliseconds, 34)
+        XCTAssertEqual(history.peakRoundTripMilliseconds, 64)
+        XCTAssertEqual(history.summary, "RTT median 34 ms · peak 64 ms · 60 readings")
+    }
+
+    func testQualityHistoryRejectsInvalidAndOutOfOrderSamplesAndShowsGaps() {
+        var history = ScreenQualityHistory()
+        history.record(ScreenQualitySample(uptimeSeconds: 10, roundTripMilliseconds: 80,
+                                           framesPerSecond: 30, packetLossPercent: 1))
+        history.record(ScreenQualitySample(uptimeSeconds: 9, roundTripMilliseconds: 20,
+                                           framesPerSecond: 30, packetLossPercent: 1))
+        history.record(ScreenQualitySample(uptimeSeconds: 11, roundTripMilliseconds: nil,
+                                           framesPerSecond: nil, packetLossPercent: nil))
+        history.record(ScreenQualitySample(uptimeSeconds: 12, roundTripMilliseconds: -1,
+                                           framesPerSecond: 30, packetLossPercent: 1))
+        history.record(ScreenQualitySample(uptimeSeconds: 80, roundTripMilliseconds: 95,
+                                           framesPerSecond: 30, packetLossPercent: 1))
+
+        XCTAssertEqual(history.samples.count, 1, "samples older than the one-minute window expire")
+        XCTAssertEqual(history.roundTripReadings, [95])
+        XCTAssertEqual(history.chartCeilingMilliseconds, 150)
+        history.reset()
+        XCTAssertTrue(history.samples.isEmpty)
+        XCTAssertEqual(history.summary, "RTT unavailable")
+    }
+
+    func testReceivedStreamMetricsFormatMeasuredResolutionFrameRateBitrateAndLoss() {
         let metrics = ScreenStreamMetrics(width: 2_560,
                                           height: 1_440,
                                           framesPerSecond: 29.6,
+                                          bitrateMegabitsPerSecond: 4.75,
                                           packetsReceived: 9_900,
                                           packetsLost: 100)
         XCTAssertEqual(metrics.width, 2_560)
         XCTAssertEqual(metrics.height, 1_440)
         XCTAssertEqual(metrics.framesPerSecond, 30)
+        XCTAssertEqual(metrics.bitrateMegabitsPerSecond, 4.75)
         XCTAssertEqual(try XCTUnwrap(metrics.packetLossPercent), 1.0, accuracy: 0.0001)
-        XCTAssertEqual(metrics.summary, "2560 × 1440 · 30 fps · 1.0% loss")
+        XCTAssertEqual(metrics.summary, "2560 × 1440 · 30 fps · 4.8 Mbps · 1.0% loss")
     }
 
     func testReceivedStreamMetricsOmitInvalidOrUnavailableValues() {
         XCTAssertEqual(ScreenStreamMetrics().summary, "Stream stats unavailable")
         XCTAssertEqual(ScreenStreamMetrics(width: 0, height: 1, framesPerSecond: .infinity).summary,
                        "Stream stats unavailable")
+        XCTAssertNil(ScreenStreamMetrics(bitrateMegabitsPerSecond: .infinity).bitrateMegabitsPerSecond)
         XCTAssertNil(ScreenStreamMetrics(packetsReceived: 10, packetsLost: -1).packetLossPercent)
         XCTAssertNil(ScreenStreamMetrics(packetsReceived: UInt64.max, packetsLost: 1).packetLossPercent)
     }
@@ -40,17 +138,24 @@ final class ScreenShareQualityTests: XCTestCase {
         XCTAssertEqual(ScreenShareQuality.sharp.maxBitrate, 8_000_000)
     }
 
-    func testPresetSelectionPersistsAndInvalidStoredValueFallsBackToBalanced() {
+    func testPresetSelectionPersistsAndInvalidStoredValueFallsBackToFourKMaximum() {
         let suiteName = "ScreenShareQualityTests.\(UUID().uuidString)"
         let defaults = try! XCTUnwrap(UserDefaults(suiteName: suiteName))
         defer { defaults.removePersistentDomain(forName: suiteName) }
 
-        XCTAssertEqual(ScreenShareQuality.load(from: defaults), .balanced)
+        XCTAssertEqual(ScreenShareQuality.load(from: defaults), .sharp)
         ScreenShareQuality.sharp.persist(to: defaults)
         XCTAssertEqual(ScreenShareQuality.load(from: defaults), .sharp)
 
         defaults.set("unknown-quality", forKey: ScreenShareQuality.defaultsKey)
-        XCTAssertEqual(ScreenShareQuality.load(from: defaults), .balanced)
+        XCTAssertEqual(ScreenShareQuality.load(from: defaults), .sharp)
+    }
+
+    func testDefaultScreenShareMaximumIsFourKAtThirtyFrames() {
+        XCTAssertEqual(ScreenShareQuality.defaultValue, .sharp)
+        XCTAssertEqual(ScreenShareQuality.defaultValue.dimensions.width, 3_840)
+        XCTAssertEqual(ScreenShareQuality.defaultValue.framesPerSecond, 30)
+        XCTAssertEqual(AdaptiveShareController(maximum: .sharp).current, .fourK)
     }
 
     func testRTTUsesExactlyTheSelectedCandidatePair() {

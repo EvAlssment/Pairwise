@@ -32,6 +32,39 @@ ALLOWED_FIELDS = {
     "syntheticReadability",
     "runner",
     "unmeasured",
+    "cameraSimulcast",
+}
+CAMERA_FIELDS = {
+    "source",
+    "publishWidth",
+    "publishHeight",
+    "maximumFramesPerSecond",
+    "harnessProcessCPUPercent",
+    "receivers",
+    "unmeasured",
+}
+CAMERA_RECEIVER_FIELDS = {
+    "viewRole",
+    "requestedWidth",
+    "requestedHeight",
+    "receivedWidth",
+    "receivedHeight",
+    "observedFramesPerSecond",
+    "receivedBitrateKilobitsPerSecond",
+    "framesReceived",
+    "timeToFirstFrameMilliseconds",
+    "packetLossPercent",
+    "selectedPathRTTMilliseconds",
+}
+CAMERA_RECEIVER_REQUIRED_FIELDS = CAMERA_RECEIVER_FIELDS - {
+    "receivedBitrateKilobitsPerSecond",
+    "packetLossPercent",
+    "selectedPathRTTMilliseconds",
+}
+CAMERA_UNMEASURED = {
+    "separate_sender_receiver_cpu",
+    "physical_camera_quality",
+    "readability",
 }
 ALWAYS_UNMEASURED = {
     "pointer_to_render_latency",
@@ -108,6 +141,7 @@ def main() -> int:
             "observedFramesPerSecond",
             "timeToFirstFrameMilliseconds",
             "syntheticSenderPauseRecoveryMilliseconds",
+            "cameraSimulcast",
         }
         if not required.issubset(report):
             raise ValueError(f"{name}: benchmark is missing a required field")
@@ -202,6 +236,72 @@ def main() -> int:
         recovery = report.get("syntheticSenderPauseRecoveryMilliseconds")
         if not finite_number(recovery) or recovery <= 0:
             raise ValueError(f"{name}: missing or invalid sender-pause recovery measurement")
+        camera = report.get("cameraSimulcast")
+        if participants == 4:
+            if not isinstance(camera, dict) or set(camera) != CAMERA_FIELDS:
+                raise ValueError(f"{name}: four-participant report needs strict camera simulcast measurements")
+            if camera["source"] != "synthetic-camera-simulcast":
+                raise ValueError(f"{name}: unexpected camera benchmark source")
+            if camera["publishWidth"] != 1920 or camera["publishHeight"] != 1080 or camera["maximumFramesPerSecond"] != 30:
+                raise ValueError(f"{name}: camera benchmark must publish the defined synthetic 1080p30 source")
+            cpu = camera["harnessProcessCPUPercent"]
+            if not finite_number(cpu) or not 0 <= cpu <= 2_000:
+                raise ValueError(f"{name}: invalid camera harness CPU measurement")
+            if (
+                not isinstance(camera["unmeasured"], list)
+                or len(camera["unmeasured"]) != len(set(camera["unmeasured"]))
+                or set(camera["unmeasured"]) != CAMERA_UNMEASURED
+            ):
+                raise ValueError(f"{name}: camera quality, readability, and per-endpoint CPU limits must remain explicit")
+            receivers = camera["receivers"]
+            if not isinstance(receivers, list) or len(receivers) != 3:
+                raise ValueError(f"{name}: expected thumbnail, standard, and gallery camera receivers")
+            expected_views = [
+                ("thumbnail", 320, 180),
+                ("standard", 640, 360),
+                ("gallery", 1920, 1080),
+            ]
+            received_areas = []
+            for receiver, (role, requested_width, requested_height) in zip(receivers, expected_views):
+                if (
+                    not isinstance(receiver, dict)
+                    or not set(receiver).issubset(CAMERA_RECEIVER_FIELDS)
+                    or not CAMERA_RECEIVER_REQUIRED_FIELDS.issubset(receiver)
+                ):
+                    raise ValueError(f"{name}: camera receiver measurement contains unknown or missing fields")
+                if receiver["viewRole"] != role or receiver["requestedWidth"] != requested_width or receiver["requestedHeight"] != requested_height:
+                    raise ValueError(f"{name}: camera receiver order or requested view size is invalid")
+                width, height = receiver["receivedWidth"], receiver["receivedHeight"]
+                if type(width) is not int or width <= 0 or type(height) is not int or height <= 0:
+                    raise ValueError(f"{name}: camera receiver lacks measured decoded dimensions")
+                received_areas.append(width * height)
+                if type(receiver["framesReceived"]) is not int or receiver["framesReceived"] <= 1:
+                    raise ValueError(f"{name}: camera receiver lacks a sustained frame sample")
+                fps = receiver["observedFramesPerSecond"]
+                first_frame = receiver["timeToFirstFrameMilliseconds"]
+                if not finite_number(fps) or not 0 < fps <= 120:
+                    raise ValueError(f"{name}: invalid measured camera frame rate")
+                if not finite_number(first_frame) or first_frame <= 0:
+                    raise ValueError(f"{name}: invalid camera first-frame measurement")
+                for field, maximum in (
+                    ("receivedBitrateKilobitsPerSecond", 100_000),
+                    ("packetLossPercent", 100),
+                    ("selectedPathRTTMilliseconds", 120_000),
+                ):
+                    value = receiver.get(field)
+                    if value is not None and (not finite_number(value) or not 0 <= value <= maximum):
+                        raise ValueError(f"{name}: invalid measured camera field: {field}")
+                    if field == "receivedBitrateKilobitsPerSecond" and value is not None and value <= 0:
+                        raise ValueError(f"{name}: camera bitrate must be positive when reported")
+            if not received_areas[0] <= received_areas[1] <= received_areas[2] or received_areas[0] >= received_areas[2]:
+                raise ValueError(f"{name}: decoded camera resolution must scale from thumbnail to gallery view size")
+            print(
+                f"{profile} {participants}p camera: "
+                + ", ".join(f"{r['viewRole']} {r['receivedWidth']}x{r['receivedHeight']} at {r['observedFramesPerSecond']:.1f} FPS" for r in receivers)
+                + f", harness CPU {cpu:.1f}% (synthetic loopback)"
+            )
+        elif camera is not None:
+            raise ValueError(f"{name}: camera simulcast measurements belong only to the four-participant profile")
         print(
             f"{profile} {participants}p: selected RTT {report['selectedPathRTTMilliseconds']:.1f} ms, "
             f"packet loss {report['packetLossPercent']:.2f}%, "

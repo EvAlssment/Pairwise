@@ -13,6 +13,26 @@ final class SettingsPreferenceTests: XCTestCase {
         XCTAssertEqual(CameraVideoQuality.load(from: defaults), .balanced)
     }
 
+    func testAccessibilitySystemPromptIsOnlyRequestedOnceAcrossRelaunches() {
+        let defaults = makeDefaults()
+        let firstLaunch = AccessibilityPromptGate(defaults: defaults)
+        XCTAssertTrue(firstLaunch.shouldPrompt(isTrusted: false))
+        XCTAssertTrue(firstLaunch.wasRequested)
+
+        let nextLaunch = AccessibilityPromptGate(defaults: defaults)
+        XCTAssertFalse(nextLaunch.shouldPrompt(isTrusted: false))
+        XCTAssertFalse(AccessibilityPromptGate(defaults: defaults).shouldPrompt(isTrusted: true))
+    }
+
+    func testMediaPermissionActionReflectsTheActualSystemAuthorizationState() {
+        XCTAssertEqual(MediaPermissionAuthorization(.notDetermined).actionTitle, "Allow")
+        XCTAssertEqual(MediaPermissionAuthorization(.authorized).actionTitle, "Settings")
+        XCTAssertEqual(MediaPermissionAuthorization(.denied).actionTitle, "Open Settings")
+        XCTAssertEqual(MediaPermissionAuthorization(.restricted).actionTitle, "Open Settings")
+        XCTAssertTrue(MediaPermissionAuthorization(.authorized).isAuthorized)
+        XCTAssertFalse(MediaPermissionAuthorization(.denied).isAuthorized)
+    }
+
     @MainActor
     func testPrivacyVeilPreferencesPersistAndRemoveAppsByBundleIdentifier() throws {
         let defaults = makeDefaults()

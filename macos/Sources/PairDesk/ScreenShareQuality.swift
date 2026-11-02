@@ -9,7 +9,9 @@ enum ScreenShareQuality: String, CaseIterable, Codable, Identifiable {
     case sharp
 
     static let defaultsKey = "screenShareQuality"
-    static let defaultValue: Self = .balanced
+    // Product default: give the share enough detail for code and text at 4K30;
+    // adaptive capture can step down to 1440p30 or the 1080p30 floor.
+    static let defaultValue: Self = .sharp
 
     var id: String { rawValue }
 

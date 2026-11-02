@@ -7,6 +7,15 @@ struct CameraVideoMetrics: Equatable {
     let height: Int?
     let framesPerSecond: Int?
 
+    /// Use measured camera geometry when available. A constrained fallback
+    /// keeps an invalid or transient stats value from collapsing a tile.
+    var aspectRatio: CGFloat {
+        guard let width, let height else { return 16.0 / 9.0 }
+        let ratio = CGFloat(width) / CGFloat(height)
+        guard ratio.isFinite, (0.5...2.5).contains(ratio) else { return 16.0 / 9.0 }
+        return ratio
+    }
+
     init(width: UInt? = nil, height: UInt? = nil, framesPerSecond: Double? = nil) {
         if let width, let height, width > 0, height > 0 {
             self.width = Int(width)

@@ -1,20 +1,103 @@
 import SwiftUI
 @preconcurrency import LiveKit
 
+enum CameraGalleryLayout: String, CaseIterable, Identifiable {
+    case spotlight
+    case grid
+    static let preferenceKey = "cameraGalleryLayout.v1"
+
+    var id: String { rawValue }
+}
+
+enum CameraGalleryFocus {
+    static func primaryIdentity(feedIdentities: [String], speakingIdentities: Set<String>, pinnedIdentity: String?) -> String? {
+        if let pinnedIdentity, feedIdentities.contains(pinnedIdentity) { return pinnedIdentity }
+        return feedIdentities.first(where: speakingIdentities.contains) ?? feedIdentities.first
+    }
+}
+
+struct CameraGalleryFocusTracker {
+    static let speakerSwitchDelay: TimeInterval = 0.65
+
+    private(set) var focusedIdentity: String?
+    private var pendingIdentity: String?
+    private var pendingSince: TimeInterval?
+
+    var hasPendingSpeakerSwitch: Bool { pendingIdentity != nil }
+
+    mutating func update(feedIdentities: [String], speakingIdentities: Set<String>,
+                         pinnedIdentity: String?, now: TimeInterval) -> String? {
+        if let pinnedIdentity, feedIdentities.contains(pinnedIdentity) {
+            focusedIdentity = pinnedIdentity
+            clearPendingSwitch()
+            return pinnedIdentity
+        }
+
+        if let focusedIdentity, !feedIdentities.contains(focusedIdentity) {
+            self.focusedIdentity = nil
+        }
+        guard let focusedIdentity else {
+            let initial = feedIdentities.first(where: speakingIdentities.contains) ?? feedIdentities.first
+            self.focusedIdentity = initial
+            clearPendingSwitch()
+            return initial
+        }
+
+        guard !speakingIdentities.contains(focusedIdentity),
+              let candidate = feedIdentities.first(where: speakingIdentities.contains),
+              candidate != focusedIdentity else {
+            clearPendingSwitch()
+            return focusedIdentity
+        }
+
+        if pendingIdentity == candidate, let pendingSince {
+            guard now - pendingSince >= Self.speakerSwitchDelay else { return focusedIdentity }
+            self.focusedIdentity = candidate
+            clearPendingSwitch()
+            return candidate
+        }
+        pendingIdentity = candidate
+        pendingSince = now
+        return focusedIdentity
+    }
+
+    private mutating func clearPendingSwitch() {
+        pendingIdentity = nil
+        pendingSince = nil
+    }
+}
+
 struct CameraStrip: View {
     let feeds: [CameraFeed]
+    let onExpand: () -> Void
 
     var body: some View {
         if !feeds.isEmpty {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    ForEach(feeds) { feed in
-                        CameraFeedTile(feed: feed).id(ObjectIdentifier(feed.track))
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Text("VIDEO · \(feeds.count)")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(Theme.textMuted)
+                    Spacer()
+                    Button(action: onExpand) {
+                        Label("Expand", systemImage: "arrow.up.left.and.arrow.down.right")
+                            .font(.system(size: 10, weight: .medium))
                     }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(Theme.accent)
+                    .help("Open camera video in a larger window")
+                    .accessibilityLabel("Expand camera video")
                 }
-                .padding(.horizontal, 1)
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(feeds) { feed in
+                            CameraFeedTile(feed: feed).id(ObjectIdentifier(feed.track))
+                        }
+                    }
+                    .padding(.horizontal, 1)
+                }
+                .frame(height: 108)
             }
-            .frame(height: 108)
             .accessibilityLabel("Camera video from people on this call")
         }
     }
@@ -87,10 +170,16 @@ private struct CameraGalleryCard: View {
 
 private struct CameraFeedTile: View {
     let feed: CameraFeed
+    var expanded = false
+    var tileWidth: CGFloat = 112
+    let rtc: RTCService?
     @StateObject private var observer: TrackDelegateObserver
 
-    init(feed: CameraFeed) {
+    init(feed: CameraFeed, expanded: Bool = false, tileWidth: CGFloat = 112, rtc: RTCService? = nil) {
         self.feed = feed
+        self.expanded = expanded
+        self.tileWidth = tileWidth
+        self.rtc = rtc
         _observer = StateObject(wrappedValue: TrackDelegateObserver(track: feed.track))
     }
 
@@ -110,24 +199,53 @@ private struct CameraFeedTile: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
-            SwiftUIVideoView(feed.track,
-                             layoutMode: .fill,
-                             mirrorMode: feed.isLocal ? .mirror : .off)
-                .frame(width: 112, height: 68)
-                .background(.black)
-                .clipShape(RoundedRectangle(cornerRadius: 8))
-            Text(feed.isLocal ? "\(feed.name) · You" : feed.name)
-                .font(.caption2)
-                .foregroundStyle(Theme.textMuted)
-                .lineLimit(1)
-                .frame(width: 112, alignment: .leading)
+            if expanded {
+                SwiftUIVideoView(feed.track,
+                                 layoutMode: .fit,
+                                 mirrorMode: feed.isLocal ? .mirror : .off)
+                    .frame(maxWidth: .infinity)
+                    .aspectRatio(metrics.aspectRatio, contentMode: .fit)
+                    .background(.black)
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+            } else {
+                SwiftUIVideoView(feed.track,
+                                 layoutMode: .fit,
+                                 mirrorMode: feed.isLocal ? .mirror : .off)
+                    .frame(width: tileWidth, height: tileWidth * 9 / 16)
+                    .background(.black)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+            }
+            HStack(spacing: 6) {
+                Text(feed.isLocal ? "\(feed.name) · You" : feed.name)
+                    .font(.caption2)
+                    .foregroundStyle(Theme.textMuted)
+                    .lineLimit(1)
+                if feed.isHandRaised {
+                    Image(systemName: "hand.raised.fill")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(Theme.accent)
+                        .accessibilityLabel("\(feed.name) has raised their hand")
+                }
+                if let rtc, !feed.isLocal {
+                    ParticipantAudioVolumeMenu(identity: feed.identity, name: feed.name, rtc: rtc)
+                }
+                Spacer(minLength: 0)
+                if feed.isSpeaking && (expanded || tileWidth > 112) {
+                    Label("Speaking", systemImage: "waveform")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(Theme.online)
+                        .accessibilityLabel("\(feed.name) is speaking")
+                }
+            }
+            .frame(maxWidth: expanded ? .infinity : tileWidth, alignment: .leading)
             Text(metrics.summary)
                 .font(.system(size: 9, weight: .medium, design: .monospaced))
                 .foregroundStyle(Theme.textMuted)
                 .lineLimit(1)
-                .frame(width: 112, alignment: .leading)
+                .frame(maxWidth: expanded ? .infinity : tileWidth, alignment: .leading)
                 .accessibilityLabel("Camera video quality: \(metrics.summary)")
         }
+        .frame(maxWidth: expanded ? .infinity : nil, alignment: .leading)
         .help("\(feed.isLocal ? "Your camera" : "\(feed.name)'s camera") · \(metrics.summary)")
     }
 }
