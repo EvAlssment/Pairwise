@@ -263,6 +263,7 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
     private var clipboardReplayWindow = ClipboardTransferReplayWindow()
     private var clipboardAssembler = ClipboardTransferAssembler()
     private var clipboardDeliveryReceipts = Set<UUID>()
+    private var pendingClipboardRecipients: [UUID: String] = [:]
     private var clipboardSyncTask: Task<Void, Never>?
     private var clipboardSyncSendTask: Task<Void, Never>?
     private var clipboardSyncQueue: [String] = []
@@ -1865,6 +1866,17 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
     }
 
     nonisolated func room(_ room: Room, participant: RemoteParticipant?, didReceiveData data: Data, forTopic topic: String, encryptionType: EncryptionType) {
+        if topic == Self.clipboardReceiptTopic, data.count <= 1_024,
+           let sender = participant?.identity?.stringValue {
+            Task { @MainActor [weak self] in
+                guard let self, self.room === room, let localIdentity = self.localIdentity,
+                      room.remoteParticipants.values.contains(where: { $0.identity?.stringValue == sender }),
+                      let receipt = ClipboardDeliveryReceipt.decode(data, authenticatedSender: sender, localIdentity: localIdentity),
+                      self.pendingClipboardRecipients[receipt.transferID] == sender else { return }
+                self.clipboardDeliveryReceipts.insert(receipt.transferID)
+            }
+            return
+        }
         if (topic == Self.clipboardTopic || topic == Self.screenClipboardTopic), data.count <= ClipboardTransferMessage.maximumWireBytes,
            let sender = participant?.identity?.stringValue {
             Task { @MainActor [weak self] in
@@ -1885,6 +1897,8 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
                     self.lastSharedClipboardText = message.text
                     self.incomingClipboardTransfer = nil
                     self.clipboardSyncNotice = "Clipboard synced from \(self.participantName(for: sender))"
+                    _ = self.clipboardReplayWindow.insert(message.id)
+                    await self.sendClipboardReceipt(for: message, to: sender, localIdentity: localIdentity)
                     return
                 }
                 if self.clipboardSyncEnabled {
@@ -2032,13 +2046,26 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
             throw LiveKitError(.invalidState, message: "That teammate is no longer in this call.")
         }
         // Every part is encoded before any is sent, so an oversized clip fails whole.
-        let packets = try ClipboardTransferMessage.parts(recipientIdentity: identity, text: text).map { try $0.encoded() }
+        let parts = try ClipboardTransferMessage.parts(recipientIdentity: identity, text: text)
+        guard let transferID = parts.first?.id else { throw ClipboardTransferError.malformedMessage }
+        let packets = try parts.map { try $0.encoded() }
+        clipboardDeliveryReceipts.remove(transferID)
+        pendingClipboardRecipients[transferID] = identity
+        defer {
+            clipboardDeliveryReceipts.remove(transferID)
+            pendingClipboardRecipients[transferID] = nil
+        }
         let options = DataPublishOptions(name: "PairDesk clipboard", destinationIdentities: [Participant.Identity(from: identity)],
                                          topic: screenSharing ? Self.screenClipboardTopic : Self.clipboardTopic, reliable: true)
         for data in packets {
             try await room.localParticipant.publish(data: data, options: options)
         }
-        throw ClipboardTransferError.deliveryTimedOut
+        let deadline = ContinuousClock.now + .seconds(3)
+        while !clipboardDeliveryReceipts.contains(transferID) {
+            guard connected, self.room === room else { throw ClipboardTransferError.deliveryTimedOut }
+            guard ContinuousClock.now < deadline else { throw ClipboardTransferError.deliveryTimedOut }
+            try await Task.sleep(for: .milliseconds(25))
+        }
     }
 
     private func sendClipboardReceipt(for message: ClipboardTransferMessage, to sender: String, localIdentity: String) async {

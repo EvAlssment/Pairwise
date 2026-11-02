@@ -126,6 +126,10 @@ final class ScreenClipboardIntegrationTests: XCTestCase {
                                      "Typical automatic clipboard sync should feel immediate")
             XCTAssertLessThanOrEqual(sortedSyncDurations.last ?? .zero, .milliseconds(750),
                                      "Clipboard sync should not have a long loopback tail")
+            let explicitTransfer = "confirmed clipboard delivery · TestFlight prep"
+            try await viewer.sendClipboard(text: explicitTransfer, to: hostJoin.participantIdentity, screenSharing: true)
+            XCTAssertEqual(hostBoard.string(forType: .string), explicitTransfer,
+                           "A clipboard send should complete only after the sharing Mac receives it")
             viewerBoard.clearContents()
             viewerBoard.setString(localText, forType: .string)
             try await waitFor { hostBoard.string(forType: .string) == localText }
@@ -162,7 +166,12 @@ final class ScreenClipboardIntegrationTests: XCTestCase {
             XCTAssertEqual(destination.editor.pasteCount, 3)
             XCTAssertEqual(hostBoard.string(forType: .string), selectedRemoteText)
             host.debugEndScreenClipboardShare()
-            try await viewer.sendClipboard(text: "late screen clipboard", to: hostJoin.participantIdentity, screenSharing: true)
+            do {
+                try await viewer.sendClipboard(text: "late screen clipboard", to: hostJoin.participantIdentity, screenSharing: true)
+                XCTFail("Clipboard sends from an ended share must not be reported as delivered")
+            } catch let error as ClipboardTransferError {
+                XCTAssertEqual(error, .deliveryTimedOut)
+            }
             try await Task.sleep(for: .milliseconds(250))
             XCTAssertEqual(hostBoard.string(forType: .string), selectedRemoteText)
             XCTAssertNil(host.incomingClipboardTransfer, "Late screen packets must not become approval offers after the share ends")
