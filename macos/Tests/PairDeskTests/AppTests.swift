@@ -2,6 +2,72 @@ import XCTest
 @testable import PairDesk
 
 final class AppTests: XCTestCase {
+    func testPasswordPolicyExplainsCharacterMinimumAndUTF8ByteMaximum() {
+        XCTAssertFalse(PairDeskPasswordPolicy.isValid("short-pass"))
+        XCTAssertEqual(PairDeskPasswordPolicy.hint(for: "short-pass"), "2 more characters needed")
+        XCTAssertTrue(PairDeskPasswordPolicy.isValid("twelve-chars"))
+        XCTAssertTrue(PairDeskPasswordPolicy.isValid(String(repeating: "🧑", count: 18)))
+        XCTAssertFalse(PairDeskPasswordPolicy.isValid(String(repeating: "🧑", count: 19)))
+        XCTAssertEqual(PairDeskPasswordPolicy.hint(for: String(repeating: "🧑", count: 19)), "Too long by 4 UTF-8 bytes")
+    }
+
+    func testCallInviteAvailabilityExplainsEachRosterState() {
+        let online = TeamUser(id: "available", name: "Available", email: "a@example.com", online: true, busy: false)
+        let busy = TeamUser(id: "busy", name: "Busy", email: "b@example.com", online: true, busy: true)
+        let offline = TeamUser(id: "offline", name: "Offline", email: "o@example.com", online: false, busy: false)
+
+        XCTAssertEqual(CallInviteAvailability.resolve(user: online, participantIDs: [], outgoingInviteIDs: [], canAddPerson: true), .available)
+        XCTAssertEqual(CallInviteAvailability.resolve(user: offline, participantIDs: [], outgoingInviteIDs: [], canAddPerson: true), .offline)
+        XCTAssertEqual(CallInviteAvailability.resolve(user: busy, participantIDs: [], outgoingInviteIDs: [], canAddPerson: true), .inAnotherCall)
+        XCTAssertEqual(CallInviteAvailability.resolve(user: online, participantIDs: [], outgoingInviteIDs: ["available"], canAddPerson: true), .alreadyInvited)
+        XCTAssertEqual(CallInviteAvailability.resolve(user: online, participantIDs: ["available"], outgoingInviteIDs: [], canAddPerson: true), .alreadyInThisCall)
+        XCTAssertEqual(CallInviteAvailability.resolve(user: online, participantIDs: [], outgoingInviteIDs: [], canAddPerson: false), .callFull)
+    }
+
+    func testCallMediaModeNamesTheMediaCurrentlyInUse() {
+        XCTAssertEqual(CallMediaMode.title(screenSharing: false, cameraActive: false), "Audio call")
+        XCTAssertEqual(CallMediaMode.title(screenSharing: false, cameraActive: true), "Video call")
+        XCTAssertEqual(CallMediaMode.title(screenSharing: true, cameraActive: false), "Screen share")
+        XCTAssertEqual(CallMediaMode.title(screenSharing: true, cameraActive: true), "Screen + video")
+    }
+
+    func testSharedScreenWindowUsesMostAvailableDisplaySpace() {
+        XCTAssertEqual(
+            SharedScreenWindowLayout.initialContentSize(available: CGSize(width: 1920, height: 1080)),
+            CGSize(width: 1888, height: 1032)
+        )
+        XCTAssertEqual(
+            SharedScreenWindowLayout.initialContentSize(available: CGSize(width: 2560, height: 1600)),
+            CGSize(width: 2400, height: 1552)
+        )
+        XCTAssertEqual(
+            SharedScreenWindowLayout.initialContentSize(available: CGSize(width: 640, height: 400)),
+            CGSize(width: 700, height: 450)
+        )
+    }
+
+    func testSingleInstancePolicyOnlyForwardsTheSameBundleFromTheSamePath() {
+        let installedCopy = URL(fileURLWithPath: "/Applications/PairDesk.app")
+        XCTAssertTrue(PairDeskInstancePolicy.isSameInstalledCopy(
+            existingBundleIdentifier: "app.internal.pairdesk",
+            existingBundleURL: installedCopy,
+            currentBundleIdentifier: "app.internal.pairdesk",
+            currentBundleURL: installedCopy
+        ))
+        XCTAssertFalse(PairDeskInstancePolicy.isSameInstalledCopy(
+            existingBundleIdentifier: "app.internal.pairdesk",
+            existingBundleURL: URL(fileURLWithPath: "/Volumes/PairDesk/PairDesk.app"),
+            currentBundleIdentifier: "app.internal.pairdesk",
+            currentBundleURL: installedCopy
+        ))
+        XCTAssertFalse(PairDeskInstancePolicy.isSameInstalledCopy(
+            existingBundleIdentifier: "app.internal.pairdesk.old",
+            existingBundleURL: installedCopy,
+            currentBundleIdentifier: "app.internal.pairdesk",
+            currentBundleURL: installedCopy
+        ))
+    }
+
     func testMicrophoneMeterIsSilentForEmptyAndClampsRMS() {
         XCTAssertEqual(AudioMeter.level(samples: []), 0)
         XCTAssertEqual(AudioMeter.level(samples: [0, 0, 0]), 0)
@@ -33,6 +99,36 @@ final class AppTests: XCTestCase {
         XCTAssertEqual(ScreenNetworkQuality.from(roundTripTimeSeconds: 0.08), .good(roundTripMilliseconds: 80))
         XCTAssertEqual(ScreenNetworkQuality.from(roundTripTimeSeconds: 0.151), .fair(roundTripMilliseconds: 151))
         XCTAssertEqual(ScreenNetworkQuality.from(roundTripTimeSeconds: 0.301), .highLatency(roundTripMilliseconds: 301))
+        XCTAssertEqual(ScreenNetworkQuality.measuring.shortTitle, "Measuring")
+        XCTAssertEqual(ScreenNetworkQuality.good(roundTripMilliseconds: 80).shortTitle, "Good")
+        XCTAssertEqual(ScreenNetworkQuality.fair(roundTripMilliseconds: 151).shortTitle, "Fair")
+        XCTAssertEqual(ScreenNetworkQuality.highLatency(roundTripMilliseconds: 301).shortTitle, "High latency")
+    }
+    func testScreenQualityReportContainsOnlyShareMeasurements() {
+        var history = ScreenQualityHistory()
+        history.record(ScreenQualitySample(uptimeSeconds: 1, roundTripMilliseconds: 40,
+                                           framesPerSecond: 30, packetLossPercent: 0))
+        history.record(ScreenQualitySample(uptimeSeconds: 2, roundTripMilliseconds: 120,
+                                           framesPerSecond: 30, packetLossPercent: 0.5))
+        let report = ScreenQualityReport(networkQuality: .fair(roundTripMilliseconds: 212),
+                                         controlChannelRTT: "38 ms",
+                                         receivedStream: "1920 × 1080 · 30 fps · 0.4% loss",
+                                         firstFrameMilliseconds: 460,
+                                         history: history)
+        XCTAssertTrue(report.text.contains("Network: Fair · 212 ms RTT"))
+        XCTAssertTrue(report.text.contains("Recent path: RTT median 80 ms · peak 120 ms · 2 readings"))
+        XCTAssertTrue(report.text.contains("Control channel RTT: 38 ms"))
+        XCTAssertTrue(report.text.contains("Received screen: 1920 × 1080 · 30 fps · 0.4% loss"))
+        XCTAssertTrue(report.text.contains("PairDesk process CPU: unavailable"))
+        XCTAssertTrue(report.text.contains("First frame: 460 ms"))
+        XCTAssertFalse(report.text.localizedCaseInsensitiveContains("email"))
+        XCTAssertFalse(report.text.localizedCaseInsensitiveContains("token"))
+
+        let incomplete = ScreenQualityReport(networkQuality: .measuring,
+                                             controlChannelRTT: "unavailable",
+                                             receivedStream: "Stream stats unavailable",
+                                             firstFrameMilliseconds: nil)
+        XCTAssertTrue(incomplete.text.contains("First frame: unavailable"))
     }
     func testSupportDiagnosticsReduceErrorsToSafeCategories() {
         XCTAssertEqual(SupportDiagnostics.safeErrorCategory(nil), "none")
@@ -55,6 +151,28 @@ final class AppTests: XCTestCase {
         XCTAssertEqual(SupportDiagnostics.safeAPIHost("api-192-168-4-12.futurepath.ai"), "IP address omitted")
         XCTAssertEqual(SupportDiagnostics.safeAPIHost("pair.example.test"), "pair.example.test")
         XCTAssertEqual(SupportDiagnostics.safeAPIHost(nil), "unavailable")
+    }
+
+    func testRuntimeArchitectureDiagnosticsIdentifyNativeIntelAndAppleSilicon() {
+        XCTAssertEqual(RuntimeArchitectureDiagnostics.summary(processArchitecture: "x86_64",
+                                                              arm64Hardware: 0,
+                                                              translated: nil),
+                       "x86_64 process · Intel · native")
+        XCTAssertEqual(RuntimeArchitectureDiagnostics.summary(processArchitecture: "arm64",
+                                                              arm64Hardware: 1,
+                                                              translated: 0),
+                       "arm64 process · Apple silicon · native")
+    }
+
+    func testRuntimeArchitectureDiagnosticsFlagRosettaAndUnknownState() {
+        XCTAssertEqual(RuntimeArchitectureDiagnostics.summary(processArchitecture: "x86_64",
+                                                              arm64Hardware: 1,
+                                                              translated: 1),
+                       "x86_64 process · Apple silicon · Rosetta translated")
+        XCTAssertEqual(RuntimeArchitectureDiagnostics.summary(processArchitecture: "x86_64",
+                                                              arm64Hardware: nil,
+                                                              translated: nil),
+                       "x86_64 process · unknown hardware · translation status unavailable")
     }
     func testPrivateTokensRequireHTTPSOutsideLoopback() throws {
         XCTAssertThrowsError(try APIClient(server: "http://192.168.1.1:8080"))
@@ -110,6 +228,35 @@ final class AppTests: XCTestCase {
         XCTAssertEqual(ScreenCoordinateMapper.displayedPoint(normalized: CGPoint(x: 0.5, y: 0.5), container: container, contentSize: size), CGPoint(x: 500, y: 300))
         XCTAssertEqual(ScreenCoordinateMapper.displayedPoint(normalized: CGPoint(x: 0, y: 0), container: container, contentSize: size), CGPoint(x: 0, y: 50))
         XCTAssertNil(ScreenCoordinateMapper.displayedPoint(normalized: CGPoint(x: 1.1, y: 0.5), container: container, contentSize: size))
+    }
+    func testZoomedScreenMapsVisibleClicksBackToTheCorrectRemoteCoordinates() {
+        let container = CGRect(x: 0, y: 0, width: 1000, height: 600)
+        let screen = CGSize(width: 200, height: 100)
+        XCTAssertEqual(ScreenCoordinateMapper.normalized(
+            point: CGPoint(x: 500, y: 300), container: container, contentSize: screen, zoomScale: 2
+        ), CGPoint(x: 0.5, y: 0.5))
+        XCTAssertEqual(ScreenCoordinateMapper.normalized(
+            point: CGPoint(x: 0, y: 300), container: container, contentSize: screen, zoomScale: 2
+        ), CGPoint(x: 0.25, y: 0.5))
+        XCTAssertEqual(ScreenCoordinateMapper.zoomedContentRect(
+            container: container, contentSize: screen, zoomScale: 2
+        ), CGRect(x: -500, y: -200, width: 2_000, height: 1_000))
+        XCTAssertNil(ScreenCoordinateMapper.normalized(
+            point: CGPoint(x: 500, y: 300), container: container, contentSize: screen, zoomScale: .infinity
+        ))
+        XCTAssertEqual(ScreenCoordinateMapper.normalized(
+            point: CGPoint(x: 100, y: 300), container: container, contentSize: screen,
+            zoomScale: 2, panOffset: CGSize(width: -100, height: 0)
+        ), CGPoint(x: 0.35, y: 0.5))
+        XCTAssertEqual(ScreenCoordinateMapper.clampedPanOffset(
+            CGSize(width: 1_000, height: -1_000), container: container, contentSize: screen, zoomScale: 2
+        ), CGSize(width: 500, height: -200))
+        XCTAssertEqual(ScreenCoordinateMapper.clampedPanOffset(
+            CGSize(width: 50, height: 50), container: container, contentSize: screen, zoomScale: 1
+        ), .zero)
+        XCTAssertEqual(ScreenCoordinateMapper.clampedPanOffset(
+            CGSize(width: CGFloat.nan, height: 0), container: container, contentSize: screen, zoomScale: 2
+        ), .zero)
     }
     func testPermissionGuidanceIdentifiesMountedImageAndInstalledCopies() {
         let home = URL(fileURLWithPath: "/Users/example", isDirectory: true)

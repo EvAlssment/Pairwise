@@ -160,6 +160,7 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
         muteItem?.button?.image = image
         muteItem?.button?.contentTintColor = nil
         muteItem?.button?.toolTip = micOn ? "Mute microphone" : "Unmute microphone"
+        muteItem?.button?.setAccessibilityLabel(micOn ? "Mute microphone" : "Unmute microphone")
     }
 
     // MARK: NSPopoverDelegate

@@ -1,10 +1,175 @@
 import AppKit
+import CoreVideo
+import Darwin
 import SwiftUI
 import XCTest
 @preconcurrency import LiveKit
 @testable import PairDesk
 
 final class HostCursorIntegrationTests: XCTestCase {
+    @MainActor
+    func testCameraGalleryRetainsParticipantsAcrossCameraPublishMuteAndUnmute() async throws {
+        guard let address = ProcessInfo.processInfo.environment["PAIRDESK_TEST_API"],
+              let password = ProcessInfo.processInfo.environment["PAIRDESK_TEST_PASSWORD"] else {
+            throw XCTSkip("Run scripts/test-call.sh for camera gallery integration")
+        }
+        _ = NSApplication.shared
+        struct LoginBody: Encodable { let email: String; let password: String }
+        struct RoomBody: Encodable { let name: String }
+        let unsigned = try APIClient(server: address)
+        let hostLogin: LoginResponse = try await unsigned.post("v1/login", body: LoginBody(
+            email: "integration-1@pairdesk.invalid", password: password))
+        let cameraLogin: LoginResponse = try await unsigned.post("v1/login", body: LoginBody(
+            email: "integration-2@pairdesk.invalid", password: password))
+        let hostClient = try APIClient(server: address, token: hostLogin.token)
+        let cameraClient = try APIClient(server: address, token: cameraLogin.token)
+        let created: RoomResponse = try await hostClient.post("v1/rooms", body: RoomBody(name: "Camera gallery states"))
+        let host = RTCService()
+        let cameraPublisher = Room()
+        var frameTask: Task<Void, Never>?
+        defer { frameTask?.cancel() }
+        do {
+            let hostJoin: JoinResponse = try await hostClient.post("v1/rooms/\(created.room.id)/join", body: EmptyBody())
+            try await host.connect(url: hostJoin.url, token: hostJoin.token,
+                                   identity: hostJoin.participantIdentity, name: hostLogin.user.name)
+            let cameraJoin: JoinResponse = try await cameraClient.post("v1/rooms/\(created.room.id)/join", body: EmptyBody())
+            try await cameraPublisher.connect(url: cameraJoin.url, token: cameraJoin.token)
+            try await waitFor { host.participants.count == 2 }
+
+            let track = await LocalVideoTrack.createBufferTrack(
+                name: "pairdesk.camera.gallery.fixture", source: .camera,
+                options: BufferCaptureOptions(dimensions: .h1080_169, fps: 30))
+            let capturer = try XCTUnwrap(track.capturer as? BufferCapturer)
+            var buffer: CVPixelBuffer?
+            let result = CVPixelBufferCreate(kCFAllocatorDefault, 1_920, 1_080, kCVPixelFormatType_32BGRA,
+                                             [kCVPixelBufferIOSurfacePropertiesKey: [:]] as CFDictionary, &buffer)
+            XCTAssertEqual(result, kCVReturnSuccess)
+            let frame = try XCTUnwrap(buffer)
+            CVPixelBufferLockBaseAddress(frame, [])
+            memset(try XCTUnwrap(CVPixelBufferGetBaseAddress(frame)), 0,
+                   CVPixelBufferGetBytesPerRow(frame) * CVPixelBufferGetHeight(frame))
+            CVPixelBufferUnlockBaseAddress(frame, [])
+            capturer.capture(frame)
+            frameTask = Task {
+                while !Task.isCancelled {
+                    capturer.capture(frame)
+                    try? await Task.sleep(for: .milliseconds(33))
+                }
+            }
+            let publication = try await cameraPublisher.localParticipant.publish(videoTrack: track,
+                options: VideoPublishOptions(name: "pairdesk.camera.gallery.fixture",
+                                             encoding: VideoEncoding(maxBitrate: 3_000_000, maxFps: 30),
+                                             simulcast: false))
+            try await waitFor {
+                host.cameraFeeds.contains(where: { $0.identity == cameraJoin.participantIdentity }) &&
+                host.participants.first(where: { $0.identity == cameraJoin.participantIdentity })?.isCameraEnabled == true
+            }
+            var gallery = CameraGalleryParticipants.make(participants: host.participants, feeds: host.cameraFeeds)
+            XCTAssertEqual(gallery.count, 2)
+            XCTAssertTrue(gallery.first(where: { $0.identity == cameraJoin.participantIdentity })?.hasVideoFeed == true)
+
+            try await publication.mute()
+            try await waitFor {
+                host.participants.first(where: { $0.identity == cameraJoin.participantIdentity })?.isCameraEnabled == false &&
+                !host.cameraFeeds.contains(where: { $0.identity == cameraJoin.participantIdentity })
+            }
+            gallery = CameraGalleryParticipants.make(participants: host.participants, feeds: host.cameraFeeds)
+            XCTAssertEqual(gallery.count, 2, "Muting video must not remove the participant from the gallery")
+            XCTAssertFalse(gallery.first(where: { $0.identity == cameraJoin.participantIdentity })?.hasVideoFeed ?? true)
+
+            try await publication.unmute()
+            try await waitFor {
+                host.participants.first(where: { $0.identity == cameraJoin.participantIdentity })?.isCameraEnabled == true &&
+                host.cameraFeeds.contains(where: { $0.identity == cameraJoin.participantIdentity })
+            }
+            gallery = CameraGalleryParticipants.make(participants: host.participants, feeds: host.cameraFeeds)
+            XCTAssertEqual(gallery.count, 2)
+            XCTAssertTrue(gallery.first(where: { $0.identity == cameraJoin.participantIdentity })?.hasVideoFeed == true)
+        } catch {
+            await host.disconnect()
+            await cameraPublisher.disconnect()
+            try? await hostClient.send("v1/rooms/\(created.room.id)/leave", body: EmptyBody())
+            try? await cameraClient.send("v1/rooms/\(created.room.id)/leave", body: EmptyBody())
+            throw error
+        }
+        await host.disconnect()
+        await cameraPublisher.disconnect()
+        try? await hostClient.send("v1/rooms/\(created.room.id)/leave", body: EmptyBody())
+        try? await cameraClient.send("v1/rooms/\(created.room.id)/leave", body: EmptyBody())
+    }
+
+    @MainActor
+    func testRaisedHandReachesCurrentAndLateJoinersAndClearsOnLowerOrDisconnect() async throws {
+        guard let address = ProcessInfo.processInfo.environment["PAIRDESK_TEST_API"],
+              let password = ProcessInfo.processInfo.environment["PAIRDESK_TEST_PASSWORD"] else {
+            throw XCTSkip("Run scripts/test-call.sh for call hand-raise integration")
+        }
+        struct LoginBody: Encodable { let email: String; let password: String }
+        struct RoomBody: Encodable { let name: String }
+        let unsigned = try APIClient(server: address)
+        var clients: [APIClient] = []
+        var users: [TeamUser] = []
+        for index in 1...3 {
+            let login: LoginResponse = try await unsigned.post("v1/login", body: LoginBody(
+                email: "integration-\(index)@pairdesk.invalid", password: password))
+            clients.append(try APIClient(server: address, token: login.token))
+            users.append(login.user)
+        }
+        let created: RoomResponse = try await clients[0].post("v1/rooms", body: RoomBody(name: "Raise-hand state"))
+        let roomID = created.room.id
+        let host = RTCService()
+        let firstPeer = RTCService()
+        let latePeer = RTCService()
+        do {
+            let hostJoin: JoinResponse = try await clients[0].post("v1/rooms/\(roomID)/join", body: EmptyBody())
+            try await host.connect(url: hostJoin.url, token: hostJoin.token,
+                                   identity: hostJoin.participantIdentity, name: users[0].name)
+            let peerJoin: JoinResponse = try await clients[1].post("v1/rooms/\(roomID)/join", body: EmptyBody())
+            try await firstPeer.connect(url: peerJoin.url, token: peerJoin.token,
+                                        identity: peerJoin.participantIdentity, name: users[1].name)
+            try await waitFor { host.participants.count == 2 && firstPeer.participants.count == 2 }
+
+            await host.setLocalHandRaised(true)
+            try await waitFor { firstPeer.raisedHandIdentities.contains(hostJoin.participantIdentity) }
+
+            let lateJoin: JoinResponse = try await clients[2].post("v1/rooms/\(roomID)/join", body: EmptyBody())
+            try await latePeer.connect(url: lateJoin.url, token: lateJoin.token,
+                                       identity: lateJoin.participantIdentity, name: users[2].name)
+            try await waitFor {
+                host.participants.count == 3 && firstPeer.participants.count == 3 &&
+                latePeer.raisedHandIdentities.contains(hostJoin.participantIdentity)
+            }
+
+            await host.setLocalHandRaised(false)
+            try await waitFor {
+                !firstPeer.raisedHandIdentities.contains(hostJoin.participantIdentity) &&
+                !latePeer.raisedHandIdentities.contains(hostJoin.participantIdentity)
+            }
+
+            await firstPeer.setLocalHandRaised(true)
+            try await waitFor {
+                host.raisedHandIdentities.contains(peerJoin.participantIdentity) &&
+                latePeer.raisedHandIdentities.contains(peerJoin.participantIdentity)
+            }
+            await firstPeer.disconnect()
+            try await clients[1].send("v1/rooms/\(roomID)/leave", body: EmptyBody())
+            try await waitFor {
+                !host.raisedHandIdentities.contains(peerJoin.participantIdentity) &&
+                !latePeer.raisedHandIdentities.contains(peerJoin.participantIdentity)
+            }
+        } catch {
+            await host.disconnect()
+            await firstPeer.disconnect()
+            await latePeer.disconnect()
+            for client in clients { try? await client.send("v1/rooms/\(roomID)/leave", body: EmptyBody()) }
+            throw error
+        }
+        await host.disconnect()
+        await firstPeer.disconnect()
+        await latePeer.disconnect()
+        for client in clients { try? await client.send("v1/rooms/\(roomID)/leave", body: EmptyBody()) }
+    }
+
     @MainActor
     func testSharerRelaysAnIndependentViewerCursorToOtherParticipants() async throws {
         guard let address = ProcessInfo.processInfo.environment["PAIRDESK_TEST_API"],
@@ -320,7 +485,7 @@ final class HostCursorIntegrationTests: XCTestCase {
             if condition() { return }
             try await Task.sleep(for: .milliseconds(100))
         }
-        XCTFail("Host cursor state did not propagate", file: file, line: line)
+        XCTFail("LiveKit call state did not propagate", file: file, line: line)
     }
 }
 

@@ -5,9 +5,13 @@ import LiveKit
 struct InteractiveScreenView: NSViewRepresentable {
     let track: VideoTrack
     @ObservedObject var rtc: RTCService
+    var zoomScale: CGFloat = 1
+    var panOffset: CGSize = .zero
     func makeNSView(context: Context) -> ScreenCanvas { ScreenCanvas(rtc: rtc) }
     func updateNSView(_ view: ScreenCanvas, context: Context) {
         view.setTrack(track)
+        view.zoomScale = zoomScale
+        view.panOffset = panOffset
         // Keep the viewer interactive while the host grants control. Without
         // this, a denied first request leaves no path to request again after
         // Accessibility is enabled during the same share.
@@ -28,6 +32,8 @@ final class ScreenCanvas: NSView {
     let video = VideoView()
     weak var rtc: RTCService?
     var driving = false { didSet { if !driving && oldValue { window?.makeFirstResponder(nil) } } }
+    var zoomScale: CGFloat = 1 { didSet { window?.invalidateCursorRects(for: self) } }
+    var panOffset: CGSize = .zero { didSet { window?.invalidateCursorRects(for: self) } }
     var independentCursor = false {
         didSet { if independentCursor != oldValue { window?.invalidateCursorRects(for: self) } }
     }
@@ -74,7 +80,12 @@ final class ScreenCanvas: NSView {
         // The sharing Mac renders the coloured pointer into the video. Hide
         // the viewer's OS pointer only inside the canvas to avoid a duplicate.
         if independentCursor, let dimensions = video.track?.dimensions,
-           let content = ScreenCoordinateMapper.contentRect(container: bounds, contentSize: CGSize(width: Int(dimensions.width), height: Int(dimensions.height))) {
+           let content = ScreenCoordinateMapper.zoomedContentRect(
+               container: bounds,
+               contentSize: CGSize(width: Int(dimensions.width), height: Int(dimensions.height)),
+               zoomScale: zoomScale,
+               panOffset: panOffset
+           )?.intersection(bounds), !content.isEmpty {
             addCursorRect(content, cursor: Self.transparentCursor)
         } else { addCursorRect(bounds, cursor: .arrow) }
     }
@@ -89,7 +100,9 @@ final class ScreenCanvas: NSView {
     private func normalized(_ event: NSEvent) -> CGPoint? {
         guard let dimensions = video.track?.dimensions, dimensions.width > 0, dimensions.height > 0 else { return nil }
         return ScreenCoordinateMapper.normalized(point: convert(event.locationInWindow, from: nil), container: bounds,
-                                                  contentSize: CGSize(width: Int(dimensions.width), height: Int(dimensions.height)))
+                                                  contentSize: CGSize(width: Int(dimensions.width), height: Int(dimensions.height)),
+                                                  zoomScale: zoomScale,
+                                                  panOffset: panOffset)
     }
     private func pointer(_ event: NSEvent) {
         guard driving || independentCursor, let point = normalized(event) else { return }
@@ -203,6 +216,40 @@ enum ScreenCoordinateMapper {
               let rect = contentRect(container: container, contentSize: contentSize) else { return nil }
         guard rect.contains(point) else { return nil }
         return CGPoint(x: (point.x - rect.minX) / rect.width, y: (point.y - rect.minY) / rect.height)
+    }
+
+    static func normalized(point: CGPoint, container: CGRect, contentSize: CGSize,
+                           zoomScale: CGFloat, panOffset: CGSize = .zero) -> CGPoint? {
+        guard zoomScale.isFinite, zoomScale > 0 else { return nil }
+        let unscaledPoint = CGPoint(
+            x: container.midX + (point.x - container.midX - panOffset.width) / zoomScale,
+            y: container.midY + (point.y - container.midY - panOffset.height) / zoomScale
+        )
+        return normalized(point: unscaledPoint, container: container, contentSize: contentSize)
+    }
+
+    static func zoomedContentRect(container: CGRect, contentSize: CGSize, zoomScale: CGFloat,
+                                  panOffset: CGSize = .zero) -> CGRect? {
+        guard zoomScale.isFinite, zoomScale > 0,
+              panOffset.width.isFinite, panOffset.height.isFinite,
+              let fitted = contentRect(container: container, contentSize: contentSize) else { return nil }
+        return CGRect(
+            x: container.midX + (fitted.minX - container.midX) * zoomScale + panOffset.width,
+            y: container.midY + (fitted.minY - container.midY) * zoomScale + panOffset.height,
+            width: fitted.width * zoomScale,
+            height: fitted.height * zoomScale
+        )
+    }
+
+    static func clampedPanOffset(_ offset: CGSize, container: CGRect,
+                                 contentSize: CGSize, zoomScale: CGFloat) -> CGSize {
+        guard zoomScale.isFinite, zoomScale >= 1,
+              offset.width.isFinite, offset.height.isFinite,
+              let fitted = contentRect(container: container, contentSize: contentSize) else { return .zero }
+        let maxX = max(0, (fitted.width * zoomScale - container.width) / 2)
+        let maxY = max(0, (fitted.height * zoomScale - container.height) / 2)
+        return CGSize(width: min(max(offset.width, -maxX), maxX),
+                      height: min(max(offset.height, -maxY), maxY))
     }
 
     static func displayedPoint(normalized: CGPoint, container: CGRect, contentSize: CGSize) -> CGPoint? {

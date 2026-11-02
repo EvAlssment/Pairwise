@@ -111,14 +111,17 @@ struct DuplicateAppCopyWarning: View {
 @MainActor
 final class PermissionManager: ObservableObject {
     static let shared = PermissionManager()
-    private var requestedAccessibility = false
-    @Published private(set) var microphone = false
-    @Published private(set) var camera = false
+    private let accessibilityPromptGate = AccessibilityPromptGate()
+    @Published private(set) var microphoneAuthorization = MediaPermissionAuthorization.notDetermined
+    @Published private(set) var cameraAuthorization = MediaPermissionAuthorization.notDetermined
     @Published private(set) var accessibility = false
+    @Published private(set) var accessibilityPromptRequested = UserDefaults.standard.bool(forKey: AccessibilityPromptGate.defaultsKey)
+    var microphone: Bool { microphoneAuthorization.isAuthorized }
+    var camera: Bool { cameraAuthorization.isAuthorized }
     init() { refresh() }
     func refresh() {
-        microphone = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
-        camera = AVCaptureDevice.authorizationStatus(for: .video) == .authorized
+        microphoneAuthorization = MediaPermissionAuthorization(AVCaptureDevice.authorizationStatus(for: .audio))
+        cameraAuthorization = MediaPermissionAuthorization(AVCaptureDevice.authorizationStatus(for: .video))
         accessibility = AXIsProcessTrusted()
     }
     func requestMicrophone() async {
@@ -137,8 +140,8 @@ final class PermissionManager: ObservableObject {
     }
     func requestAccessibility() {
         refresh()
-        if !accessibility && !requestedAccessibility {
-            requestedAccessibility = true
+        if accessibilityPromptGate.shouldPrompt(isTrusted: accessibility) {
+            accessibilityPromptRequested = true
             let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
             _ = AXIsProcessTrustedWithOptions(options)
         }
@@ -178,8 +181,8 @@ struct PermissionsView: View {
             Text("Privacy and access").font(.title2.bold())
             Text("PairDesk asks for access only when you use the related feature. You can call and view a teammate's screen without enabling remote control.")
                 .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            row("Microphone", detail: "Needed to talk. You can still join a call and listen without it.", ready: permissions.microphone) { if permissions.microphone { permissions.open("Privacy_Microphone") } else { Task { await permissions.requestMicrophone() } } }
-            row("Camera", detail: "Optional. Turn it on during a call to share live video. Camera stays off until you choose to enable it.", ready: permissions.camera) { if permissions.camera { permissions.open("Privacy_Camera") } else { Task { await permissions.requestCamera() } } }
+            row("Microphone", detail: "Needed to talk. You can still join a call and listen without it.", ready: permissions.microphone, actionTitle: permissions.microphoneAuthorization.actionTitle) { if permissions.microphone { permissions.open("Privacy_Microphone") } else { Task { await permissions.requestMicrophone() } } }
+            row("Camera", detail: "Optional. Turn it on during a call to share live video. Camera stays off until you choose to enable it.", ready: permissions.camera, actionTitle: permissions.cameraAuthorization.actionTitle) { if permissions.camera { permissions.open("Privacy_Camera") } else { Task { await permissions.requestCamera() } } }
             HStack(alignment: .top, spacing: 14) {
                 Image(systemName: "display").foregroundStyle(.secondary).frame(width: 20)
                 VStack(alignment: .leading, spacing: 5) {
@@ -239,12 +242,12 @@ struct PermissionsView: View {
             currentProcessIdentifier: ProcessInfo.processInfo.processIdentifier,
             runningApplications: applications)
     }
-    private func row(_ title: String, detail: String, ready: Bool, action: @escaping () -> Void) -> some View {
+    private func row(_ title: String, detail: String, ready: Bool, actionTitle: String? = nil, action: @escaping () -> Void) -> some View {
         HStack(alignment: .top, spacing: 14) {
             Image(systemName: ready ? "checkmark.circle.fill" : "circle").foregroundStyle(ready ? Color.green : Color.secondary).frame(width: 20)
             VStack(alignment: .leading, spacing: 5) { Text(title).bold(); Text(detail).font(.caption).foregroundStyle(.secondary) }
             Spacer()
-            Button(ready ? "Settings" : "Allow", action: action)
+            Button(ready ? "Settings" : (actionTitle ?? "Allow"), action: action)
         }
     }
 }

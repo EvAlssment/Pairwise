@@ -112,6 +112,82 @@ final class CallIntegrationTests: XCTestCase {
     }
 
     @MainActor
+    func testOptInClipboardSyncCopiesTextBetweenSeparatePasteboards() async throws {
+        guard let address = ProcessInfo.processInfo.environment["PAIRDESK_TEST_API"],
+              let password = ProcessInfo.processInfo.environment["PAIRDESK_TEST_PASSWORD"] else {
+            throw XCTSkip("Run scripts/test-call.sh for isolated LiveKit integration")
+        }
+        struct LoginBody: Encodable { let email: String; let password: String }
+        struct RoomBody: Encodable { let name: String }
+        let unsigned = try APIClient(server: address)
+        var clients: [APIClient] = []
+        var joins: [JoinResponse] = []
+        for index in 1...2 {
+            let result: LoginResponse = try await unsigned.post("v1/login", body: LoginBody(
+                email: "integration-\(index)@pairdesk.invalid", password: password))
+            clients.append(try APIClient(server: address, token: result.token))
+        }
+        let created: RoomResponse = try await clients[0].post("v1/rooms", body: RoomBody(name: "Clipboard sync integration"))
+        for index in 0..<2 {
+            for client in clients.prefix(index) {
+                try await client.send("v1/rooms/\(created.room.id)/heartbeat", body: EmptyBody())
+            }
+            joins.append(try await clients[index].post("v1/rooms/\(created.room.id)/join", body: EmptyBody()))
+        }
+
+        let senderBoard = NSPasteboard(name: NSPasteboard.Name("PairDeskClipboardSender-\(UUID().uuidString)"))
+        let receiverBoard = NSPasteboard(name: NSPasteboard.Name("PairDeskClipboardReceiver-\(UUID().uuidString)"))
+        defer {
+            senderBoard.clearContents()
+            receiverBoard.clearContents()
+            senderBoard.releaseGlobally()
+            receiverBoard.releaseGlobally()
+        }
+        let sender = RTCService(clipboardPasteboard: senderBoard)
+        let receiver = RTCService(clipboardPasteboard: receiverBoard)
+        do {
+            try await sender.connect(url: joins[0].url, token: joins[0].token,
+                                     identity: joins[0].participantIdentity, name: "Clipboard sender")
+            try await receiver.connect(url: joins[1].url, token: joins[1].token,
+                                       identity: joins[1].participantIdentity, name: "Clipboard receiver")
+
+            let participantDeadline = ContinuousClock.now + .seconds(5)
+            while ContinuousClock.now < participantDeadline &&
+                    (sender.participants.count < 2 || receiver.participants.count < 2) {
+                try await Task.sleep(for: .milliseconds(50))
+            }
+            XCTAssertEqual(sender.participants.count, 2)
+            XCTAssertEqual(receiver.participants.count, 2)
+
+            sender.setClipboardSyncEnabled(true)
+            receiver.setClipboardSyncEnabled(true)
+            let copiedText = "PairDesk clipboard sync · \(UUID().uuidString)"
+            senderBoard.clearContents()
+            senderBoard.setString(copiedText, forType: .string)
+
+            let deliveryDeadline = ContinuousClock.now + .seconds(8)
+            while ContinuousClock.now < deliveryDeadline &&
+                    (receiverBoard.string(forType: .string) != copiedText ||
+                     !(sender.clipboardSyncNotice?.contains("Clipboard synced with") ?? false)) {
+                try await Task.sleep(for: .milliseconds(50))
+            }
+            XCTAssertEqual(receiverBoard.string(forType: .string), copiedText)
+            XCTAssertTrue(sender.clipboardSyncNotice?.contains("Clipboard synced with") == true,
+                          "Sender should receive a delivery confirmation")
+            sender.setClipboardSyncEnabled(false)
+            receiver.setClipboardSyncEnabled(false)
+            await sender.disconnect()
+            await receiver.disconnect()
+        } catch {
+            sender.setClipboardSyncEnabled(false)
+            receiver.setClipboardSyncEnabled(false)
+            await sender.disconnect()
+            await receiver.disconnect()
+            throw error
+        }
+    }
+
+    @MainActor
     func testFourNativeClientsCameraPublicationAndExclusiveScreenPermission() async throws {
         guard let address = ProcessInfo.processInfo.environment["PAIRDESK_TEST_API"],
               let password = ProcessInfo.processInfo.environment["PAIRDESK_TEST_PASSWORD"] else {
@@ -137,7 +213,9 @@ final class CallIntegrationTests: XCTestCase {
                 for client in clients.prefix(i) { try await client.send("v1/rooms/\(roomID)/heartbeat", body: EmptyBody()) }
                 let join: JoinResponse = try await clients[i].post("v1/rooms/\(roomID)/join", body: EmptyBody())
                 let room = Room(delegate: i == 1 ? receiver : nil,
-                                roomOptions: RoomOptions(reportRemoteTrackStatistics: true))
+                                roomOptions: RoomOptions(adaptiveStream: true,
+                                                        dynacast: true,
+                                                        reportRemoteTrackStatistics: true))
                 media.append(room)
                 let relayOnly = ProcessInfo.processInfo.environment["PAIRDESK_TEST_RELAY_ONLY"] == "1"
                 try await room.connect(url: join.url, token: join.token, connectOptions: ConnectOptions(iceTransportPolicy: relayOnly ? .relay : .all))
@@ -425,6 +503,7 @@ private final class SyntheticVideoReceiver: NSObject, RoomDelegate, VideoRendere
 
     let expectation: XCTestExpectation
     private let source: Track.Source
+    private let rendererSize: CGSize
     private let lock = NSLock()
     private var didReceive = false
     private let measurementStartedAt = ProcessInfo.processInfo.systemUptime
@@ -439,11 +518,13 @@ private final class SyntheticVideoReceiver: NSObject, RoomDelegate, VideoRendere
     private var storedRecoveryMilliseconds: Double?
     var receivedFrame: Bool { lock.lock(); defer { lock.unlock() }; return didReceive }
     var recoveryMilliseconds: Double? { lock.lock(); defer { lock.unlock() }; return storedRecoveryMilliseconds }
-    @MainActor var isAdaptiveStreamEnabled: Bool { false }
-    @MainActor var adaptiveStreamSize: CGSize { CGSize(width: 640, height: 480) }
-    init(expectation: XCTestExpectation, source: Track.Source = .screenShareVideo) {
+    @MainActor var isAdaptiveStreamEnabled: Bool { true }
+    @MainActor var adaptiveStreamSize: CGSize { rendererSize }
+    init(expectation: XCTestExpectation, source: Track.Source = .screenShareVideo,
+         rendererSize: CGSize = CGSize(width: 640, height: 480)) {
         self.expectation = expectation
         self.source = source
+        self.rendererSize = rendererSize
     }
     func room(_ room: Room, participant: RemoteParticipant, didSubscribeTrack publication: RemoteTrackPublication) {
         guard let track = publication.track as? RemoteVideoTrack, track.source == source else { return }
@@ -542,6 +623,31 @@ private struct SyntheticMediaBenchmark: Encodable {
     let syntheticReadability: SyntheticReadabilityMetrics?
     let runner: BenchmarkRunnerMetadata
     let unmeasured: [String]
+    let cameraSimulcast: SyntheticCameraBenchmark?
+}
+
+private struct SyntheticCameraBenchmark: Encodable {
+    let source = "synthetic-camera-simulcast"
+    let publishWidth: Int
+    let publishHeight: Int
+    let maximumFramesPerSecond: Int
+    let harnessProcessCPUPercent: Double?
+    let receivers: [SyntheticCameraReceiverMeasurement]
+    let unmeasured = ["separate_sender_receiver_cpu", "physical_camera_quality", "readability"]
+}
+
+private struct SyntheticCameraReceiverMeasurement: Encodable {
+    let viewRole: String
+    let requestedWidth: Int
+    let requestedHeight: Int
+    let receivedWidth: Int?
+    let receivedHeight: Int?
+    let observedFramesPerSecond: Double?
+    let receivedBitrateKilobitsPerSecond: Double?
+    let framesReceived: Int
+    let timeToFirstFrameMilliseconds: Double?
+    let packetLossPercent: Double?
+    let selectedPathRTTMilliseconds: Double?
 }
 
 private struct SyntheticReadabilityMetrics: Encodable {

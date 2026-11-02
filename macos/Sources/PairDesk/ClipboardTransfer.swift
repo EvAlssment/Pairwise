@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 
 /// A bounded text clip used by explicit offers, opt-in sync, and screen control.
@@ -119,6 +120,37 @@ struct ClipboardTransferMessage: Codable, Equatable {
         return data
     }
 }
+
+/// Confirms that a complete clipboard offer reached the intended teammate.
+/// The LiveKit participant identity authenticates the sender; these fields bind
+/// the receipt to the original transfer and its intended recipient.
+struct ClipboardDeliveryReceipt: Codable, Equatable {
+    static let version = 1
+    let version: Int
+    let transferID: UUID
+    let senderIdentity: String
+    let recipientIdentity: String
+
+    init(transferID: UUID, senderIdentity: String, recipientIdentity: String) {
+        self.version = Self.version
+        self.transferID = transferID
+        self.senderIdentity = senderIdentity
+        self.recipientIdentity = recipientIdentity
+    }
+
+    func encoded() throws -> Data { try JSONEncoder().encode(self) }
+
+    static func decode(_ data: Data, authenticatedSender: String, localIdentity: String) -> ClipboardDeliveryReceipt? {
+        guard let receipt = try? JSONDecoder().decode(Self.self, from: data),
+              receipt.version == version,
+              receipt.senderIdentity == authenticatedSender,
+              receipt.recipientIdentity == localIdentity,
+              !authenticatedSender.isEmpty,
+              authenticatedSender != localIdentity else { return nil }
+        return receipt
+    }
+}
+
 enum ClipboardTransferError: Error, Equatable, LocalizedError {
     case invalidRecipient
     case emptyText
@@ -130,6 +162,7 @@ enum ClipboardTransferError: Error, Equatable, LocalizedError {
     case wrongRecipient
     case expired
     case replayed
+    case deliveryTimedOut
 
     var errorDescription: String? {
         switch self {
@@ -137,6 +170,7 @@ enum ClipboardTransferError: Error, Equatable, LocalizedError {
         case .emptyText: "There is no text in the clipboard."
         case .textTooLarge: "Text is larger than the 64 KB sharing limit."
         case .messageTooLarge: "This text can't be shared: it is too large once encoded."
+        case .deliveryTimedOut: "The teammate didn’t confirm receipt. Check the call connection and try again."
         case .malformedMessage, .unsupportedVersion, .invalidSender, .wrongRecipient, .expired, .replayed:
             "The clipboard text couldn't be delivered."
         }
@@ -214,6 +248,118 @@ enum ClipboardSyncPolicy {
 
     static func mayShare(pasteboardTypes: [String]) -> Bool {
         !pasteboardTypes.contains(where: excludedPasteboardTypes.contains)
+    }
+}
+
+/// Gives lazy pasteboard providers a short window to make text available
+/// after publishing the text type, without retrying the same failed change forever.
+struct ClipboardPasteboardReadRetry {
+    static let timeout: TimeInterval = 2
+    private var pendingChangeCount: Int?
+    private var firstAttemptAt: TimeInterval?
+
+    mutating func mayRead(changeCount: Int, now: TimeInterval) -> Bool {
+        if pendingChangeCount != changeCount {
+            pendingChangeCount = changeCount
+            firstAttemptAt = now
+            return true
+        }
+        guard let firstAttemptAt else {
+            self.firstAttemptAt = now
+            return true
+        }
+        return now - firstAttemptAt < Self.timeout
+    }
+
+    mutating func reset() {
+        pendingChangeCount = nil
+        firstAttemptAt = nil
+    }
+}
+
+enum ClipboardPasteboardWriter {
+    /// Write through a pasteboard item and report whether the text was actually
+    /// accepted, so automatic sync can withhold its delivery receipt on failure.
+    static func writeText(_ text: String, to pasteboard: NSPasteboard) -> Bool {
+        guard !text.isEmpty else { return false }
+        let item = NSPasteboardItem()
+        guard item.setString(text, forType: .string) else { return false }
+        pasteboard.clearContents()
+        return pasteboard.writeObjects([item])
+    }
+}
+
+struct ClipboardSyncRecipient: Equatable, Identifiable {
+    let identity: String
+    let name: String
+    var id: String { identity }
+}
+
+enum ClipboardSyncNoticeTone: Equatable {
+    case neutral
+    case progress
+    case success
+    case warning
+}
+
+struct ClipboardSyncNoticePresentation: Equatable {
+    let symbol: String
+    let tone: ClipboardSyncNoticeTone
+
+    static func resolve(_ notice: String?) -> ClipboardSyncNoticePresentation {
+        guard let notice, !notice.isEmpty else {
+            return ClipboardSyncNoticePresentation(symbol: "doc.on.clipboard", tone: .neutral)
+        }
+        let normalized = notice.lowercased()
+        if normalized.contains("failed") || normalized.contains("couldn't") ||
+            normalized.contains("wasn't shared") || normalized.contains("over the 64 kb") {
+            return ClipboardSyncNoticePresentation(symbol: "exclamationmark.triangle.fill", tone: .warning)
+        }
+        if normalized.contains("retrying") || normalized.contains("syncing") {
+            return ClipboardSyncNoticePresentation(symbol: "arrow.triangle.2.circlepath", tone: .progress)
+        }
+        if normalized.contains("synced") || normalized.contains("delivered") {
+            return ClipboardSyncNoticePresentation(symbol: "checkmark.circle.fill", tone: .success)
+        }
+        return ClipboardSyncNoticePresentation(symbol: "doc.on.clipboard", tone: .neutral)
+    }
+}
+
+/// Aggregates one clipboard copy's delivery results so a fast success cannot
+/// hide a failure to another teammate in the same call.
+struct ClipboardSyncBatch: Equatable {
+    let id: UUID
+    let recipients: [ClipboardSyncRecipient]
+    private(set) var outcomes: [String: Bool] = [:]
+
+    init(id: UUID = UUID(), recipients: [ClipboardSyncRecipient]) {
+        self.id = id
+        self.recipients = recipients
+    }
+
+    var isComplete: Bool { outcomes.count == recipients.count }
+    var failedRecipients: [ClipboardSyncRecipient] {
+        recipients.filter { outcomes[$0.identity] == false }
+    }
+    var canRetryFailedRecipients: Bool { isComplete && !failedRecipients.isEmpty }
+    func failedRecipientsAvailable(inCall identities: Set<String>) -> [ClipboardSyncRecipient] {
+        failedRecipients.filter { identities.contains($0.identity) }
+    }
+
+    var status: String {
+        guard !recipients.isEmpty else { return "No teammates in this call to sync with" }
+        guard isComplete else { return "Syncing clipboard · \(outcomes.count)/\(recipients.count) teammates" }
+
+        let delivered = recipients.filter { outcomes[$0.identity] == true }.map(\.name)
+        let failed = recipients.filter { outcomes[$0.identity] == false }.map(\.name)
+        if failed.isEmpty { return "Clipboard synced with \(delivered.joined(separator: ", "))" }
+        if delivered.isEmpty { return "Clipboard sync failed for \(failed.joined(separator: ", "))" }
+        return "Synced with \(delivered.joined(separator: ", ")); failed for \(failed.joined(separator: ", "))"
+    }
+
+    mutating func record(identity: String, delivered: Bool) {
+        guard recipients.contains(where: { $0.identity == identity }), outcomes[identity] == nil else { return }
+        outcomes[identity] = delivered
     }
 }
 

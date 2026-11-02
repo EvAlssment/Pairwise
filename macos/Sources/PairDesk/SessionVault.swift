@@ -1,4 +1,5 @@
 import Foundation
+import LocalAuthentication
 import Security
 
 struct SavedSession: Codable, Sendable { let token: String; let server: String }
@@ -21,7 +22,9 @@ enum SessionVault {
         // scripts/create-signing-identity.sh) makes "Always Allow" survive
         // updates. Unsigned builds cannot use the data-protection keychain:
         // keychain-access-groups needs a provisioning profile.
-        q[kSecUseAuthenticationUI as String] = kSecUseAuthenticationUIFail
+        let context = LAContext()
+        context.interactionNotAllowed = true
+        q[kSecUseAuthenticationContext as String] = context
         var item: CFTypeRef?
         guard SecItemCopyMatching(q as CFDictionary, &item) == errSecSuccess, let data = item as? Data else { return nil }
         return try? JSONDecoder().decode(SavedSession.self, from: data)

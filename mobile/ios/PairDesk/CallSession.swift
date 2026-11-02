@@ -24,7 +24,8 @@ struct CameraTile: Identifiable {
 
     func join(url: String, token: String, startMicrophone: Bool = true) async throws {
         await leave()
-        let room = Room(delegate: self)
+        let room = Room(delegate: self,
+                        roomOptions: RoomOptions(adaptiveStream: true, dynacast: true))
         self.room = room
         do {
             try await room.connect(url: url, token: token)

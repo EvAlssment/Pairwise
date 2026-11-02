@@ -577,7 +577,10 @@ final class AppStore: ObservableObject {
 
     func call(_ person: TeamUser) async {
         guard !busy, user != nil, person.online == true else { return }
-        if activeRoom != nil, !canAddPerson { error = "This call is limited to four people."; return }
+        if activeRoom != nil, !canAddPerson {
+            error = "This call is limited to \(PairRoom.maximumParticipants) people."
+            return
+        }
         busy = true
         defer { busy = false }
         callMessage = nil

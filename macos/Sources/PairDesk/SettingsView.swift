@@ -1,6 +1,40 @@
 import AppKit
 import SwiftUI
 
+private enum ReadinessViewState: Equatable {
+    case notChecked
+    case checking
+    case ready(Int)
+    case unavailable(String)
+
+    var symbol: String {
+        switch self {
+        case .notChecked: "network"
+        case .checking: "arrow.triangle.2.circlepath"
+        case .ready: "checkmark.circle.fill"
+        case .unavailable: "exclamationmark.triangle.fill"
+        }
+    }
+
+    var tint: Color {
+        switch self {
+        case .notChecked: Theme.textMuted
+        case .checking: Theme.accent
+        case .ready: Theme.online
+        case .unavailable: Theme.attention
+        }
+    }
+
+    var message: String {
+        switch self {
+        case .notChecked: "Check the configured API and call media service before troubleshooting a call."
+        case .checking: "Checking API and media readiness…"
+        case .ready(let milliseconds): "API and media ready · \(milliseconds) ms"
+        case .unavailable(let message): message
+        }
+    }
+}
+
 enum PairDeskSettingsSection: String, CaseIterable, Identifiable {
     case general = "General"
     case audio = "Audio"
@@ -33,6 +67,7 @@ struct SettingsView: View {
     @StateObject private var cameraTest: CameraPreviewTestController
     private let mediaTests: SettingsMediaTests
     @State private var selection: PairDeskSettingsSection?
+    @State private var readinessState: ReadinessViewState = .notChecked
 
     init(store: AppStore, rtc: RTCService, loginItem: LoginItemManager,
          initialSection: PairDeskSettingsSection = .general, mediaTests: SettingsMediaTests? = nil,
@@ -50,14 +85,48 @@ struct SettingsView: View {
     }
 
     var body: some View {
-        NavigationSplitView {
-            List(PairDeskSettingsSection.allCases, selection: $selection) { section in
-                Label(section.rawValue, systemImage: section.symbol).tag(section)
+        HStack(spacing: 0) {
+            VStack(alignment: .leading, spacing: 22) {
+                HStack(spacing: 10) {
+                    Image(systemName: "rectangle.on.rectangle")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(Theme.accent)
+                        .frame(width: 30, height: 30)
+                        .background(Theme.accent.opacity(0.14), in: RoundedRectangle(cornerRadius: 9))
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("PairDesk").font(.system(size: 14, weight: .semibold))
+                        Text("Settings").font(.system(size: 11)).foregroundStyle(Theme.textMuted)
+                    }
+                }
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("PREFERENCES")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(Theme.textMuted)
+                        .padding(.horizontal, 10).padding(.bottom, 4)
+                    ForEach(PairDeskSettingsSection.allCases) { section in
+                        SettingsSidebarRow(
+                            section: section,
+                            isSelected: selection == section
+                        ) {
+                            selection = section
+                        }
+                    }
+                }
+
+                Spacer(minLength: 0)
+                Text("PAIRDESK · TEAM CALLS")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(Theme.textMuted.opacity(0.7))
+                    .padding(.horizontal, 10)
             }
-            .listStyle(.sidebar)
-            .navigationTitle("Settings")
-            .frame(minWidth: 170)
-        } detail: {
+            .padding(18)
+            .frame(maxHeight: .infinity, alignment: .topLeading)
+            .frame(width: 205)
+            .background(Theme.surfaceRaised.opacity(0.32))
+
+            Rectangle().fill(Color.primary.opacity(0.08)).frame(width: 1)
+
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
                     sectionContent
@@ -135,6 +204,62 @@ struct SettingsView: View {
                 Label("PairDesk", systemImage: "rectangle.on.rectangle").font(.headline)
                 Text("Your team, calls, screen sharing, and collaboration controls are available from the menu bar.")
                     .font(.callout).foregroundStyle(Theme.textMuted)
+            }
+            SettingsCard {
+                HStack(alignment: .top, spacing: 14) {
+                    Image(systemName: readinessState.symbol)
+                        .foregroundStyle(readinessState.tint)
+                        .frame(width: 22)
+                        .padding(.top, 2)
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text("Team server").font(.headline)
+                        Text(ServerReadinessCheck.displayAddress(store.serverAddress))
+                            .font(.callout.monospaced())
+                            .foregroundStyle(Theme.textMuted)
+                            .textSelection(.enabled)
+                        Text(readinessState.message)
+                            .font(.callout)
+                            .foregroundStyle(readinessState.tint)
+                        if ServerReadinessCheck.isLocalOnly(store.serverAddress) {
+                            Label("Local-only address: teammates cannot reach this server.", systemImage: "exclamationmark.triangle.fill")
+                                .font(.caption)
+                                .foregroundStyle(Theme.attention)
+                        }
+                    }
+                    Spacer(minLength: 8)
+                    Button {
+                        runReadinessCheck()
+                    } label: {
+                        if readinessState == .checking {
+                            ProgressView().controlSize(.small)
+                                .frame(minWidth: 92)
+                        } else {
+                            Text("Test connection").frame(minWidth: 92)
+                        }
+                    }
+                    .disabled(readinessState == .checking)
+                    .accessibilityHint("Checks whether the configured PairDesk API and its media service are ready.")
+                }
+            }
+        }
+    }
+
+    private func runReadinessCheck() {
+        readinessState = .checking
+        Task {
+            do {
+                let check = try await ServerReadinessCheck.run(server: store.serverAddress)
+                if check.result.ok && check.result.media == true {
+                    readinessState = .ready(check.milliseconds)
+                } else if check.result.dependency == "media" {
+                    readinessState = .unavailable("Server reachable, but the media service is not ready.")
+                } else if check.result.dependency == "storage" {
+                    readinessState = .unavailable("Server reachable, but its database is not ready.")
+                } else {
+                    readinessState = .unavailable("The team server is not ready for calls.")
+                }
+            } catch {
+                readinessState = .unavailable("Could not reach the configured team server. Check the address and network.")
             }
         }
     }
@@ -239,7 +364,8 @@ struct SettingsView: View {
                     .accessibilityElement(children: .ignore)
                     .accessibilityLabel("Microphone test input level")
                     .accessibilityValue(microphoneTest.level > 0.025 ? "Sound detected" : "No sound detected")
-                    Button(microphoneTest.isRunning ? "Stop test" : "Test microphone") {
+                    Button(microphoneTest.isRunning ? "Stop test" :
+                        (permissions.microphone ? "Test microphone" : permissions.microphoneAuthorization.actionTitle)) {
                         toggleMicrophoneTest()
                     }
                     .disabled(store.activeRoom != nil || (!permissions.microphone && microphoneTest.isRunning))
@@ -270,7 +396,7 @@ struct SettingsView: View {
                         }
                     }
                     .pickerStyle(.segmented)
-                    Text("All presets target 30 fps. The selected maximum applies the next time you start sharing.")
+                    Text("All presets target 30 fps. Changes apply to an active share and set the maximum for your next share.")
                         .font(.caption).foregroundStyle(Theme.textMuted)
                 }
             }
@@ -304,8 +430,6 @@ struct SettingsView: View {
                         }
                         ForEach(rtc.cameraDevices) { device in Text(device.name).tag(device.id) }
                     }
-                    .labelsHidden().frame(maxWidth: 250)
-                    .disabled(rtc.cameraDevices.isEmpty)
                 }
                 Divider()
                 VStack(alignment: .leading, spacing: 10) {
@@ -329,7 +453,7 @@ struct SettingsView: View {
                             .font(.callout).foregroundStyle(Theme.textMuted)
                     }
                     Spacer()
-                    Button(permissions.camera ? "System Settings" : "Allow") {
+                    Button(permissions.camera ? "System Settings" : permissions.cameraAuthorization.actionTitle) {
                         if permissions.camera { permissions.open("Privacy_Camera") }
                         else { Task { await permissions.requestCamera() } }
                     }
@@ -346,7 +470,8 @@ struct SettingsView: View {
                                 .font(.callout).foregroundStyle(Theme.textMuted)
                         }
                         Spacer()
-                        Button(cameraTest.isRunning ? "Stop preview" : "Test camera") {
+                        Button(cameraTest.isRunning ? "Stop preview" :
+                            (permissions.camera ? "Test camera" : permissions.cameraAuthorization.actionTitle)) {
                             toggleCameraTest()
                         }
                         .disabled(store.activeRoom != nil || rtc.isCameraEnabled)
@@ -504,12 +629,15 @@ struct SettingsView: View {
         SettingsPage(title: "Permissions", subtitle: "Each permission is requested only when you use its feature. You can still join calls and view shares without optional access.") {
             SettingsCard {
                 permissionRow("Microphone", detail: "Needed to speak on a call.", granted: permissions.microphone,
+                              allowTitle: permissions.microphoneAuthorization.actionTitle,
                               allow: { Task { await permissions.requestMicrophone() } }, settings: { permissions.open("Privacy_Microphone") })
                 Divider()
                 permissionRow("Camera", detail: "Optional video, turned on only by you.", granted: permissions.camera,
+                              allowTitle: permissions.cameraAuthorization.actionTitle,
                               allow: { Task { await permissions.requestCamera() } }, settings: { permissions.open("Privacy_Camera") })
                 Divider()
                 permissionRow("Accessibility", detail: "Optional remote mouse and keyboard control on your Mac.", granted: permissions.accessibility,
+                              allowTitle: permissions.accessibilityPromptRequested ? "Open Settings" : "Allow",
                               allow: { permissions.requestAccessibility() }, settings: { permissions.open("Privacy_Accessibility") })
                 if !permissions.accessibility {
                     Text("macOS applies this permission to the exact PairDesk copy. Current copy: \(Bundle.main.bundleURL.path)")
@@ -537,7 +665,7 @@ struct SettingsView: View {
         return rtc.isCameraEnabled ? "Camera is on for this call." : "Camera is off. Turn it on from the call controls."
     }
 
-    private func permissionRow(_ title: String, detail: String, granted: Bool,
+    private func permissionRow(_ title: String, detail: String, granted: Bool, allowTitle: String = "Allow",
                                allow: @escaping () -> Void, settings: @escaping () -> Void) -> some View {
         HStack(alignment: .top, spacing: 12) {
             Image(systemName: granted ? "checkmark.circle.fill" : "circle")
@@ -547,9 +675,88 @@ struct SettingsView: View {
                 Text(detail).font(.callout).foregroundStyle(Theme.textMuted)
             }
             Spacer()
-            Button(granted ? "System Settings" : "Allow") { granted ? settings() : allow() }
+            Button(granted ? "System Settings" : allowTitle) { granted ? settings() : allow() }
         }
         .padding(.vertical, 5)
+    }
+}
+
+private struct SettingsMenuChoice: Identifiable {
+    let id: String
+    let title: String
+}
+
+private struct SettingsMenuPicker: View {
+    let title: String
+    let choices: [SettingsMenuChoice]
+    @Binding var selection: String
+
+    private var selectedTitle: String {
+        choices.first(where: { $0.id == selection })?.title ?? choices.first?.title ?? "Choose…"
+    }
+
+    var body: some View {
+        Menu {
+            ForEach(choices) { choice in
+                Button {
+                    selection = choice.id
+                } label: {
+                    if choice.id == selection {
+                        Label(choice.title, systemImage: "checkmark")
+                    } else {
+                        Text(choice.title)
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 8) {
+                Text(selectedTitle).lineLimit(1)
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(Theme.textMuted)
+            }
+            .font(.system(size: 12, weight: .medium))
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .frame(width: 250, alignment: .trailing)
+            .background(Theme.surfaceRaised, in: RoundedRectangle(cornerRadius: 8))
+            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.primary.opacity(0.08)))
+            .contentShape(RoundedRectangle(cornerRadius: 8))
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .frame(width: 250, alignment: .trailing)
+        .accessibilityLabel("\(title): \(selectedTitle)")
+    }
+}
+
+private struct SettingsSidebarRow: View {
+    let section: PairDeskSettingsSection
+    let isSelected: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                Image(systemName: section.symbol)
+                    .font(.system(size: 13, weight: .medium))
+                    .frame(width: 18)
+                Text(section.rawValue)
+                    .font(.system(size: 12, weight: isSelected ? .semibold : .medium))
+                Spacer(minLength: 0)
+            }
+            .foregroundStyle(isSelected ? Color.white : Theme.textMuted)
+            .padding(.horizontal, 10)
+            .frame(height: 34)
+            .background(
+                isSelected ? Theme.accent.opacity(0.9) : Color.clear,
+                in: RoundedRectangle(cornerRadius: 8)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 8))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(section.rawValue)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 }
 

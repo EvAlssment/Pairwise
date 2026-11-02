@@ -19,20 +19,27 @@ enum SupportDiagnostics {
         Captured: \(ISO8601DateFormatter().string(from: now))
         App: \(appVersion) (\(build))
         macOS: \(ProcessInfo.processInfo.operatingSystemVersionString)
+        Runtime: \(RuntimeArchitectureDiagnostics.current)
         API host: \(endpoint)
         API protocol: v1
         API build commit: \(safeBuildIdentifier(apiBuildCommit))
         Call: \(callState)
         Screen sharing: \(rtc.isSharing ? "yes" : (rtc.screenTrack == nil ? "no" : "viewing"))
         Microphone: \(rtc.isMicrophoneEnabled ? "on" : "off")
+        Noise suppression: \(noiseSuppressionSummary(preferenceEnabled: rtc.noiseSuppressionEnabled,
+                                                       status: rtc.noiseSuppressionStatus))
+        Remote audio quality: \(rtc.remoteAudioQualitySummary)
         Screen RTT: \(rtc.screenNetworkQuality.label)
+        Control channel RTT: \(rtc.screenTrack == nil || rtc.isSharing ? "unavailable" : rtc.controlChannelLatency.summary)
+        Outgoing screen stream: \(outgoingScreenSummary(isSharing: rtc.isSharing, metrics: rtc.screenShareSenderMetrics))
         Received screen stream: \(rtc.screenStreamMetrics.summary)
+        PairDesk process CPU during screen activity (percentage of one logical core): \(rtc.screenShareProcessCPU.summary)
         Screen time to first rendered frame: \(rtc.screenTimeToFirstFrameMilliseconds.map { "\($0) ms" } ?? "unavailable")
         Screen interruptions: \(rtc.screenShareContinuityMetrics.summary)
         Selected ICE route: \(route)
         Current error category: \(errorCategory)
 
-        Privacy: this report contains no account names, email addresses, passwords, tokens, transcript text, audio, screen images, or IP addresses. Review it before sharing.
+        Privacy: excludes names, email, credentials, IP addresses, transcripts, audio content, and screen images. Review before sharing.
         """
     }
 
@@ -123,7 +130,7 @@ struct SupportDiagnosticsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Support diagnostics").font(.title2.bold())
-            Text("Review this report before sharing. It omits account identity, credentials, audio, transcripts, and screen content.")
+            Text("Review this report before sharing. It omits account identity, credentials, audio content, transcripts, and screen content.")
                 .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             TextEditor(text: .constant(report))
                 .font(.system(.caption, design: .monospaced))

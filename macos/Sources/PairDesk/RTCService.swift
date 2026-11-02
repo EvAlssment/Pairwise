@@ -13,6 +13,7 @@ struct CallParticipant: Identifiable, Equatable {
     let isLocal: Bool
     var isSpeaking: Bool = false
     var isMicrophoneMuted: Bool = true
+    var isCameraEnabled: Bool = false
     var id: String { identity }
 }
 
@@ -21,6 +22,8 @@ struct CameraFeed: Identifiable {
     let name: String
     let track: VideoTrack
     let isLocal: Bool
+    let isSpeaking: Bool
+    let isHandRaised: Bool
     var id: String { identity }
 }
 
@@ -47,6 +50,14 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
         didSet { if connected != oldValue { refreshClipboardSyncLifecycle() } }
     }
     @Published private(set) var isMicrophoneEnabled = false
+    @Published private(set) var noiseSuppressionEnabled = AudioProcessingPreference.noiseSuppressionEnabled()
+    @Published private(set) var isUpdatingNoiseSuppression = false
+    @Published private(set) var noiseSuppressionEffectiveImplementation: AudioProcessingImplementation?
+    var noiseSuppressionStatus: String {
+        return NoiseSuppressionStatus.summary(preferenceEnabled: noiseSuppressionEnabled,
+                                              microphoneEnabled: isMicrophoneEnabled,
+                                              effectiveImplementation: noiseSuppressionEffectiveImplementation)
+    }
     @Published private(set) var isCameraEnabled = false
     @Published private(set) var cameraDevices: [CameraDeviceChoice] = []
     @Published private(set) var selectedCameraID: String?
@@ -75,6 +86,12 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
     @Published private(set) var cameraTracks: [String: VideoTrack] = [:]
     @Published private(set) var status = "Disconnected"
     @Published private(set) var error: String?
+
+    /// Clears the visible call error without changing the underlying call or
+    /// remote-control state. A later failure can publish a new message.
+    func dismissError() {
+        error = nil
+    }
     @Published private(set) var controlState: RemoteControlState = .unavailable
     @Published private(set) var pendingControlRequests: [CallParticipant] = []
     @Published private(set) var activeSharerIdentity: String? {
@@ -107,17 +124,31 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
     var usesIndependentCursors: Bool { !isSharing && cursorSessionID != nil }
     var canPointAtRemoteScreen: Bool { connected && !isSharing && screenTrack != nil && activeSharerIdentity != nil }
     var canAnnotateScreen: Bool { canPointAtRemoteScreen && remoteControlUnavailableReason != .windowShare && annotationsAllowed }
+    var remoteAudioQualitySummary: String {
+        AudioQualitySummary(streams: Array(participantAudioQuality.values.map(Optional.some))).summary
+    }
     @Published private(set) var localIdentity: String?
     @Published private(set) var audioInputDevices: [AudioDeviceChoice] = []
     @Published private(set) var audioOutputDevices: [AudioDeviceChoice] = []
     @Published private(set) var selectedAudioInputID = ""
     @Published private(set) var selectedAudioOutputID = ""
+    @Published private(set) var participantAudioVolumes: [String: Double] = [:]
+    @Published private(set) var participantAudioQuality: [String: AudioStreamQualityMetrics] = [:]
+    private var remoteAudioQualityWindow = AudioQualityWindow()
     @Published private(set) var savedAudioInputUnavailable = false
     @Published private(set) var savedAudioOutputUnavailable = false
+    @Published private(set) var audioDeviceNotice: String?
+    private var audioDeviceNoticeState = AudioDeviceAvailabilityNoticeState()
     @Published private(set) var localMicrophoneLevel = 0.0
     @Published private(set) var screenNetworkQuality: ScreenNetworkQuality = .measuring
+    @Published private(set) var screenQualityHistory = ScreenQualityHistory()
     @Published private(set) var screenStreamMetrics = ScreenStreamMetrics()
+    @Published private(set) var screenShareProcessCPU = ScreenShareProcessCPUUsage.unavailable
+    private var screenReceiveBitrateEstimator = ScreenShareBitrateEstimator()
+    private var screenShareProcessCPUWindow = ScreenShareProcessCPUWindow()
+    @Published private(set) var screenShareSenderMetrics = ScreenShareSenderMetrics()
     @Published private(set) var screenShareContinuityMetrics = ScreenShareContinuityMetrics()
+    @Published private(set) var controlChannelLatency = ControlChannelLatency()
     @Published private(set) var screenTimeToFirstFrameMilliseconds: Int?
     @Published private(set) var screenShareQuality = ScreenShareQuality.load()
     @Published private(set) var adaptiveQualityEnabled = (UserDefaults.standard.object(forKey: "adaptiveShareQualityEnabled") as? Bool) ?? true
@@ -145,16 +176,25 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
     /// silent unless a consumer installs this callback (for example, after consent).
     var onAudioBuffer: ((String, String, [Float], Double) -> Void)?
     private var audioForwardingConsented = false
+    private var remoteAudioQualityMonitorTask: Task<Void, Never>?
 
     func dismissError() { error = nil }
 
     private var room: Room?
     private var localAudioRenderer: PCMForwarder?
+    private let remoteAudioVolumeQueue = DispatchQueue(label: "app.pairdesk.remote-audio-volume")
+    private let participantAudioVolumePreferences = ParticipantAudioVolumePreferences()
+    private var participantAudioVolumeScope: String?
     private var lastMicrophoneMeterUpdate: TimeInterval = 0
     private var remoteAudioRenderers: [String: (identity: String, track: RemoteAudioTrack, renderer: PCMForwarder)] = [:]
     private var shareTrack: LocalVideoTrack?
     private var adaptiveShareController: AdaptiveShareController?
-    private var adaptiveQualityTask: Task<Void, Never>?
+    private var screenShareQualityMonitorTask: Task<Void, Never>?
+    private var screenShareBitrateEstimator = ScreenShareBitrateEstimator()
+    private var controlLatencyProbeTask: Task<Void, Never>?
+    private var pendingControlLatencyProbe: (sequence: UInt64, sentAt: TimeInterval)?
+    private var lastControlLatencyProbeReplyAt: [String: TimeInterval] = [:]
+    private var clipboardSyncBatch: ClipboardSyncBatch?
     private var isStartingShare = false
     private var isStoppingShare = false
     private let sharingIndicator = ScreenShareIndicator()
@@ -218,12 +258,14 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
     private var controlSendTail: Task<Void, Never>?
     private var clipboardReplayWindow = ClipboardTransferReplayWindow()
     private var clipboardAssembler = ClipboardTransferAssembler()
+    private var clipboardDeliveryReceipts = Set<UUID>()
     private var clipboardSyncTask: Task<Void, Never>?
     private var clipboardSyncSendTask: Task<Void, Never>?
     private var clipboardSyncQueue: [String] = []
     private var clipboardSyncQueuedTexts = Set<String>()
     private var clipboardSyncInFlightText: String?
     private var clipboardObservedChangeCount = 0
+    private var clipboardPasteboardReadRetry = ClipboardPasteboardReadRetry()
     private var lastSharedClipboardText: String?
     private var screenClipboard = ScreenClipboard()
     private var screenClipboardEnabledBySender: [String: Bool] = [:]
@@ -238,11 +280,19 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
     private let maxQueuedControlSends = 256
 
     var activeControllerIdentity: String? { isSharing ? controlArbiter.driverIdentity : nil }
+    var canRetryClipboardSync: Bool {
+        guard clipboardSyncEnabled, lastSharedClipboardText != nil,
+              let batch = clipboardSyncBatch, batch.canRetryFailedRecipients else { return false }
+        let connectedPeers = Set(participants.filter { !$0.isLocal }.map(\.identity))
+        return !batch.failedRecipientsAvailable(inCall: connectedPeers).isEmpty
+    }
     var isSharingWindow: Bool { isSharing && shareIsWindow }
     var cameraFeeds: [CameraFeed] {
-        participants.compactMap { person in
+        CameraFeedOrdering.speakersFirst(participants).compactMap { person in
             guard let track = cameraTracks[person.identity] else { return nil }
-            return CameraFeed(identity: person.identity, name: person.name, track: track, isLocal: person.isLocal)
+            return CameraFeed(identity: person.identity, name: person.name, track: track,
+                              isLocal: person.isLocal, isSpeaking: person.isSpeaking,
+                              isHandRaised: raisedHandIdentities.contains(person.identity))
         }
     }
 
@@ -250,7 +300,12 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
         participants.first(where: { $0.identity == identity })?.name ?? identity
     }
 
-    override init() {
+    override convenience init() {
+        self.init(clipboardPasteboard: .general)
+    }
+
+    init(clipboardPasteboard: NSPasteboard) {
+        self.clipboardPasteboard = clipboardPasteboard
         super.init()
         AudioManager.shared.onDeviceUpdate = { [weak self] manager in
             Task { @MainActor [weak self] in self?.refreshAudioDevices(using: manager) }
@@ -320,20 +375,33 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
         error = nil
         status = "Connecting…"
         controlTransportFailed = false
-        let newRoom = Room(delegate: self)
+        let newRoom = Room(delegate: self,
+                           roomOptions: RoomOptions(adaptiveStream: true,
+                                                   dynacast: true,
+                                                   reportRemoteTrackStatistics: true))
         room = newRoom
         do {
             try await newRoom.connect(url: url, token: token)
-            guard newRoom.participantCount <= 4 else {
+            guard newRoom.participantCount <= PairRoom.maximumParticipants else {
                 await newRoom.disconnect()
-                throw LiveKitError(.invalidState, message: "This room is limited to four participants.")
+                throw LiveKitError(.invalidState,
+                                   message: "This room is limited to \(PairRoom.maximumParticipants) participants.")
             }
             localIdentity = newRoom.localParticipant.identity?.stringValue ?? identity
+            participantAudioVolumeScope = ParticipantAudioVolumePreferences.scope(
+                localIdentity: localIdentity ?? identity,
+                mediaServerURL: url
+            )
+            participantAudioVolumes = participantAudioVolumeScope.map {
+                participantAudioVolumePreferences.load(scope: $0)
+            } ?? [:]
             connected = true
+            startRemoteAudioQualityMonitoring()
             refreshAudioDevices()
             status = "Connected as \(name)"
             refreshParticipants()
             refreshSharer()
+            startControlLatencyProbeLoop()
             controlState = .viewer
             // Capture stays off until the person enables microphone, camera or screen sharing.
         } catch {
@@ -345,6 +413,21 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
     }
 
     func disconnect() async {
+        remoteAudioQualityMonitorTask?.cancel()
+        remoteAudioQualityMonitorTask = nil
+        participantAudioQuality = [:]
+        remoteAudioQualityWindow.reset()
+        controlLatencyProbeTask?.cancel()
+        controlLatencyProbeTask = nil
+        screenShareQualityMonitorTask?.cancel()
+        screenShareQualityMonitorTask = nil
+        pendingControlLatencyProbe = nil
+        lastControlLatencyProbeReplyAt.removeAll()
+        controlChannelLatency.reset()
+        screenQualityHistory.reset()
+        screenShareSenderMetrics = ScreenShareSenderMetrics()
+        screenShareBitrateEstimator.reset()
+        screenReceiveBitrateEstimator.reset()
         heartbeatTask?.cancel()
         leaseTask?.cancel()
         heartbeatTask = nil
@@ -358,6 +441,10 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
         clipboardReplayWindow = ClipboardTransferReplayWindow()
         clipboardAssembler = ClipboardTransferAssembler()
         setClipboardSyncEnabled(false)
+        clipboardSyncDeliveryTasks.values.forEach { $0.cancel() }
+        clipboardSyncDeliveryTasks.removeAll()
+        clipboardSyncDeliveryIDs.removeAll()
+        clipboardPasteboardReadRetry.reset()
         emergencyStop()
         resetIndependentCursors()
         controlTransportFailed = true
@@ -379,6 +466,11 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
         connected = false
         knownRemoteParticipants.removeAll()
         participants = []
+        isLocalHandRaised = false
+        isUpdatingLocalHandRaise = false
+        raisedHandIdentities.removeAll()
+        participantAudioVolumes.removeAll()
+        participantAudioVolumeScope = nil
         activeSharerIdentity = nil
         remotePointers = []
         pendingControlRequests = []
@@ -400,15 +492,51 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
     func setMicrophoneEnabled(_ enabled: Bool) async throws {
         guard let room else { throw LiveKitError(.invalidState, message: "Not connected") }
         do {
-            try await room.localParticipant.setMicrophone(enabled: enabled)
+            try await room.localParticipant.setMicrophone(
+                enabled: enabled,
+                captureOptions: AudioCaptureOptions(noiseSuppression: noiseSuppressionEnabled)
+            )
             isMicrophoneEnabled = enabled
             if enabled { attachLocalAudioRenderer() }
             else { detachLocalAudioRenderer(); localMicrophoneLevel = 0 }
+            refreshNoiseSuppressionStatus()
             refreshParticipants()
         } catch {
             self.error = "Microphone could not be \(enabled ? "enabled" : "disabled"): \(error.localizedDescription)"
             throw error
         }
+    }
+
+    func setNoiseSuppressionEnabled(_ enabled: Bool) async throws {
+        guard !isUpdatingNoiseSuppression, enabled != noiseSuppressionEnabled else { return }
+        isUpdatingNoiseSuppression = true
+        defer { isUpdatingNoiseSuppression = false }
+
+        if let publication = room?.localParticipant.localAudioTracks.first(where: { $0.source == .microphone }),
+           let track = publication.track as? LocalAudioTrack {
+            do {
+                // LiveKit applies these settings synchronously on its signaling
+                // thread. Keep that wait off the main actor to avoid a UI hitch.
+                try await Task.detached(priority: .userInitiated) {
+                    _ = try track.setAudioProcessingOptions(AudioProcessingOptions(noiseSuppression: enabled))
+                }.value
+            } catch {
+                let message = "Couldn't update background noise reduction: \(error.localizedDescription)"
+                self.error = message
+                throw error
+            }
+        }
+        AudioProcessingPreference.saveNoiseSuppressionEnabled(enabled)
+        noiseSuppressionEnabled = enabled
+        refreshNoiseSuppressionStatus()
+    }
+
+    private func refreshNoiseSuppressionStatus() {
+        guard isMicrophoneEnabled else {
+            noiseSuppressionEffectiveImplementation = nil
+            return
+        }
+        noiseSuppressionEffectiveImplementation = AudioManager.shared.audioProcessingState.noiseSuppression.effective
     }
 
     func setCameraEnabled(_ enabled: Bool) async throws {
@@ -443,7 +571,7 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
                 publishOptions: VideoPublishOptions(name: "pairdesk.camera",
                                                     encoding: VideoEncoding(maxBitrate: cameraVideoQuality.maxBitrate,
                                                                             maxFps: cameraVideoQuality.framesPerSecond),
-                                                    simulcast: false)
+                                                    simulcast: true)
             )
             isCameraEnabled = enabled
             if enabled, let identity = room.localParticipant.identity?.stringValue,
@@ -539,6 +667,7 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
         selectedAudioInputID = device.deviceId
         UserDefaults.standard.set(device.deviceId, forKey: "audioInputDeviceID")
         savedAudioInputUnavailable = false
+        clearAudioDeviceNoticeIfResolved()
         audioInputDevices = Self.audioDeviceChoices(AudioManager.shared.inputDevices)
     }
 
@@ -548,6 +677,7 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
         selectedAudioOutputID = device.deviceId
         UserDefaults.standard.set(device.deviceId, forKey: "audioOutputDeviceID")
         savedAudioOutputUnavailable = false
+        clearAudioDeviceNoticeIfResolved()
         audioOutputDevices = Self.audioDeviceChoices(AudioManager.shared.outputDevices)
     }
 
@@ -591,10 +721,27 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
         })
     }
 
+    func dismissAudioDeviceNotice() {
+        audioDeviceNoticeState.dismiss()
+        audioDeviceNotice = nil
+    }
+
+    private func clearAudioDeviceNoticeIfResolved() {
+        guard !savedAudioInputUnavailable, !savedAudioOutputUnavailable else { return }
+        dismissAudioDeviceNotice()
+    }
+
     func refreshScreenNetworkQuality() {
+        let sampledAt = ProcessInfo.processInfo.systemUptime
+        if !isSharing { refreshLocalScreenProcessCPU() }
         guard let statistics = screenTrack?.statistics else {
             screenNetworkQuality = .measuring
+            screenReceiveBitrateEstimator.reset()
             screenStreamMetrics = ScreenStreamMetrics()
+            screenQualityHistory.record(ScreenQualitySample(uptimeSeconds: sampledAt,
+                                                            roundTripMilliseconds: nil,
+                                                            framesPerSecond: nil,
+                                                            packetLossPercent: nil))
             return
         }
         let pairs = statistics.iceCandidatePair.map {
@@ -607,11 +754,24 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
         screenNetworkQuality = .from(roundTripTimeSeconds: roundTripTime)
         let video = statistics.inboundRtpStream.first(where: { $0.kind == "video" })
             ?? statistics.inboundRtpStream.first
+        let receiveBitrate = screenReceiveBitrateEstimator.sample(byteCount: video?.bytesReceived,
+                                                                   at: sampledAt)
         screenStreamMetrics = ScreenStreamMetrics(width: video?.frameWidth,
                                                   height: video?.frameHeight,
                                                   framesPerSecond: video?.framesPerSecond,
+                                                  bitrateMegabitsPerSecond: receiveBitrate,
                                                   packetsReceived: video?.packetsReceived,
                                                   packetsLost: video?.packetsLost)
+        let roundTripMilliseconds: Int?
+        switch screenNetworkQuality {
+        case .measuring: roundTripMilliseconds = nil
+        case let .good(milliseconds), let .fair(milliseconds), let .highLatency(milliseconds):
+            roundTripMilliseconds = milliseconds
+        }
+        screenQualityHistory.record(ScreenQualitySample(uptimeSeconds: sampledAt,
+                                                        roundTripMilliseconds: roundTripMilliseconds,
+                                                        framesPerSecond: screenStreamMetrics.framesPerSecond,
+                                                        packetLossPercent: screenStreamMetrics.packetLossPercent))
         var continuity = screenShareContinuityMetrics
         continuity.observe(framesPerSecond: screenStreamMetrics.framesPerSecond,
                            at: ProcessInfo.processInfo.systemUptime)
@@ -653,6 +813,56 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
                                          topic: Self.controlTopic,
                                          reliable: false)
         Task { try? await room.localParticipant.publish(data: data, options: options) }
+    }
+
+    private func refreshScreenShareSenderMetrics() {
+        guard isSharing, let statistics = shareTrack?.statistics else {
+            screenShareBitrateEstimator.reset()
+            screenShareSenderMetrics = ScreenShareSenderMetrics()
+            return
+        }
+        let outbound = statistics.outboundRtpStream.first(where: { $0.kind == "video" })
+            ?? statistics.outboundRtpStream.first
+        let limitation: ScreenShareSenderLimitation
+        if outbound?.qualityLimitationReason == .bandwidth {
+            limitation = .bandwidth
+        } else if outbound?.qualityLimitationReason == .cpu {
+            limitation = .cpu
+        } else if let outbound, outbound.qualityLimitationReason != QualityLimitationReason.none {
+            limitation = .other
+        } else {
+            limitation = .none
+        }
+        let bitrate = screenShareBitrateEstimator.sample(byteCount: outbound?.bytesSent,
+                                                          at: ProcessInfo.processInfo.systemUptime)
+        screenShareSenderMetrics = ScreenShareSenderMetrics(width: outbound?.frameWidth,
+                                                            height: outbound?.frameHeight,
+                                                            framesPerSecond: outbound?.framesPerSecond,
+                                                            bitrateMegabitsPerSecond: bitrate,
+                                                            limitation: limitation)
+    }
+
+    private func startControlLatencyProbeLoop() {
+        guard controlLatencyProbeTask == nil else { return }
+        controlLatencyProbeTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                guard let self else { return }
+                self.sendControlLatencyProbeIfNeeded()
+                do { try await Task.sleep(for: .seconds(3)) } catch { return }
+            }
+        }
+    }
+
+    private func sendControlLatencyProbeIfNeeded() {
+        let now = ProcessInfo.processInfo.systemUptime
+        if let pending = pendingControlLatencyProbe, now - pending.sentAt < 5 { return }
+        pendingControlLatencyProbe = nil
+        guard !isSharing, connected, !isReconnecting, screenTrack != nil,
+              room != nil, let sharer = activeSharerIdentity, sharer != localIdentity,
+              let session = cursorSessionID else { return }
+        let sequence = nextSequence()
+        pendingControlLatencyProbe = (sequence, now)
+        sendControl(.init(epoch: session, sequence: sequence, kind: .latencyProbe), to: sharer)
     }
 
     /// Saves the host's quality ceiling and applies it to an active share.
@@ -707,8 +917,6 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
             }
             startAdaptiveQualityMonitoring()
         } else {
-            adaptiveQualityTask?.cancel()
-            adaptiveQualityTask = nil
             adaptiveShareStatus = nil
             if let track = shareTrack, let capturer = track.capturer as? MacOSScreenCapturer {
                 let quality = screenShareQuality
@@ -719,15 +927,27 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
     }
 
     private func startAdaptiveQualityMonitoring() {
-        adaptiveQualityTask?.cancel()
-        guard adaptiveQualityEnabled, isSharing else { return }
-        adaptiveQualityTask = Task { @MainActor [weak self] in
+        screenShareQualityMonitorTask?.cancel()
+        guard isSharing else { return }
+        screenShareQualityMonitorTask = Task { @MainActor [weak self] in
             while !Task.isCancelled {
-                do { try await Task.sleep(for: .seconds(2)) } catch { return }
-                guard let self, self.isSharing, self.adaptiveQualityEnabled else { return }
-                await self.evaluateAdaptiveQuality()
+                do { try await Task.sleep(for: .seconds(1)) } catch { return }
+                guard let self, self.isSharing else { return }
+                self.refreshLocalScreenProcessCPU()
+                self.refreshScreenShareSenderMetrics()
+                if self.adaptiveQualityEnabled { await self.evaluateAdaptiveQuality() }
             }
         }
+    }
+
+    private func refreshLocalScreenProcessCPU() {
+        guard isSharing || screenTrack != nil else {
+            screenShareProcessCPUWindow.reset()
+            screenShareProcessCPU = .unavailable
+            return
+        }
+        screenShareProcessCPUWindow.observe(ProcessCPUReading.capture())
+        screenShareProcessCPU = screenShareProcessCPUWindow.usage
     }
 
     private func evaluateAdaptiveQuality() async {
@@ -785,12 +1005,17 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
                           excludingWindows: [SCWindow] = [], hiddenWindowNames: [String] = [],
                           protectingBundleIDs: Set<String> = []) async throws {
         guard !isSharing, !isStartingShare else { throw LiveKitError(.invalidState, message: "Screen sharing is already active or starting.") }
+        screenShareBitrateEstimator.reset()
+        screenShareSenderMetrics = ScreenShareSenderMetrics()
         isStartingShare = true
         privacyVeilProtectedBundleIDs = protectingBundleIDs
         privacyVeilStopRequested = false
         defer { isStartingShare = false }
         guard let room, connected else { throw LiveKitError(.invalidState, message: "Not connected") }
-        guard room.participantCount <= 4 else { throw LiveKitError(.invalidState, message: "This room is limited to four participants.") }
+        guard room.participantCount <= PairRoom.maximumParticipants else {
+            throw LiveKitError(.invalidState,
+                               message: "This room is limited to \(PairRoom.maximumParticipants) participants.")
+        }
         refreshSharer()
         guard activeSharerIdentity == nil || activeSharerIdentity == localIdentity else {
             throw LiveKitError(.invalidState, message: "Someone else is already sharing their screen.")
@@ -876,8 +1101,18 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
                                                      screenShareEncoding: VideoEncoding(maxBitrate: quality.maxBitrate,
                                                                                          maxFps: quality.framesPerSecond),
                                                      simulcast: false)
-            _ = try await room.localParticipant.publish(videoTrack: track, options: publishOptions)
+            let publication = try await room.localParticipant.publish(videoTrack: track, options: publishOptions)
+            // Publishing suspends while LiveKit negotiates the track. A protected
+            // app can launch or exit during that window, after the pre-publish
+            // guard above. Retract the just-published track before treating the
+            // share as active if the veil was invalidated during negotiation.
+            guard !privacyVeilStopRequested else {
+                try? await room.localParticipant.unpublish(publication: publication)
+                _ = try? await track.capturer.stopCapture()
+                throw LiveKitError(.invalidState, message: "A protected app changed state while screen sharing was starting. No screen was shared; try again after it is stable.")
+            }
             guard self.room === room, connected else {
+                try? await room.localParticipant.unpublish(publication: publication)
                 _ = try? await track.capturer.stopCapture()
                 throw LiveKitError(.invalidState, message: "The call ended while screen sharing was starting.")
             }
@@ -947,8 +1182,12 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
         guard !isStoppingShare, let room, let track = shareTrack else { return }
         isStoppingShare = true
         defer { isStoppingShare = false }
-        adaptiveQualityTask?.cancel()
-        adaptiveQualityTask = nil
+        screenShareQualityMonitorTask?.cancel()
+        screenShareQualityMonitorTask = nil
+        screenShareSenderMetrics = ScreenShareSenderMetrics()
+        screenShareBitrateEstimator.reset()
+        screenShareProcessCPUWindow.reset()
+        screenShareProcessCPU = .unavailable
         adaptiveShareController = nil
         adaptiveShareStatus = nil
         accessibilityMonitorTask?.cancel()
@@ -960,6 +1199,7 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
             catch { self.error = error.localizedDescription; return }
             shareTrack = nil
             screenTrack = nil
+            screenShareSenderMetrics = ScreenShareSenderMetrics()
             shareBounds = nil
             remoteControlAvailable = false
             remoteControlUnavailableReason = nil
@@ -980,6 +1220,7 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
         shareTrack = nil
         privacyVeilProtectedBundleIDs = []
         screenTrack = nil
+        screenShareSenderMetrics = ScreenShareSenderMetrics()
         shareBounds = nil
         remoteControlAvailable = false
         remoteControlUnavailableReason = nil
@@ -1198,8 +1439,9 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
         }
     }
 
-    /// Kept for existing callers; revoking means pausing automatic control.
-    func revokeControl() { pauseRemoteControl() }
+    /// Stops control from either endpoint: the sharer pauses new control grants,
+    /// while a viewer releases their current lease and held inputs.
+    func revokeControl() { emergencyStop() }
 
     private func revokeActiveLease(notifyDriver: Bool) {
         resetScreenClipboard()
@@ -1358,6 +1600,7 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
             self.setReconnecting(false)
             self.refreshParticipants()
             self.refreshSharer()
+            self.publishLocalHandRaiseState()
         }
     }
 
@@ -1399,6 +1642,21 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
             self.emergencyStop()
             self.detachAudioRenderers()
             self.connected = false
+            self.controlLatencyProbeTask?.cancel()
+            self.controlLatencyProbeTask = nil
+            self.screenShareQualityMonitorTask?.cancel()
+            self.screenShareQualityMonitorTask = nil
+            self.screenShareProcessCPUWindow.reset()
+            self.screenShareProcessCPU = .unavailable
+            self.remoteAudioQualityMonitorTask?.cancel()
+            self.remoteAudioQualityMonitorTask = nil
+            self.participantAudioQuality = [:]
+            self.remoteAudioQualityWindow.reset()
+            self.screenShareSenderMetrics = ScreenShareSenderMetrics()
+            self.screenShareBitrateEstimator.reset()
+            self.pendingControlLatencyProbe = nil
+            self.lastControlLatencyProbeReplyAt.removeAll()
+            self.controlChannelLatency.reset()
             self.isReconnecting = false
             self.resumeControlAfterReconnect = false
             self.error = error?.localizedDescription
@@ -1407,6 +1665,10 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
             self.isMicrophoneEnabled = false
             self.isCameraEnabled = false
             self.cameraTracks.removeAll()
+            self.isLocalHandRaised = false
+            self.isUpdatingLocalHandRaise = false
+            self.raisedHandIdentities.removeAll()
+            self.participantAudioVolumes.removeAll()
             self.shareTrack = nil
             self.shareBounds = nil
             self.shareIsWindow = false
@@ -1414,6 +1676,8 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
             self.automaticControlEnabled = false
             self.controlArbiter.disable()
             self.screenTrack = nil
+            self.screenReceiveBitrateEstimator.reset()
+            self.screenStreamMetrics = ScreenStreamMetrics()
             self.activeSharerIdentity = nil
             self.remotePointers = []
             self.pendingControlRequests = []
@@ -1438,7 +1702,10 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
         Task { @MainActor [weak self] in
             guard let self, self.room === room else { return }
             self.refreshParticipants()
-            if let identity { self.sendControlAvailability(to: identity) }
+            if let identity {
+                self.sendControlAvailability(to: identity)
+                self.publishLocalHandRaiseState()
+            }
         }
     }
 
@@ -1451,8 +1718,11 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
             for (sid, attachment) in matches {
                 attachment.track.remove(audioRenderer: attachment.renderer)
                 self.remoteAudioRenderers.removeValue(forKey: sid)
+                self.remoteAudioQualityWindow.reset(streamID: sid)
             }
+            self.participantAudioQuality.removeValue(forKey: identity)
             self.cameraTracks.removeValue(forKey: identity)
+            self.raisedHandIdentities.remove(identity)
             self.refreshParticipants()
             if wasPresent, self.connected, !self.isReconnecting { self.onParticipantLeft?() }
             self.refreshSharer()
@@ -1474,6 +1744,8 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
         if let video = publication.track as? VideoTrack, video.source == .screenShareVideo {
             Task { @MainActor [weak self] in
                 guard let self, self.room === room else { return }
+                self.screenReceiveBitrateEstimator.reset()
+                self.screenStreamMetrics = ScreenStreamMetrics()
                 self.screenTrack = video
                 self.activeSharerIdentity = identity
                 self.applyRemoteControlAvailability(from: identity, trackName: video.name)
@@ -1484,6 +1756,7 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
             Task { @MainActor [weak self] in
                 guard let self, self.room === room else { return }
                 self.cameraTracks[identity] = video
+                self.refreshParticipants()
             }
         }
         if let audio = publication.track as? RemoteAudioTrack {
@@ -1492,6 +1765,9 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
                 let renderer = self.makeAudioRenderer(room: room, identity: identity, name: name)
                 audio.add(audioRenderer: renderer)
                 self.remoteAudioRenderers[publication.sid.stringValue] = (identity, audio, renderer)
+                let volume = self.participantAudioVolume(for: identity)
+                self.remoteAudioVolumeQueue.async { audio.volume = volume }
+                self.refreshRemoteAudioQuality()
             }
         }
     }
@@ -1502,7 +1778,11 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
             Task { @MainActor [weak self] in
                 guard let self, self.room === room else { return }
                 if let video = publication.track as? VideoTrack, self.screenTrack === video {
+                    self.screenReceiveBitrateEstimator.reset()
+                    self.screenStreamMetrics = ScreenStreamMetrics()
                     self.screenTrack = nil
+                    self.screenShareProcessCPUWindow.reset()
+                    self.screenShareProcessCPU = .unavailable
                     if self.localControllerEpoch != nil { self.emergencyStop() }
                 }
                 if let video = publication.track as? VideoTrack,
@@ -1519,12 +1799,14 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
                       let attachment = self.remoteAudioRenderers.removeValue(forKey: publication.sid.stringValue)
                 else { return }
                 audio.remove(audioRenderer: attachment.renderer)
+                self.remoteAudioQualityWindow.reset(streamID: publication.sid.stringValue)
+                self.refreshRemoteAudioQuality()
             }
         }
     }
 
     nonisolated func room(_ room: Room, participant: RemoteParticipant, didPublishTrack publication: RemoteTrackPublication) {
-        guard publication.kind == .audio else { return }
+        guard publication.kind == .audio || publication.kind == .video else { return }
         Task { @MainActor [weak self] in
             guard let self, self.room === room else { return }
             self.refreshParticipants()
@@ -1541,6 +1823,8 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
             }
             guard publication.source == .screenShareVideo else { return }
             self.screenTrack = nil
+            self.screenReceiveBitrateEstimator.reset()
+            self.screenStreamMetrics = ScreenStreamMetrics()
             if self.localControllerEpoch != nil { self.emergencyStop() }
             self.refreshSharer()
         }
@@ -1554,13 +1838,23 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
     }
 
     nonisolated func room(_ room: Room, participant: Participant, trackPublication: TrackPublication, didUpdateIsMuted isMuted: Bool) {
-        guard trackPublication.kind == .audio else { return }
+        guard trackPublication.kind == .audio || trackPublication.kind == .video else { return }
         Task { @MainActor [weak self] in
             guard let self, self.room === room else { return }
             if participant is LocalParticipant, trackPublication.source == .microphone {
                 self.isMicrophoneEnabled = !isMuted
                 if isMuted { self.detachLocalAudioRenderer() }
                 else { self.attachLocalAudioRenderer() }
+            }
+            if trackPublication.source == .camera {
+                if participant is LocalParticipant { self.isCameraEnabled = !isMuted }
+                if let identity = participant.identity?.stringValue {
+                    if isMuted {
+                        self.cameraTracks.removeValue(forKey: identity)
+                    } else if let video = trackPublication.track as? VideoTrack {
+                        self.cameraTracks[identity] = video
+                    }
+                }
             }
             self.refreshParticipants()
         }
@@ -1589,7 +1883,20 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
                     self.clipboardSyncNotice = "Clipboard synced from \(self.participantName(for: sender))"
                     return
                 }
-                self.incomingClipboardTransfer = (self.participantName(for: sender), message)
+                if self.clipboardSyncEnabled {
+                    guard ClipboardPasteboardWriter.writeText(message.text, to: self.clipboardPasteboard) else {
+                        self.clipboardSyncNotice = "Couldn't update this Mac's clipboard; waiting for a retry"
+                        return
+                    }
+                    self.clipboardObservedChangeCount = self.clipboardPasteboard.changeCount
+                    self.lastSharedClipboardText = message.text
+                    self.clipboardSyncNotice = "Clipboard synced from \(self.participantName(for: sender))"
+                } else {
+                    self.incomingClipboardTransfer = (self.participantName(for: sender), message)
+                }
+                _ = self.clipboardReplayWindow.insert(message.id)
+                // Receipt means the clipboard changed, or the explicit paste offer is visible.
+                await self.sendClipboardReceipt(for: message, to: sender, localIdentity: localIdentity)
             }
             return
         }
@@ -1634,6 +1941,17 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
         for data in packets {
             try await room.localParticipant.publish(data: data, options: options)
         }
+        throw ClipboardTransferError.deliveryTimedOut
+    }
+
+    private func sendClipboardReceipt(for message: ClipboardTransferMessage, to sender: String, localIdentity: String) async {
+        guard let room, connected, self.localIdentity == localIdentity else { return }
+        let receipt = ClipboardDeliveryReceipt(transferID: message.id, senderIdentity: localIdentity, recipientIdentity: sender)
+        guard let data = try? receipt.encoded() else { return }
+        let options = DataPublishOptions(name: "PairDesk clipboard receipt",
+                                         destinationIdentities: [Participant.Identity(from: sender)],
+                                         topic: Self.clipboardReceiptTopic, reliable: true)
+        try? await room.localParticipant.publish(data: data, options: options)
     }
 
     func pasteIncomingClipboardTransfer() {
@@ -1683,9 +2001,19 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
         let pasteboard = screenClipboard.pasteboard
         let changeCount = pasteboard.changeCount
         guard changeCount != clipboardObservedChangeCount else { return }
-        clipboardObservedChangeCount = changeCount
+        guard clipboardPasteboardReadRetry.mayRead(
+            changeCount: changeCount,
+            now: ProcessInfo.processInfo.systemUptime
+        ) else {
+            clipboardObservedChangeCount = changeCount
+            clipboardPasteboardReadRetry.reset()
+            clipboardSyncNotice = "Couldn't read copied text from the pasteboard; copy it again to sync"
+            return
+        }
         let types = ((pasteboard.pasteboardItems ?? []).flatMap(\.types) + (pasteboard.types ?? [])).map(\.rawValue)
         guard ClipboardSyncPolicy.mayShare(pasteboardTypes: types) else {
+            clipboardObservedChangeCount = changeCount
+            clipboardPasteboardReadRetry.reset()
             clipboardSyncNotice = "Private text from a password manager wasn't shared"
             return
         }
@@ -1954,6 +2282,23 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
                 lastQualityFeedbackRevisionAt = feedbackAt
             }
             return
+        case .latencyProbe:
+            guard isSharing, !shareIsWindow, !isReconnecting,
+                  message.epoch == cursorSessionID,
+                  room?.remoteParticipants.values.contains(where: { $0.identity?.stringValue == sender }) == true else { return }
+            let now = ProcessInfo.processInfo.systemUptime
+            guard now - (lastControlLatencyProbeReplyAt[sender] ?? -.infinity) >= 1 else { return }
+            lastControlLatencyProbeReplyAt[sender] = now
+            sendControl(.init(epoch: message.epoch, sequence: message.sequence, kind: .latencyProbeAck), to: sender)
+        case .latencyProbeAck:
+            guard !isSharing, sender == activeSharerIdentity,
+                  message.epoch == cursorSessionID,
+                  let pending = pendingControlLatencyProbe,
+                  pending.sequence == message.sequence else { return }
+            pendingControlLatencyProbe = nil
+            let now = ProcessInfo.processInfo.systemUptime
+            let elapsed = max(0, now - pending.sentAt)
+            controlChannelLatency.record(milliseconds: Int((elapsed * 1_000).rounded()), at: now)
         case .request:
             guard isSharing, sender != localIdentity else { return }
             // The request is reliable and may arrive before the lossy cursor
@@ -2370,6 +2715,10 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
 
     private func resetIndependentCursors() {
         setCursorSession(nil)
+        screenQualityHistory.reset()
+        pendingControlLatencyProbe = nil
+        lastControlLatencyProbeReplyAt.removeAll()
+        controlChannelLatency.reset()
         localCursorPosition = nil
         pendingLossy[.cursor] = nil
         cursorExpiryTask?.cancel(); cursorExpiryTask = nil
@@ -2393,6 +2742,9 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
     private func setCursorSession(_ session: String?) {
         guard cursorSessionID != session else { return }
         cursorSessionID = session
+        pendingControlLatencyProbe = nil
+        lastControlLatencyProbeReplyAt.removeAll()
+        controlChannelLatency.reset()
         annotationBook.clear()
         screenAnnotations.removeAll()
         screenAnnotationLasers.removeAll()
@@ -2609,12 +2961,14 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
         let localID = room.localParticipant.identity?.stringValue ?? localIdentity ?? "local"
         let local = CallParticipant(identity: localID, name: room.localParticipant.name ?? localID,
                                     isLocal: true, isSpeaking: room.localParticipant.isSpeaking,
-                                    isMicrophoneMuted: !isMicrophoneEnabled)
+                                    isMicrophoneMuted: !isMicrophoneEnabled,
+                                    isCameraEnabled: isCameraEnabled)
         let remotes = room.remoteParticipants.values.compactMap { participant -> CallParticipant? in
             guard let id = participant.identity?.stringValue else { return nil }
             return CallParticipant(identity: id, name: participant.name ?? id,
                                    isLocal: false, isSpeaking: participant.isSpeaking,
-                                   isMicrophoneMuted: !participant.isMicrophoneEnabled())
+                                   isMicrophoneMuted: !participant.isMicrophoneEnabled(),
+                                   isCameraEnabled: participant.isCameraEnabled())
         }.sorted { $0.identity < $1.identity }
         // Track membership until the disconnect event, even if an earlier
         // track-unsubscribe callback has already refreshed the visible roster.
@@ -2750,13 +3104,31 @@ final class RTCService: NSObject, ObservableObject, RoomDelegate, VideoCapturerD
     }
 
     /// UI snapshot fixtures only: stand in for a connected room.
-    func debugSetCall(participants: [CallParticipant], microphoneEnabled: Bool, clipboardSync: Bool = false) {
+    func debugSetCall(participants: [CallParticipant], microphoneEnabled: Bool, clipboardSync: Bool = false,
+                      raisedHands: Set<String> = []) {
         connected = true
         self.participants = participants
+        raisedHandIdentities = raisedHands
+        isLocalHandRaised = localIdentity.map(raisedHands.contains) ?? false
         isMicrophoneEnabled = microphoneEnabled
         localMicrophoneLevel = microphoneEnabled ? 0.45 : 0
         clipboardSyncEnabled = clipboardSync
         clipboardSyncNotice = clipboardSync ? "Copied text shared with teammates on this call" : nil
+    }
+
+    func debugSetViewerControlGrant(sharerIdentity: String) {
+        activeSharerIdentity = sharerIdentity
+        localControllerEpoch = "snapshot-control-epoch"
+        controlState = .granted(identity: sharerIdentity, expiresAt: .now.addingTimeInterval(2))
+    }
+
+    func debugSetAudioDeviceNotice(_ notice: String?) {
+        if let notice {
+            audioDeviceNoticeState = AudioDeviceAvailabilityNoticeState(message: notice)
+        } else {
+            audioDeviceNoticeState.dismiss()
+        }
+        audioDeviceNotice = notice
     }
     #endif
 

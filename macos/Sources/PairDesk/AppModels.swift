@@ -11,6 +11,69 @@ struct TeamUser: Codable, Identifiable, Equatable {
     var initials: String { name.split(separator: " ").prefix(2).compactMap { $0.first }.map(String.init).joined().uppercased() }
 }
 
+enum PairDeskPasswordPolicy {
+    static let minimumCharacters = 12
+    static let maximumUTF8Bytes = 72
+
+    static func isValid(_ password: String) -> Bool {
+        password.count >= minimumCharacters && password.utf8.count <= maximumUTF8Bytes
+    }
+
+    static func hint(for password: String) -> String {
+        if password.utf8.count > maximumUTF8Bytes {
+            return "Too long by \(password.utf8.count - maximumUTF8Bytes) UTF-8 bytes"
+        }
+        if password.count < minimumCharacters {
+            let remaining = minimumCharacters - password.count
+            return password.isEmpty ? "At least 12 characters · max 72 UTF-8 bytes" : "\(remaining) more \(remaining == 1 ? "character" : "characters") needed"
+        }
+        return "Password meets the requirements"
+    }
+}
+
+enum CallInviteAvailability: Equatable {
+    case available
+    case offline
+    case inAnotherCall
+    case alreadyInvited
+    case alreadyInThisCall
+    case callFull
+
+    static func resolve(user: TeamUser, participantIDs: Set<String>,
+                        outgoingInviteIDs: Set<String>, canAddPerson: Bool) -> Self {
+        if participantIDs.contains(user.id) { return .alreadyInThisCall }
+        if outgoingInviteIDs.contains(user.id) { return .alreadyInvited }
+        guard user.online == true else { return .offline }
+        guard user.busy != true else { return .inAnotherCall }
+        guard canAddPerson else { return .callFull }
+        return .available
+    }
+
+    var title: String {
+        switch self {
+        case .available: "Available"
+        case .offline: "Offline"
+        case .inAnotherCall: "In another call"
+        case .alreadyInvited: "Calling…"
+        case .alreadyInThisCall: "In this call"
+        case .callFull: "Call full"
+        }
+    }
+
+    var canInvite: Bool { self == .available }
+}
+
+enum CallMediaMode {
+    static func title(screenSharing: Bool, cameraActive: Bool) -> String {
+        switch (screenSharing, cameraActive) {
+        case (true, true): "Screen + video"
+        case (true, false): "Screen share"
+        case (false, true): "Video call"
+        case (false, false): "Audio call"
+        }
+    }
+}
+
 struct AdminAuditEvent: Decodable, Identifiable, Equatable {
     let actorId: String
     let targetId: String
@@ -21,6 +84,7 @@ struct AdminAuditEvent: Decodable, Identifiable, Equatable {
 }
 
 struct PairRoom: Codable, Identifiable, Equatable {
+    static let maximumParticipants = 4
     let id: String
     let name: String
     var participantCount: Int

@@ -16,6 +16,49 @@ struct AudioDeviceChoice: Identifiable, Equatable {
         var seen = Set<String>()
         return choices.filter { seen.insert($0.id).inserted }
     }
+
+    static func resolvedSelection(currentID: String, choices: [AudioDeviceChoice]) -> String? {
+        if choices.contains(where: { $0.id == currentID }) { return currentID }
+        return choices.first(where: { $0.isDefault })?.id ?? choices.first?.id
+    }
+}
+
+enum AudioDeviceAvailabilityNotice {
+    static func transition(previousInputUnavailable: Bool, previousOutputUnavailable: Bool,
+                           inputUnavailable: Bool, outputUnavailable: Bool) -> String? {
+        let lostInput = inputUnavailable && !previousInputUnavailable
+        let lostOutput = outputUnavailable && !previousOutputUnavailable
+        let restoredInput = !inputUnavailable && previousInputUnavailable
+        let restoredOutput = !outputUnavailable && previousOutputUnavailable
+
+        if lostInput && lostOutput { return "Selected microphone and speaker unavailable; using system defaults." }
+        if lostOutput { return "Selected speaker disconnected; using the system default." }
+        if lostInput { return "Selected microphone disconnected; using the system default." }
+        if restoredInput && restoredOutput { return "Selected microphone and speaker are available again." }
+        if restoredOutput { return "Selected speaker is available again." }
+        if restoredInput { return "Selected microphone is available again." }
+        return nil
+    }
+}
+
+struct AudioDeviceAvailabilityNoticeState: Equatable {
+    private(set) var message: String?
+
+    mutating func recordTransition(previousInputUnavailable: Bool, previousOutputUnavailable: Bool,
+                                   inputUnavailable: Bool, outputUnavailable: Bool) {
+        if let next = AudioDeviceAvailabilityNotice.transition(
+            previousInputUnavailable: previousInputUnavailable,
+            previousOutputUnavailable: previousOutputUnavailable,
+            inputUnavailable: inputUnavailable,
+            outputUnavailable: outputUnavailable
+        ) {
+            message = next
+        }
+    }
+
+    mutating func dismiss() {
+        message = nil
+    }
 }
 
 /// Resolves a persisted CoreAudio device choice against the devices currently

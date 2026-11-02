@@ -60,6 +60,7 @@ struct PairDeskApp: App {
 
 @MainActor
 final class PairDeskDelegate: NSObject, NSApplicationDelegate {
+    private static let reopenNotification = Notification.Name("app.internal.pairdesk.reopen-menu")
     var store: AppStore { AppRuntime.shared.store }
     private var statusBar: StatusBarController?
     private var subscriptions = Set<AnyCancellable>()
@@ -152,6 +153,19 @@ final class PairDeskDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         statusBar?.showPopover()
         return false
+    }
+}
+
+enum PairDeskInstancePolicy {
+    static func isSameInstalledCopy(existingBundleIdentifier: String?,
+                                    existingBundleURL: URL?,
+                                    currentBundleIdentifier: String?,
+                                    currentBundleURL: URL) -> Bool {
+        guard let currentBundleIdentifier, !currentBundleIdentifier.isEmpty,
+              existingBundleIdentifier == currentBundleIdentifier,
+              let existingBundleURL else { return false }
+        return existingBundleURL.resolvingSymlinksInPath().standardizedFileURL ==
+            currentBundleURL.resolvingSymlinksInPath().standardizedFileURL
     }
 }
 
