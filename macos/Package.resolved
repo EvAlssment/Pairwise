@@ -1,5 +1,5 @@
 {
-  "originHash" : "d09ace487582d7958a7569e81df565d12392acecf8a446dfa054b759fefa3b38",
+  "originHash" : "fe7ae6f0fb3935068c59d5953395cfa5d06d60a2dfe3553a98df699be6913a68",
   "pins" : [
     {
       "identity" : "livekit-uniffi-xcframework",
@@ -8,6 +8,15 @@
       "state" : {
         "revision" : "7a9bf91b1601d5c408ae0cac7dc2047b5a4f615e",
         "version" : "0.1.9"
+      }
+    },
+    {
+      "identity" : "sparkle",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/sparkle-project/Sparkle",
+      "state" : {
+        "revision" : "ac2def288cbff5cfc7df3ffef6abdf45b72bcb0a",
+        "version" : "2.9.6"
       }
     },
     {
