@@ -35,6 +35,8 @@ codesign --force --options runtime --timestamp --sign "$IDENTITY" "$APP/Contents
 codesign --force --options runtime --timestamp --sign "$IDENTITY" "$APP/Contents/Resources/whisper/whisper-cli"
 codesign --force --options runtime --timestamp --entitlements "$ROOT/macos/Release.entitlements" --sign "$IDENTITY" "$APP"
 codesign --verify --deep --strict --verbose=2 "$APP"
+codesign --display --entitlements :- "$APP" > "$STAGING/signed-entitlements.plist" 2>/dev/null
+/usr/libexec/PlistBuddy -c 'Print :com.apple.security.device.camera' "$STAGING/signed-entitlements.plist" | grep -Fx true >/dev/null || { echo 'Signed app is missing its required camera entitlement' >&2; exit 1; }
 ditto -c -k --keepParent "$APP" "$STAGING/PairDesk-submit.zip"
 xcrun notarytool submit "$STAGING/PairDesk-submit.zip" --keychain-profile "$PROFILE" --wait --output-format json > "$STAGING/notarization.json"
 python3 - "$STAGING/notarization.json" <<'PY'
