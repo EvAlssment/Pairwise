@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -349,4 +350,92 @@ func (st *Store) RoomsForUser(userID string) []string {
 	}
 	sort.Strings(rooms)
 	return rooms
+}
+
+// DeleteUserAccount erases an account and the server-side data that is directly
+// associated with it. It returns rooms that became empty so the API can remove
+// those media rooms after committing the state change.
+func (st *Store) DeleteUserAccount(userID string) ([]string, error) {
+	st.lock()
+	defer st.unlock()
+	if _, ok := st.s.Users[userID]; !ok {
+		return nil, errors.New("account not found")
+	}
+	before, err := json.Marshal(st.s)
+	if err != nil {
+		return nil, err
+	}
+	var previous State
+	if err = json.Unmarshal(before, &previous); err != nil {
+		return nil, err
+	}
+	userEmail := st.s.Users[userID].Email
+	delete(st.s.Users, userID)
+	delete(st.s.Presence, userID)
+	for token, session := range st.s.Sessions {
+		if session.UserID == userID {
+			delete(st.s.Sessions, token)
+		}
+	}
+	for key, device := range st.s.Devices {
+		if device.UserID == userID {
+			delete(st.s.Devices, key)
+		}
+	}
+	for id, invitation := range st.s.Calls {
+		if invitation.CallerID == userID || invitation.TargetID == userID {
+			delete(st.s.Calls, id)
+		}
+	}
+	for id, request := range st.s.JoinRequests {
+		if request.RequesterID == userID {
+			delete(st.s.JoinRequests, id)
+		}
+	}
+	for id, job := range st.s.PushJobs {
+		if job.UserID == userID {
+			delete(st.s.PushJobs, id)
+		}
+	}
+	for email := range st.s.SignupChallenges {
+		if strings.EqualFold(email, userEmail) {
+			delete(st.s.SignupChallenges, email)
+		}
+	}
+	for index := len(st.s.AdminAudit) - 1; index >= 0; index-- {
+		event := st.s.AdminAudit[index]
+		if event.ActorID == userID || event.TargetID == userID {
+			st.s.AdminAudit = append(st.s.AdminAudit[:index], st.s.AdminAudit[index+1:]...)
+		}
+	}
+	emptyRooms := make([]string, 0)
+	for roomID, room := range st.s.Rooms {
+		delete(room.Members, userID)
+		if room.SharingUserID == userID {
+			room.SharingUserID = ""
+		}
+		if len(room.Members) == 0 {
+			delete(st.s.Rooms, roomID)
+			emptyRooms = append(emptyRooms, roomID)
+		} else {
+			st.s.Rooms[roomID] = room
+		}
+	}
+	if len(emptyRooms) > 0 {
+		empty := make(map[string]struct{}, len(emptyRooms))
+		for _, roomID := range emptyRooms {
+			empty[roomID] = struct{}{}
+		}
+		for id, request := range st.s.JoinRequests {
+			if _, removed := empty[request.RoomID]; removed {
+				delete(st.s.JoinRequests, id)
+			}
+		}
+	}
+	if err = st.save(); err != nil {
+		st.s = previous
+		return nil, err
+	}
+	sort.Strings(emptyRooms)
+	return emptyRooms, nil
 }

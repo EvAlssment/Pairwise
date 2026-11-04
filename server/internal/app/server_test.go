@@ -219,6 +219,112 @@ func TestPasswordChangeAndLogout(t *testing.T) {
 	}
 }
 
+func TestDeleteAccountRequiresPasswordAndRevokesAllSessions(t *testing.T) {
+	s, user := fixture(t)
+	h := s.Handler()
+	first := login(t, s)
+	second := login(t, s)
+	if w := request(h, http.MethodDelete, "/v1/account", first, `{"password":"wrong-password"}`); w.Code != http.StatusUnauthorized {
+		t.Fatalf("wrong password deletion status = %d, want 401", w.Code)
+	}
+	if w := request(h, http.MethodGet, "/v1/me", first, ""); w.Code != http.StatusOK {
+		t.Fatalf("failed deletion revoked session: %d", w.Code)
+	}
+	if w := request(h, http.MethodDelete, "/v1/account", first, `{"password":"correct-horse-battery"}`); w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"ok":true`) {
+		t.Fatalf("delete account: %d %s", w.Code, w.Body)
+	}
+	for _, token := range []string{first, second} {
+		if w := request(h, http.MethodGet, "/v1/me", token, ""); w.Code != http.StatusUnauthorized {
+			t.Fatalf("deleted account session remains valid: %d", w.Code)
+		}
+	}
+	s.store.lock()
+	defer s.store.unlock()
+	if _, exists := s.store.s.Users[user.ID]; exists {
+		t.Fatal("deleted account remains in the user store")
+	}
+}
+
+func TestDeleteAccountEndsDirectCallForRemainingPeer(t *testing.T) {
+	s, user := fixture(t)
+	other, err := s.store.CreateUser("B User", "b@example.com", "correct-horse-battery", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	s.store.lock()
+	s.store.s.Rooms["direct-room"] = Room{ID: "direct-room", DirectOnly: true, Members: map[string]Member{
+		user.ID:  {UserID: user.ID, LastSeen: now},
+		other.ID: {UserID: other.ID, LastSeen: now},
+	}}
+	s.store.s.Calls["direct-call"] = CallInvitation{ID: "direct-call", CallerID: user.ID, TargetID: other.ID, RoomID: "direct-room", Status: callAccepted, CreatedAt: now, UpdatedAt: now}
+	if err := s.store.save(); err != nil {
+		s.store.unlock()
+		t.Fatal(err)
+	}
+	s.store.unlock()
+
+	w := request(s.Handler(), http.MethodDelete, "/v1/account", login(t, s), `{"password":"correct-horse-battery"}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("delete account during direct call: %d %s", w.Code, w.Body)
+	}
+	s.store.lock()
+	defer s.store.unlock()
+	if _, exists := s.store.s.Rooms["direct-room"]; exists {
+		t.Fatal("direct room remained after account deletion")
+	}
+	if _, exists := s.store.s.Users[other.ID]; !exists {
+		t.Fatal("remaining call participant was deleted")
+	}
+}
+
+func TestDeleteUserAccountErasesAssociatedServerState(t *testing.T) {
+	st, err := OpenStore(t.TempDir() + "/state.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	user, err := st.CreateUser("A User", "a@example.com", "correct-horse-battery", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := st.CreateUser("B User", "b@example.com", "correct-horse-battery", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.lock()
+	st.s.Sessions["first"] = Session{UserID: user.ID, ExpiresAt: time.Now().Add(time.Hour)}
+	st.s.Sessions["second"] = Session{UserID: user.ID, ExpiresAt: time.Now().Add(time.Hour)}
+	st.s.Presence[user.ID] = time.Now()
+	st.s.Devices[deviceKey(user.ID, "device")] = DeviceRegistration{UserID: user.ID, DeviceID: "device"}
+	st.s.Calls["call"] = CallInvitation{ID: "call", CallerID: user.ID, TargetID: other.ID}
+	st.s.JoinRequests["request"] = CallJoinRequest{ID: "request", RequesterID: user.ID, RoomID: "room-empty"}
+	st.s.Rooms["room-empty"] = Room{ID: "room-empty", Members: map[string]Member{user.ID: {UserID: user.ID}}}
+	st.s.Rooms["room-shared"] = Room{ID: "room-shared", Members: map[string]Member{user.ID: {UserID: user.ID}, other.ID: {UserID: other.ID}}}
+	st.s.SignupChallenges["a@example.com"] = SignupChallenge{Email: "a@example.com"}
+	st.s.AdminAudit = []AdminAuditEvent{{ActorID: user.ID, TargetID: other.ID}, {ActorID: other.ID, TargetID: user.ID}}
+	if err := st.save(); err != nil {
+		st.unlock()
+		t.Fatal(err)
+	}
+	st.unlock()
+
+	emptyRooms, err := st.DeleteUserAccount(user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(emptyRooms) != 1 || emptyRooms[0] != "room-empty" {
+		t.Fatalf("empty rooms = %#v, want room-empty", emptyRooms)
+	}
+	st.lock()
+	defer st.unlock()
+	if len(st.s.Sessions) != 0 || len(st.s.Devices) != 0 || len(st.s.Calls) != 0 || len(st.s.JoinRequests) != 0 || len(st.s.SignupChallenges) != 0 || len(st.s.AdminAudit) != 0 {
+		t.Fatalf("account data remains after deletion: %#v", st.s)
+	}
+	if len(st.s.Rooms) != 1 || len(st.s.Rooms["room-shared"].Members) != 1 {
+		t.Fatalf("shared room membership was not preserved for remaining member: %#v", st.s.Rooms)
+	}
+}
+
 func TestLogoutRemovesMobilePushRegistration(t *testing.T) {
 	s, u := fixture(t)
 	h := s.Handler()

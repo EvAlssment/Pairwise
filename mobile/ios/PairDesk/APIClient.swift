@@ -32,6 +32,9 @@ struct APIClient {
     func delete(_ path: String) async throws {
         _ = try await requestData(path, method: "DELETE", body: nil)
     }
+    func delete<B: Encodable>(_ path: String, body: B) async throws {
+        _ = try await requestData(path, method: "DELETE", body: JSONEncoder().encode(body))
+    }
     private func request<T: Decodable>(_ path: String, method: String, body: Data?) async throws -> T {
         let (data, _) = try await requestData(path, method: method, body: body)
         do { return try JSONDecoder().decode(T.self, from: data) }

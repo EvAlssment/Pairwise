@@ -7,6 +7,7 @@ Native SwiftUI companion for teammates who need to see presence, answer or place
 - Team roster and foreground availability toggle.
 - Direct calls, accept/decline, active group call listing, join requests, and accept/decline prompts.
 - LiveKit voice, mute, speaker routing, and optional camera video. Microphone turns on after joining; camera remains off until explicitly enabled and then uses the iOS camera permission prompt.
+- Account deletion is available from the profile menu. It requires the current password and permanently removes the account and associated active service data.
 - Locally requested join approvals connect once, defer while another action is busy, and offer an explicit retry on a failed connection. Leaving does not replay accepted history. Remote media disconnects, the final peer leaving, and terminal room-heartbeat responses clear the active call.
 - Saved sign-in survives offline or server errors, with **Retry saved sign-in** on the login screen. Only an authentication rejection (HTTP 401) discards the saved token.
 - No mobile screen capture, screen sharing, remote control, SSO, or recording.

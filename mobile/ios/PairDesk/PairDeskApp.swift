@@ -1,6 +1,11 @@
 import SwiftUI
 import LiveKit
 
+private enum PairDeskLinks {
+    static let privacy = URL(string: "https://evalssment.github.io/Pairwise/privacy.html")!
+    static let support = URL(string: "https://evalssment.github.io/Pairwise/support.html")!
+}
+
 @main struct PairDeskApp: App {
     @UIApplicationDelegateAdaptor(PairDeskAppDelegate.self) private var appDelegate
     @State private var model = AppModel.shared
@@ -9,6 +14,7 @@ import LiveKit
 
 struct RootView: View {
     @Environment(AppModel.self) private var model
+    @State private var showingDeleteAccount = false
     var body: some View {
         NavigationStack {
             Group {
@@ -23,12 +29,16 @@ struct RootView: View {
                         Menu {
                             Toggle("Available", isOn: Binding(get: { model.available }, set: model.setAvailable))
                             Button("Sign out", role: .destructive) { Task { await model.logout() } }
+                            Button("Delete account…", role: .destructive) { showingDeleteAccount = true }
+                            Link("Privacy Policy", destination: PairDeskLinks.privacy)
+                            Link("Support", destination: PairDeskLinks.support)
                         } label: { Image(systemName: "person.crop.circle") }
                     }
                 }
             }
         }
         .tint(.indigo)
+        .sheet(isPresented: $showingDeleteAccount) { DeleteAccountView().environment(model) }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
             if model.user != nil { PairDeskAppDelegate.requestNotificationAuthorizationAfterAuthentication() }
             else if model.hasSavedSession { Task { await model.restore() } }
@@ -36,6 +46,41 @@ struct RootView: View {
         .alert("PairDesk", isPresented: Binding(get: { model.error != nil }, set: { if !$0 { model.error = nil } })) {
             Button("OK") { model.error = nil }
         } message: { Text(model.error ?? "") }
+    }
+}
+
+private struct DeleteAccountView: View {
+    @Environment(AppModel.self) private var model
+    @Environment(\.dismiss) private var dismiss
+    @State private var password = ""
+    @State private var confirmed = false
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    Text("Deleting your account permanently removes your PairDesk profile, sessions, device registrations, call history, and call membership. This cannot be undone.")
+                    Text("Enter your current password to confirm. You will be signed out on this and your other devices.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
+                Section("Confirm deletion") {
+                    SecureField("Current password", text: $password).textContentType(.password)
+                    Toggle("I understand this is permanent", isOn: $confirmed)
+                }
+                Section {
+                    Button("Delete my account", role: .destructive) {
+                        Task {
+                            await model.deleteAccount(currentPassword: password)
+                            if model.user == nil { dismiss() }
+                        }
+                    }
+                    .disabled(!confirmed || password.isEmpty || model.busy)
+                }
+            }
+            .navigationTitle("Delete account")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }
+        }
+        .presentationDetents([.medium, .large])
     }
 }
 
@@ -114,6 +159,10 @@ struct LoginView: View {
                     }.disabled(model.busy || model.email.isEmpty || model.password.isEmpty)
                 }
                 Section { Text("Sign in with your PairDesk email and password.").font(.footnote).foregroundStyle(.secondary) }
+            }
+            Section("Help and privacy") {
+                Link("Privacy Policy", destination: PairDeskLinks.privacy)
+                Link("Support", destination: PairDeskLinks.support)
             }
         }
         .task(id: model.server) { await model.loadSignupPolicy() }

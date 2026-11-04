@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#10111a">
+  <meta name="description" content="PairDesk privacy policy, covering account information, calls, local transcription, and data deletion.">
+  <title>Privacy — PairDesk</title>
+  <style>
+    :root { color-scheme: dark; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #10111a; color: #f7f7fb; }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; background: radial-gradient(ellipse at 50% -10%, #302969 0, #181827 38rem, #10111a 72rem); }
+    main { width: min(800px, calc(100% - 40px)); margin: 0 auto; padding: 32px 0 72px; }
+    header, footer { display: flex; justify-content: space-between; align-items: center; gap: 16px; color: #aaa9b8; font-size: 14px; }
+    header a, footer a { color: #c9c5ff; text-decoration: none; }
+    h1 { margin: 66px 0 8px; font-size: clamp(38px, 7vw, 56px); letter-spacing: -.04em; }
+    .date { color: #aaa9b8; font-size: 14px; }
+    article { margin-top: 38px; color: #d1d0db; line-height: 1.7; }
+    h2 { margin: 32px 0 8px; color: #f7f7fb; font-size: 20px; }
+    a { color: #c9c5ff; }
+    footer { margin-top: 60px; border-top: 1px solid #ffffff18; padding-top: 20px; }
+    @media (max-width: 600px) { header, footer { align-items: flex-start; flex-direction: column; } }
+  </style>
+</head>
+<body>
+  <main>
+    <header><a href="./">← PairDesk</a><a href="support.html">Support</a></header>
+    <h1>Privacy</h1>
+    <div class="date">Last updated: November 5, 2026</div>
+    <article>
+      <p>PairDesk is a collaboration app for voice calls, optional camera video, and screen sharing. This policy describes information handled by the PairDesk apps and hosted service.</p>
+
+      <h2>Information used to run your account</h2>
+      <p>When you create an account, PairDesk stores your name, email address, a salted password hash, and account status. If email verification is enabled, the service sends a short-lived verification code through its email provider. Your name and email are visible to signed-in teammates so they can identify and contact one another.</p>
+
+      <h2>Calls and presence</h2>
+      <p>The service processes online status, call invitations, call membership, and recent call events to connect teammates and show call history. Recent call events are retained for up to 30 days. Voice, optional camera video, and screen content are carried live through the configured media service to call participants. PairDesk does not record calls or store call media.</p>
+
+      <h2>Microphone, camera, and screen access</h2>
+      <p>Microphone and camera access are used only when you join a call and enable the corresponding feature. Screen content is shared only after you choose a source using the operating system's sharing picker. You can stop sharing or leave the call at any time. Revoke microphone or camera permission in your device settings.</p>
+
+      <h2>Local transcription</h2>
+      <p>The macOS app offers optional transcription using a model that runs on your Mac. The transcript is processed locally and is not sent to the PairDesk service. The iOS app does not provide transcription.</p>
+
+      <h2>Notifications and service providers</h2>
+      <p>If you enable notifications, PairDesk stores the device push tokens needed to deliver call alerts. PairDesk uses infrastructure and media providers to host the account API and route calls, and an email provider to deliver verification codes. Those providers process information needed for their services under their own privacy terms.</p>
+
+      <h2>Retention and deletion</h2>
+      <p>Your account information is kept while your account is active. You can permanently delete your account from the iOS app's profile menu; the app asks for your current password and removes the account, sessions, device registrations, call history, and active call membership. The service also maintains private operational backups for recovery; a copy may remain in an existing backup until that backup is retired.</p>
+
+      <h2>Security and choices</h2>
+      <p>PairDesk uses password hashing, HTTPS for hosted API traffic, and operating-system permission prompts for microphone, camera, and screen access. You can revoke microphone or camera permission in system settings, and stop a screen share from the call controls. Do not share verification codes or account passwords.</p>
+
+      <h2>Contact</h2>
+      <p>For product support, use the <a href="support.html">PairDesk support page</a>. Do not post passwords, verification codes, call content, or other private information in a public issue.</p>
+    </article>
+    <footer><span>PairDesk</span><span><a href="support.html">Support</a> · <a href="https://github.com/EvAlssment/Pairwise">Open-source project</a></span></footer>
+  </main>
+</body>
+</html>
