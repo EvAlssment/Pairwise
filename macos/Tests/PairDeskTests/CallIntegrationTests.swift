@@ -404,6 +404,12 @@ final class CallIntegrationTests: XCTestCase {
                                         participantCount: media.count,
                                         measurementWindowSeconds: measurementWindowSeconds,
                                         cameraSimulcast: cameraSimulcast)
+            // The measured screen and camera profiles together can exceed the
+            // API's 30-second room reservation. Refresh participants before
+            // asserting share-lease behavior.
+            for client in clients.prefix(4) {
+                try await client.send("v1/rooms/\(roomID)/heartbeat", body: EmptyBody())
+            }
             do {
                 try await clients[1].send("v1/rooms/\(roomID)/share", body: ShareBody(enabled: true))
                 XCTFail("A second sharer was admitted")
@@ -597,11 +603,9 @@ private final class SyntheticVideoReceiver: NSObject, RoomDelegate, VideoRendere
         if let recoveryStartedAt, storedRecoveryMilliseconds == nil {
             storedRecoveryMilliseconds = max(0, (now - recoveryStartedAt) * 1_000)
         }
-        if measuredWidth == nil {
-            measuredWidth = Int(frame.dimensions.width)
-            measuredHeight = Int(frame.dimensions.height)
-            firstFrame = frame.toCVPixelBuffer()
-        }
+        measuredWidth = Int(frame.dimensions.width)
+        measuredHeight = Int(frame.dimensions.height)
+        if firstFrame == nil { firstFrame = frame.toCVPixelBuffer() }
         let shouldFulfill = measuredFrameCount == 1
         lock.unlock()
         if shouldFulfill { expectation.fulfill() }
