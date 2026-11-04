@@ -26,7 +26,7 @@ ditto "$SOURCE" "$APP"
 /usr/libexec/PlistBuddy -c "Add :PairDeskServerURL string $SERVER" "$APP/Contents/Info.plist"
 for framework in "$APP/Contents/Frameworks/"*.framework; do
   [[ -d "$framework" ]] || continue
-  codesign --force --options runtime --timestamp --sign "$IDENTITY" "$framework"
+  codesign --force --deep --options runtime --timestamp --sign "$IDENTITY" "$framework"
 done
 while IFS= read -r library; do
   codesign --force --options runtime --timestamp --sign "$IDENTITY" "$library"
@@ -35,7 +35,9 @@ codesign --force --options runtime --timestamp --sign "$IDENTITY" "$APP/Contents
 codesign --force --options runtime --timestamp --sign "$IDENTITY" "$APP/Contents/Resources/whisper/whisper-cli"
 codesign --force --options runtime --timestamp --entitlements "$ROOT/macos/Release.entitlements" --sign "$IDENTITY" "$APP"
 codesign --verify --deep --strict --verbose=2 "$APP"
-ditto -c -k --keepParent "$APP" "$STAGING/PairDesk-submit.zip"
+codesign --display --entitlements :- "$APP" > "$STAGING/signed-entitlements.plist" 2>/dev/null
+/usr/libexec/PlistBuddy -c 'Print :com.apple.security.device.camera' "$STAGING/signed-entitlements.plist" | grep -Fx true >/dev/null || { echo 'Signed app is missing its required camera entitlement' >&2; exit 1; }
+ditto -c -k --sequesterRsrc --keepParent "$APP" "$STAGING/PairDesk-submit.zip"
 xcrun notarytool submit "$STAGING/PairDesk-submit.zip" --keychain-profile "$PROFILE" --wait --output-format json > "$STAGING/notarization.json"
 python3 - "$STAGING/notarization.json" <<'PY'
 import json, sys
@@ -49,7 +51,7 @@ xcrun stapler staple "$APP"
 xcrun stapler validate "$APP"
 spctl --assess --type execute --verbose=2 "$APP"
 rm -f "$STAGING/PairDesk-submit.zip"
-ditto -c -k --keepParent "$APP" "$STAGING/PairDesk.zip"
+ditto -c -k --sequesterRsrc --keepParent "$APP" "$STAGING/PairDesk.zip"
 PAIRDESK_DISTRIBUTION_APP="$APP" \
 PAIRDESK_DMG_OUTPUT="$STAGING/PairDesk.dmg" \
   bash "$ROOT/scripts/create-dmg.sh"

@@ -12,9 +12,13 @@ The current client supports macOS 14 and later. It is an early-stage project; te
 
 **Download the complete source:** [ZIP archive of the latest `main` branch](https://github.com/EvAlssment/Pairwise/archive/refs/heads/main.zip) · [browse the repository](https://github.com/EvAlssment/Pairwise)
 
+**Download PairDesk:** [Open the PairDesk download page](https://evalssment.github.io/Pairwise/). It always points to the newest installable release, for either Apple silicon or Intel Macs.
+
 **Current team UAT build:** [Pairwise 0.8.1, build 26](https://github.com/EvAlssment/Pairwise/releases/tag/pairwise-uat-0.8.1-build26). Download the single universal [PairDesk.dmg](https://github.com/EvAlssment/Pairwise/releases/download/pairwise-uat-0.8.1-build26/PairDesk.dmg) for either Apple silicon or Intel Macs running macOS 14 or later. The app is Developer ID signed and notarized. The release page also provides the app ZIP and SHA-256 checksums.
 
 To install, open the DMG, drag PairDesk to Applications, and replace an older copy if macOS asks. Eject the DMG, then launch PairDesk from Applications. Existing app preferences and sign-in are normally retained when updating in place. Check **PairDesk → About PairDesk** for version 0.8.1; the build number is 26. The Finder Get Info panel shows the version but may not show the build number.
+
+In-app updates are being introduced with the next stable updater-enabled release. Existing installations must first install that release once from the download page; after that, PairDesk checks for signed updates automatically and offers **Check for Updates…** from the menu-bar app’s contextual menu.
 
 For this UAT deployment, sign-up requires an email verification code and is limited to the configured approved email addresses (currently the FuturePath domain plus an administrator-managed exception). If your email is not accepted, contact the team administrator. An older client may show “Email verification is required. Update PairDesk to create an account.” Install build 26 before trying to sign up again. At sign-in, confirm the team HTTPS server address; do not use a local `localhost` address for team UAT.
 

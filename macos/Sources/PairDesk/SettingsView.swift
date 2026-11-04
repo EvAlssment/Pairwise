@@ -206,6 +206,20 @@ struct SettingsView: View {
                     .font(.callout).foregroundStyle(Theme.textMuted)
             }
             SettingsCard {
+                HStack(alignment: .center, spacing: 14) {
+                    Image(systemName: "arrow.down.circle")
+                        .foregroundStyle(Theme.accent)
+                        .frame(width: 22)
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text("Software updates").font(.headline)
+                        Text("PairDesk checks for signed updates automatically. Current version: \(installedVersionLabel).")
+                            .font(.callout).foregroundStyle(Theme.textMuted)
+                    }
+                    Spacer(minLength: 8)
+                    Button("Check now") { PairDeskUpdater.shared.checkForUpdates() }
+                }
+            }
+            SettingsCard {
                 HStack(alignment: .top, spacing: 14) {
                     Image(systemName: readinessState.symbol)
                         .foregroundStyle(readinessState.tint)
@@ -262,6 +276,13 @@ struct SettingsView: View {
                 readinessState = .unavailable("Could not reach the configured team server. Check the address and network.")
             }
         }
+    }
+
+    private var installedVersionLabel: String {
+        let info = Bundle.main.infoDictionary ?? [:]
+        let version = info["CFBundleShortVersionString"] as? String ?? "development"
+        let build = info["CFBundleVersion"] as? String ?? "local"
+        return "\(version) (build \(build))"
     }
 
     private var audioSection: some View {

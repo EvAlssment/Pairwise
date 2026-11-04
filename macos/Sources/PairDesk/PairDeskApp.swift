@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import Combine
+import Sparkle
 
 @MainActor
 final class AppRuntime {
@@ -113,6 +114,8 @@ final class PairDeskDelegate: NSObject, NSApplicationDelegate {
         }
         #endif
 
+        PairDeskUpdater.shared.start()
+
         // @Published emits before the value lands; each handler hops once so
         // it reads the new state.
         store.$activeRoom.map { $0 != nil }.removeDuplicates().sink { inCall in
@@ -154,6 +157,21 @@ final class PairDeskDelegate: NSObject, NSApplicationDelegate {
         statusBar?.showPopover()
         return false
     }
+}
+
+@MainActor
+final class PairDeskUpdater {
+    static let shared = PairDeskUpdater()
+
+    private let controller = SPUStandardUpdaterController(
+        startingUpdater: false,
+        updaterDelegate: nil,
+        userDriverDelegate: nil
+    )
+
+    func start() { controller.startUpdater() }
+
+    func checkForUpdates() { controller.checkForUpdates(nil) }
 }
 
 enum PairDeskInstancePolicy {

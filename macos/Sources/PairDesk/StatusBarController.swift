@@ -103,6 +103,7 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
         let menu = NSMenu()
         menu.addItem(menuItem("Open PairDesk", action: #selector(openFromMenu)))
         menu.addItem(menuItem("Settings…", action: #selector(showSettings), key: ","))
+        menu.addItem(menuItem("Check for Updates…", action: #selector(checkForUpdates)))
         menu.addItem(.separator())
         menu.addItem(menuItem("Quit PairDesk", action: #selector(quit), key: "q"))
         // A status item with a menu shows it in place of sending its action,
@@ -122,6 +123,8 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
     @objc private func openFromMenu() { showPopover() }
 
     @objc private func showSettings() { AppWindows.shared.showSettings(store: store, loginItem: loginItem) }
+
+    @objc private func checkForUpdates() { PairDeskUpdater.shared.checkForUpdates() }
 
     /// Goes through applicationShouldTerminate, which leaves an active call first.
     @objc private func quit() { NSApp.terminate(nil) }

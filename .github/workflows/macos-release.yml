@@ -41,10 +41,11 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          SPARKLE_EDDSA_PRIVATE_KEY: ${{ secrets.SPARKLE_EDDSA_PRIVATE_KEY }}
           PAIRDESK_SERVER_URL: ${{ vars.PAIRDESK_SERVER_URL }}
         run: |
           set -euo pipefail
-          for name in DEVELOPER_SIGNING_IDENTITY DEVELOPER_ID_CERTIFICATE_BASE64 DEVELOPER_ID_CERTIFICATE_PASSWORD APPLE_ID APPLE_TEAM_ID APPLE_APP_SPECIFIC_PASSWORD PAIRDESK_SERVER_URL; do
+          for name in DEVELOPER_SIGNING_IDENTITY DEVELOPER_ID_CERTIFICATE_BASE64 DEVELOPER_ID_CERTIFICATE_PASSWORD APPLE_ID APPLE_TEAM_ID APPLE_APP_SPECIFIC_PASSWORD SPARKLE_EDDSA_PRIVATE_KEY PAIRDESK_SERVER_URL; do
             if [[ -z "${!name:-}" ]]; then
               echo "Missing required GitHub secret or variable: $name" >&2
               exit 1
@@ -131,6 +132,24 @@ jobs:
           PAIRDESK_RELEASE_OUTPUT: ${{ runner.temp }}/pairdesk-release
         run: sh scripts/release-app.sh
 
+      - name: Generate signed Sparkle appcast
+        shell: bash
+        env:
+          SPARKLE_EDDSA_PRIVATE_KEY: ${{ secrets.SPARKLE_EDDSA_PRIVATE_KEY }}
+          PAIRDESK_RELEASE_OUTPUT: ${{ runner.temp }}/pairdesk-release
+        run: |
+          set -euo pipefail
+          GENERATE_APPCAST=$(find macos/.build -path '*/Sparkle/bin/generate_appcast' -type f -print -quit)
+          test -x "$GENERATE_APPCAST"
+          mkdir -p "$PAIRDESK_RELEASE_OUTPUT/PairDesk"
+          ditto "$PAIRDESK_RELEASE_OUTPUT/PairDesk.zip" "$PAIRDESK_RELEASE_OUTPUT/PairDesk/PairDesk.zip"
+          printf '%s' "$SPARKLE_EDDSA_PRIVATE_KEY" | "$GENERATE_APPCAST" \
+            --ed-key-file - \
+            --download-url-prefix "https://github.com/EvAlssment/Pairwise/releases/download/$GITHUB_REF_NAME/" \
+            "$PAIRDESK_RELEASE_OUTPUT/PairDesk"
+          test -s "$PAIRDESK_RELEASE_OUTPUT/PairDesk/appcast.xml"
+          cp "$PAIRDESK_RELEASE_OUTPUT/PairDesk/appcast.xml" "$PAIRDESK_RELEASE_OUTPUT/appcast.xml"
+
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -139,6 +158,7 @@ jobs:
           gh release create "$GITHUB_REF_NAME" \
             "$PAIRDESK_RELEASE_OUTPUT/PairDesk.dmg" \
             "$PAIRDESK_RELEASE_OUTPUT/PairDesk.zip" \
+            "$PAIRDESK_RELEASE_OUTPUT/appcast.xml" \
             "$PAIRDESK_RELEASE_OUTPUT/SHA256SUMS" \
             --verify-tag \
             --title "Pairwise $GITHUB_REF_NAME" \

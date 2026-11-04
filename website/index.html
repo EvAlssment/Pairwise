@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#10111a">
+  <meta name="description" content="PairDesk is the quickest way to pair with a teammate, talk, and work together on a Mac.">
+  <title>PairDesk — work together, wherever you are</title>
+  <style>
+    :root { color-scheme: dark; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #10111a; color: #f7f7fb; }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; background: radial-gradient(ellipse at 50% -10%, #302969 0, #181827 38rem, #10111a 72rem); }
+    main { width: min(960px, calc(100% - 40px)); margin: 0 auto; padding: 28px 0 72px; }
+    header { display: flex; align-items: center; gap: 12px; font-size: 18px; font-weight: 650; }
+    .mark { width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center; background: #7664f433; color: #aa9fff; }
+    .mark svg { width: 21px; height: 21px; }
+    .hero { text-align: center; padding: 108px 0 74px; }
+    .eyebrow { color: #aaa5e9; letter-spacing: .12em; font-size: 12px; font-weight: 700; text-transform: uppercase; }
+    h1 { max-width: 720px; margin: 18px auto; font-size: clamp(42px, 8vw, 74px); line-height: 1.02; letter-spacing: -.055em; }
+    .lead { max-width: 580px; margin: 0 auto 30px; color: #c5c4d1; font-size: 18px; line-height: 1.6; }
+    .button { display: inline-flex; align-items: center; justify-content: center; min-height: 52px; padding: 0 24px; border-radius: 14px; background: #7664f4; color: white; font-weight: 700; text-decoration: none; box-shadow: 0 12px 36px #7664f444; }
+    .button:hover { background: #897aff; }
+    .details { color: #aaa9b8; font-size: 13px; margin-top: 14px; }
+    .features { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+    .feature { background: #ffffff08; border: 1px solid #ffffff12; border-radius: 18px; padding: 22px; }
+    .feature h2 { font-size: 16px; margin: 0 0 8px; }
+    .feature p { color: #b7b6c4; margin: 0; line-height: 1.55; font-size: 14px; }
+    footer { display: flex; justify-content: space-between; gap: 18px; margin-top: 46px; border-top: 1px solid #ffffff18; padding-top: 22px; color: #aaa9b8; font-size: 13px; }
+    footer a { color: #c9c5ff; text-decoration: none; }
+    @media (max-width: 680px) { .hero { padding: 78px 0 56px; } .features { grid-template-columns: 1fr; } footer { flex-direction: column; } }
+  </style>
+</head>
+<body>
+  <main>
+    <header><span class="mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><rect x="3" y="4" width="14" height="11" rx="2.5" stroke="currentColor" stroke-width="2"/><rect x="7" y="9" width="14" height="11" rx="2.5" stroke="currentColor" stroke-width="2"/></svg></span><span>PairDesk</span></header>
+    <section class="hero">
+      <div class="eyebrow">Pairwise for macOS</div>
+      <h1>Work together,<br>wherever you are.</h1>
+      <p class="lead">Call a teammate, share your screen, and solve the problem side by side. A simple, private workspace for your team.</p>
+      <a class="button" id="download" href="https://github.com/EvAlssment/Pairwise/releases">Download PairDesk for Mac</a>
+      <div class="details" id="release-note">Universal app for Apple silicon and Intel · macOS 14 or later</div>
+    </section>
+    <section class="features" aria-label="Features">
+      <article class="feature"><h2>Start with a teammate</h2><p>See who is around and start a voice call directly from the menu bar.</p></article>
+      <article class="feature"><h2>Share and solve</h2><p>Share a screen or app window, then work together with remote control when needed.</p></article>
+      <article class="feature"><h2>Built for your team</h2><p>PairDesk is open source and designed for focused, everyday collaboration.</p></article>
+    </section>
+    <footer><span id="version">Looking up the latest build…</span><span><a href="https://github.com/EvAlssment/Pairwise/releases">All releases</a> · <a href="https://github.com/EvAlssment/Pairwise">Source code</a></span></footer>
+  </main>
+  <script>
+    const releases = 'https://api.github.com/repos/EvAlssment/Pairwise/releases?per_page=20';
+    fetch(releases, { headers: { Accept: 'application/vnd.github+json' } })
+      .then(response => { if (!response.ok) throw new Error('release lookup failed'); return response.json(); })
+      .then(items => {
+        const choices = items.filter(r => !r.draft && r.assets.some(a => a.name === 'PairDesk.dmg'));
+        const release = choices.find(r => !r.prerelease && /^v\d/.test(r.tag_name)) || choices[0];
+        if (!release) throw new Error('no installable build');
+        const dmg = release.assets.find(a => a.name === 'PairDesk.dmg');
+        document.querySelector('#download').href = dmg.browser_download_url;
+        document.querySelector('#version').textContent = `${release.name} · published ${new Date(release.published_at).toLocaleDateString()}`;
+        if (release.prerelease) document.querySelector('#release-note').textContent = 'Latest team test build · universal for Apple silicon and Intel · macOS 14 or later';
+      })
+      .catch(() => {
+        document.querySelector('#version').textContent = 'Download the latest available build from GitHub Releases.';
+        document.querySelector('#download').href = 'https://github.com/EvAlssment/Pairwise/releases';
+      });
+  </script>
+</body>
+</html>

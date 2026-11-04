@@ -180,6 +180,8 @@ copy_notice "$ROOT/THIRD_PARTY_NOTICES.md" "THIRD_PARTY_NOTICES.md"
 plutil -lint "$CONTENTS/Info.plist"
 /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$CONTENTS/Info.plist" | grep -Fx 'app.internal.pairdesk' >/dev/null
 /usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$CONTENTS/Info.plist" | grep -Fx '14.0' >/dev/null
+/usr/libexec/PlistBuddy -c 'Print :SUFeedURL' "$CONTENTS/Info.plist" | grep -F 'https://github.com/EvAlssment/Pairwise/releases/latest/download/appcast.xml' >/dev/null || fail "Sparkle update feed is missing"
+/usr/libexec/PlistBuddy -c 'Print :SUPublicEDKey' "$CONTENTS/Info.plist" | grep -F 'Aj52Hfva2ahGsRRI+TtirdgQeWHfMfsZpPyVG4tQwAM=' >/dev/null || fail "Sparkle update-verification key is missing"
 /usr/libexec/PlistBuddy -c 'Print :LSMultipleInstancesProhibited' "$CONTENTS/Info.plist" | grep -Fx 'true' >/dev/null || fail "Launch Services must prevent duplicate PairDesk processes"
 /usr/libexec/PlistBuddy -c 'Print :CFBundleIconFile' "$CONTENTS/Info.plist" | grep -Fx 'PairDesk' >/dev/null
 /usr/libexec/PlistBuddy -c 'Print :NSCameraUsageDescription' "$CONTENTS/Info.plist" | grep -F 'turn on video during a call' >/dev/null || fail "camera usage description is missing or unclear"
@@ -196,6 +198,7 @@ for framework in "$FRAMEWORKS"/*.framework; do
     lipo "$framework_binary" -verify_arch "$arch" || fail "$(basename "$framework") is missing $arch"
   done
 done
+test -d "$FRAMEWORKS/Sparkle.framework" || fail "Sparkle updater framework is missing from the app bundle"
 
 # The frameworks are individually signed before the app seals the whole bundle.
 for framework in "$FRAMEWORKS"/*.framework; do
