@@ -410,6 +410,7 @@ final class CallIntegrationTests: XCTestCase {
             for client in clients.prefix(4) {
                 try await client.send("v1/rooms/\(roomID)/heartbeat", body: EmptyBody())
             }
+            try await clients[0].send("v1/rooms/\(roomID)/share", body: ShareBody(enabled: true))
             do {
                 try await clients[1].send("v1/rooms/\(roomID)/share", body: ShareBody(enabled: true))
                 XCTFail("A second sharer was admitted")
