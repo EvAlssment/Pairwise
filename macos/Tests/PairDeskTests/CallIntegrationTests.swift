@@ -389,43 +389,21 @@ final class CallIntegrationTests: XCTestCase {
             }
             try await videoReceiver.waitForRecovery(timeout: 10)
             let recoveryMilliseconds = videoReceiver.recoveryMilliseconds
-            if let metrics = videoMetrics {
-                let readability = try XCTUnwrap(SyntheticReadabilityMetrics.measure(metrics.firstFrame),
-                                                "synthetic decoded frame should support OCR measurement")
-                XCTAssertGreaterThan(readability.recognizedLines, 0,
-                                     "text-pattern measurement should recognize at least one line")
-                try writeSyntheticBenchmark(metrics, recoveryMilliseconds: recoveryMilliseconds,
-                                            processCPUPercent: processCPUPercent, readability: readability,
-                                            participantCount: media.count,
-                                            measurementWindowSeconds: measurementWindowSeconds)
-            }
+            let metrics = try XCTUnwrap(videoMetrics, "four-participant screen profile must receive measurable frames")
+            let readability = try XCTUnwrap(SyntheticReadabilityMetrics.measure(metrics.firstFrame),
+                                            "synthetic decoded frame should support OCR measurement")
+            XCTAssertGreaterThan(readability.recognizedLines, 0,
+                                 "text-pattern measurement should recognize at least one line")
             frameTask?.cancel()
             await frameTask?.value
             frameTask = nil
             try await media[0].localParticipant.unpublish(publication: publication)
-            if ProcessInfo.processInfo.environment["PAIRDESK_SKIP_CAMERA_PUBLICATION_TEST"] != "1" {
-                let cameraReceiver = SyntheticVideoReceiver(expectation: expectation(description: "Synthetic camera frame delivered"),
-                                                            source: .camera)
-                media[1].add(delegate: cameraReceiver)
-                let cameraTrack = await LocalVideoTrack.createBufferTrack(name: "pairdesk.camera.fixture", source: .camera)
-                let cameraCapturer = try XCTUnwrap(cameraTrack.capturer as? BufferCapturer)
-                let cameraPixel = try syntheticPixelBuffer()
-                cameraCapturer.capture(cameraPixel)
-                frameTask = Task {
-                    while !Task.isCancelled {
-                        cameraCapturer.capture(cameraPixel)
-                        try? await Task.sleep(for: .milliseconds(66))
-                    }
-                }
-                let cameraPublication = try await media[0].localParticipant.publish(videoTrack: cameraTrack,
-                                                                                     options: VideoPublishOptions(name: "pairdesk.camera.fixture", simulcast: false))
-                await fulfillment(of: [cameraReceiver.expectation], timeout: 15)
-                XCTAssertTrue(cameraReceiver.receivedFrame)
-                frameTask?.cancel()
-                frameTask = nil
-                try await media[0].localParticipant.unpublish(publication: cameraPublication)
-                media[1].remove(delegate: cameraReceiver)
-            }
+            let cameraSimulcast = try await measureCameraSimulcast(in: media)
+            try writeSyntheticBenchmark(metrics, recoveryMilliseconds: recoveryMilliseconds,
+                                        processCPUPercent: processCPUPercent, readability: readability,
+                                        participantCount: media.count,
+                                        measurementWindowSeconds: measurementWindowSeconds,
+                                        cameraSimulcast: cameraSimulcast)
             do {
                 try await clients[1].send("v1/rooms/\(roomID)/share", body: ShareBody(enabled: true))
                 XCTFail("A second sharer was admitted")
@@ -440,6 +418,83 @@ final class CallIntegrationTests: XCTestCase {
         }
         for room in media { await room.disconnect() }
         for client in clients { try? await client.send("v1/rooms/\(roomID)/leave", body: EmptyBody()) }
+    }
+
+    @MainActor
+    private func measureCameraSimulcast(in rooms: [Room]) async throws -> SyntheticCameraBenchmark {
+        let views = [(role: "thumbnail", width: 320, height: 180),
+                     (role: "standard", width: 640, height: 360),
+                     (role: "gallery", width: 1_920, height: 1_080)]
+        let receivers = views.map { view in
+            SyntheticVideoReceiver(expectation: expectation(description: "Synthetic camera delivered to \(view.role)"),
+                                   source: .camera,
+                                   rendererSize: CGSize(width: view.width, height: view.height))
+        }
+        for (room, receiver) in zip(rooms.dropFirst(), receivers) { room.add(delegate: receiver) }
+        defer {
+            for (room, receiver) in zip(rooms.dropFirst(), receivers) { room.remove(delegate: receiver) }
+        }
+        // Exercise the production 1080p30 publishing policy and adaptive viewers.
+        let quality = CameraVideoQuality.sharp
+        let track = await LocalVideoTrack.createBufferTrack(
+            name: "pairdesk.camera.fixture", source: .camera,
+            options: BufferCaptureOptions(dimensions: quality.dimensions, fps: quality.framesPerSecond))
+        let capturer = try XCTUnwrap(track.capturer as? BufferCapturer)
+        let frames = try (0..<6).map { try syntheticPixelBuffer(width: 1_920, height: 1_080, phase: $0 * 29) }
+        capturer.capture(try XCTUnwrap(frames.first))
+        let frameTask = Task {
+            var frame = 1
+            while !Task.isCancelled {
+                capturer.capture(frames[frame % frames.count])
+                frame += 1
+                try? await Task.sleep(for: .milliseconds(33))
+            }
+        }
+        defer { frameTask.cancel() }
+        let publication = try await rooms[0].localParticipant.publish(
+            videoTrack: track,
+            options: VideoPublishOptions(name: "pairdesk.camera.fixture",
+                                         encoding: VideoEncoding(maxBitrate: quality.maxBitrate,
+                                                                 maxFps: quality.framesPerSecond),
+                                         simulcast: true))
+        await fulfillment(of: receivers.map(\.expectation), timeout: 20)
+        // Adaptive-stream subscriptions can start on the same low layer. Wait for
+        // view-size selection before measuring; record decoded dimensions, not requests.
+        let deadline = ProcessInfo.processInfo.systemUptime + 15
+        while ProcessInfo.processInfo.systemUptime < deadline {
+            let areas = receivers.compactMap { receiver -> Int? in
+                guard let snapshot = receiver.snapshot(), let width = snapshot.width, let height = snapshot.height else { return nil }
+                return width * height
+            }
+            if areas.count == 3, areas[0] <= areas[1], areas[1] <= areas[2], areas[0] < areas[2] { break }
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        let cpuStart = ProcessCPUProbe.capture()
+        try await Task.sleep(for: .seconds(6))
+        let cpuPercent = ProcessCPUProbe.capture().percent(since: cpuStart)
+        let measurements = try zip(views, receivers).map { view, receiver in
+            let snapshot = try XCTUnwrap(receiver.snapshot(), "camera profile must receive measurable frames for \(view.role)")
+            XCTAssertGreaterThan(snapshot.frameCount, 1, "camera profile needs sustained frames for \(view.role)")
+            return SyntheticCameraReceiverMeasurement(
+                viewRole: view.role, requestedWidth: view.width, requestedHeight: view.height,
+                receivedWidth: snapshot.width, receivedHeight: snapshot.height,
+                observedFramesPerSecond: snapshot.observedFramesPerSecond,
+                receivedBitrateKilobitsPerSecond: snapshot.receivedBitrateKilobitsPerSecond,
+                framesReceived: snapshot.frameCount,
+                timeToFirstFrameMilliseconds: snapshot.timeToFirstFrameMilliseconds,
+                packetLossPercent: snapshot.packetLossPercent,
+                selectedPathRTTMilliseconds: snapshot.selectedPathRTTMilliseconds)
+        }
+        let areas = try measurements.map { try XCTUnwrap($0.receivedWidth) * XCTUnwrap($0.receivedHeight) }
+        XCTAssertLessThanOrEqual(areas[0], areas[1])
+        XCTAssertLessThanOrEqual(areas[1], areas[2])
+        XCTAssertLessThan(areas[0], areas[2], "camera simulcast must scale with viewer size")
+        frameTask.cancel()
+        await frameTask.value
+        try await rooms[0].localParticipant.unpublish(publication: publication)
+        return SyntheticCameraBenchmark(publishWidth: 1_920, publishHeight: 1_080,
+                                        maximumFramesPerSecond: quality.framesPerSecond,
+                                        harnessProcessCPUPercent: cpuPercent, receivers: measurements)
     }
 
     private func syntheticPixelBuffer(width: Int = 640, height: Int = 480, phase: Int = 0,
@@ -545,11 +600,9 @@ private final class SyntheticVideoReceiver: NSObject, RoomDelegate, VideoRendere
         if let recoveryStartedAt, storedRecoveryMilliseconds == nil {
             storedRecoveryMilliseconds = max(0, (now - recoveryStartedAt) * 1_000)
         }
-        if measuredWidth == nil {
-            measuredWidth = Int(frame.dimensions.width)
-            measuredHeight = Int(frame.dimensions.height)
-            firstFrame = frame.toCVPixelBuffer()
-        }
+        measuredWidth = Int(frame.dimensions.width)
+        measuredHeight = Int(frame.dimensions.height)
+        if firstFrame == nil { firstFrame = frame.toCVPixelBuffer() }
         let shouldFulfill = measuredFrameCount == 1
         lock.unlock()
         if shouldFulfill { expectation.fulfill() }
@@ -721,7 +774,8 @@ private func writeSyntheticBenchmark(_ snapshot: SyntheticVideoReceiver.Snapshot
                                     recoveryMilliseconds: Double?, processCPUPercent: Double?,
                                     readability: SyntheticReadabilityMetrics?,
                                     participantCount: Int,
-                                    measurementWindowSeconds: Double) throws {
+                                    measurementWindowSeconds: Double,
+                                    cameraSimulcast: SyntheticCameraBenchmark? = nil) throws {
     guard let path = ProcessInfo.processInfo.environment["PAIRDESK_MEDIA_BENCHMARK_OUTPUT"] else { return }
     let profile = ProcessInfo.processInfo.environment["PAIRDESK_BENCHMARK_PROFILE"] ?? "baseline"
     guard profile == "baseline" || profile == "constrained" else {
@@ -762,7 +816,7 @@ private func writeSyntheticBenchmark(_ snapshot: SyntheticVideoReceiver.Snapshot
         syntheticReadability: readability,
         runner: BenchmarkRunnerMetadata.current(),
         unmeasured: ["pointer_to_render_latency", "sender_cpu", "receiver_cpu", "physical_readability"],
-        cameraSimulcast: nil)
+        cameraSimulcast: cameraSimulcast)
     let encoder = JSONEncoder()
     encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
     let requestedOutput = URL(fileURLWithPath: path)

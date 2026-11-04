@@ -156,6 +156,8 @@ class MediaBenchmarkValidatorTests(unittest.TestCase):
         missing_runner_metadata: bool = False,
         mismatched_runner_metadata: bool = False,
         short_measurement_window: bool = False,
+        missing_camera_measurements: bool = False,
+        unscaled_camera_receivers: bool = False,
     ) -> subprocess.CompletedProcess[str]:
         with tempfile.TemporaryDirectory(prefix="pairwise-benchmark-validator-") as temporary:
             reports = []
@@ -174,6 +176,12 @@ class MediaBenchmarkValidatorTests(unittest.TestCase):
                         report["runner"]["architecture"] = "x86_64"
                     if short_measurement_window and profile == "constrained" and participants == 2:
                         report["measurementWindowSeconds"] = 3.0
+                    if missing_camera_measurements and participants == 4:
+                        report.pop("cameraSimulcast")
+                    if unscaled_camera_receivers and participants == 4:
+                        for receiver in report["cameraSimulcast"]["receivers"]:
+                            receiver["receivedWidth"] = 320
+                            receiver["receivedHeight"] = 180
                     path = Path(temporary) / f"{profile}-{participants}p.json"
                     path.write_text(json.dumps(report), encoding="utf-8")
                     reports.append(str(path))
@@ -220,6 +228,16 @@ class MediaBenchmarkValidatorTests(unittest.TestCase):
         result = self.run_validator(zero_bitrate=True)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("received bitrate must be a positive measured value", result.stderr)
+
+    def test_rejects_four_participant_report_without_camera_measurements(self) -> None:
+        result = self.run_validator(missing_camera_measurements=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("four-participant report needs strict camera simulcast measurements", result.stderr)
+
+    def test_rejects_camera_receivers_that_never_switch_from_the_initial_layer(self) -> None:
+        result = self.run_validator(unscaled_camera_receivers=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("decoded camera resolution must scale from thumbnail to gallery", result.stderr)
 
     def test_rejects_too_short_quality_measurement_window(self) -> None:
         result = self.run_validator(short_measurement_window=True)

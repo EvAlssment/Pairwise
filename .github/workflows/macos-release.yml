@@ -124,6 +124,14 @@ jobs:
           PAIRDESK_DEFAULT_SERVER: ${{ vars.PAIRDESK_SERVER_URL }}
         run: sh scripts/build-app.sh
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Prepare DMG packaging tools
+        run: |
+          python3 -m venv .cache/dmg-venv
+          .cache/dmg-venv/bin/python -m pip install -r scripts/dmg/requirements.txt
+
       - name: Sign, notarize, package, and assess
         env:
           DEVELOPER_SIGNING_IDENTITY: ${{ secrets.DEVELOPER_SIGNING_IDENTITY }}

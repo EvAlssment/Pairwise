@@ -69,11 +69,9 @@ export PAIRDESK_LIVEKIT_NODE_IP="$NODE_IP"
 PAIRDESK_TEST_FILTER=IncomingCallIntegrationTests sh scripts/test-call.sh
 
 PAIRDESK_BENCHMARK_PROFILE=baseline sh scripts/test-call.sh
-# Camera publication is exercised by the baseline. Keep the constrained run
-# focused on screen quality and cursor behavior; camera frame delivery under
-# induced packet loss is nondeterministic on hosted macOS runners.
-PAIRDESK_SKIP_CAMERA_PUBLICATION_TEST=1 \
-  sh scripts/with-macos-network-condition.sh sh scripts/test-call.sh
+# Both profiles must include decoded camera simulcast measurements for all
+# three viewer sizes, as required by the media benchmark schema.
+sh scripts/with-macos-network-condition.sh sh scripts/test-call.sh
 
 python3 -m unittest discover -s scripts/tests -p 'test_*.py'
 for artifact in \
