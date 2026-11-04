@@ -9,7 +9,8 @@ Native SwiftUI companion for teammates who need to see presence, answer or place
 - LiveKit voice, mute, speaker routing, and optional camera video. Microphone turns on after joining; camera remains off until explicitly enabled and then uses the iOS camera permission prompt.
 - Locally requested join approvals connect once, defer while another action is busy, and offer an explicit retry on a failed connection. Leaving does not replay accepted history. Remote media disconnects, the final peer leaving, and terminal room-heartbeat responses clear the active call.
 - Saved sign-in survives offline or server errors, with **Retry saved sign-in** on the login screen. Only an authentication rejection (HTTP 401) discards the saved token.
-- No mobile screen capture, screen sharing, remote control, account creation, SSO, or recording.
+- No mobile screen capture, screen sharing, remote control, SSO, or recording.
+- Separate sign-in and self-service account creation. When the server requires email verification, the app requests a one-time code before creating the account; signup policy is fetched from the selected server.
 
 ## Build
 
@@ -26,6 +27,7 @@ Run `sh scripts/test-ios-model.sh` from the repository root to exercise the prod
 ## Existing server contract
 
 - `POST /v1/login`, `GET /v1/me`, `POST /v1/logout` use the current opaque bearer session. The token is stored in Keychain.
+- `GET /v1/signup-policy`, `POST /v1/signup-code`, and `POST /v1/signup` implement account creation and optional server-required email verification. Verified signup uses the server's one-time code challenge, which expires after ten minutes.
 - `GET /v1/users` returns online/busy teammate state. `POST /v1/heartbeat` extends the current user's presence for 30 seconds. The mobile availability toggle stops/starts those foreground heartbeats; switching off can take up to 30 seconds to disappear from the roster.
 - `POST /v1/calls` creates a direct call (or invitation into the current room); `GET /v1/calls` polls invitations; `/accept`, `/decline` answer them.
 - `GET /v1/active-calls`, `POST /v1/rooms/{id}/join-requests`, `GET /v1/join-requests`, and `/accept|decline` provide group-call discovery and consent.

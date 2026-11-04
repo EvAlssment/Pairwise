@@ -12,6 +12,8 @@ struct PairRoom: Codable, Identifiable, Equatable {
     let id: String; let name: String; var participantCount: Int; var participants: [TeamUser]
 }
 struct LoginResponse: Decodable { let token: String; let user: TeamUser }
+struct SignupPolicy: Decodable { let enabled: Bool; let allowedDomains: [String]; let verificationRequired: Bool }
+struct SignupCodeResponse: Decodable { let challengeId: String }
 struct MeResponse: Decodable { let user: TeamUser }
 struct UsersResponse: Decodable { let users: [TeamUser] }
 struct CallsResponse: Decodable { let calls: [CallInvitation] }

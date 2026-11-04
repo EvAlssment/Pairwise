@@ -19,6 +19,7 @@ struct SessionCredentialStore {
     var server = UserDefaults.standard.string(forKey: "pairdesk.server") ?? "https://api.136-80-31-73.sslip.io"
     var email = ""
     var password = ""
+    private(set) var signupPolicy: SignupPolicy?
     private(set) var user: TeamUser?
     private(set) var teammates: [TeamUser] = []
     private(set) var calls: [CallInvitation] = []
@@ -81,13 +82,47 @@ struct SessionCredentialStore {
         do {
             let client = try APIClient(server: server, session: apiSession)
             let result: LoginResponse = try await client.post("v1/login", body: Body(email: email.trimmingCharacters(in: .whitespacesAndNewlines), password: password))
-            token = result.token; user = result.user; credentials.write(result.token)
-            PairDeskAppDelegate.requestNotificationAuthorizationAfterAuthentication()
+            await beginSession(result)
+        } catch { self.error = error.localizedDescription }
+    }
+    func loadSignupPolicy() async {
+        signupPolicy = nil
+        do {
+            let client = try APIClient(server: server, session: apiSession)
+            signupPolicy = try await client.get("v1/signup-policy")
+        } catch { self.error = error.localizedDescription }
+    }
+    func sendSignupCode(email: String) async throws -> String {
+        struct Body: Encodable { let email: String }
+        let client = try APIClient(server: server, session: apiSession)
+        let response: SignupCodeResponse = try await client.post("v1/signup-code", body: Body(email: email.trimmingCharacters(in: .whitespacesAndNewlines)))
+        return response.challengeId
+    }
+    func createAccount(name: String, email: String, password: String, challengeID: String?, code: String?) async {
+        busy = true; error = nil
+        defer { busy = false }
+        struct Body: Encodable {
+            let name: String; let email: String; let password: String
+            let challengeId: String?; let code: String?
+        }
+        do {
+            let client = try APIClient(server: server, session: apiSession)
+            let response: LoginResponse = try await client.post("v1/signup", body: Body(
+                name: name.trimmingCharacters(in: .whitespacesAndNewlines),
+                email: email.trimmingCharacters(in: .whitespacesAndNewlines), password: password,
+                challengeId: challengeID, code: code))
+            await beginSession(response)
+        } catch { self.error = error.localizedDescription }
+    }
+    private func beginSession(_ result: LoginResponse) async {
+        token = result.token; user = result.user; credentials.write(result.token)
+        PairDeskAppDelegate.requestNotificationAuthorizationAfterAuthentication()
+        do {
             pushRegistrationAPI = PairDeskDeviceRegistration(client: try APIClient(server: server, token: result.token, session: apiSession), deviceID: DeviceInstallation.id)
             await registerPushTokensIfReady()
-            UserDefaults.standard.set(server, forKey: "pairdesk.server")
-            password = ""; startPolling()
         } catch { self.error = error.localizedDescription }
+        UserDefaults.standard.set(server, forKey: "pairdesk.server")
+        password = ""; startPolling()
     }
     func restore() async {
         guard user == nil, token != nil, !restoringSession else { return }
