@@ -41,6 +41,12 @@ struct RootView: View {
 
 struct LoginView: View {
     @Environment(AppModel.self) private var model
+    @State private var creatingAccount = false
+    @State private var name = ""
+    @State private var confirmPassword = ""
+    @State private var verificationCode = ""
+    @State private var challengeID: String?
+    @State private var sendingCode = false
     var body: some View {
         Form {
             Section("Your team server") {
@@ -53,16 +59,65 @@ struct LoginView: View {
                     Text("Your saved session is kept while the server is unreachable.").font(.footnote)
                 }
             }
-            Section("Sign in") {
-                TextField("Email", text: Binding(get: { model.email }, set: { model.email = $0 }))
-                    .textInputAutocapitalization(.never).keyboardType(.emailAddress).autocorrectionDisabled()
-                SecureField("Password", text: Binding(get: { model.password }, set: { model.password = $0 }))
-                Button { Task { await model.login() } } label: {
-                    HStack { Spacer(); if model.busy { ProgressView() } else { Text("Sign in").bold() }; Spacer() }
-                }.disabled(model.busy || model.email.isEmpty || model.password.isEmpty)
+            Section {
+                Picker("Account", selection: $creatingAccount) {
+                    Text("Sign in").tag(false)
+                    Text("Create account").tag(true)
+                }.pickerStyle(.segmented)
             }
-            Section { Text("Use the email and password provided by your PairDesk team administrator.").font(.footnote).foregroundStyle(.secondary) }
+            if creatingAccount {
+                Section("Create your PairDesk account") {
+                    TextField("Full name", text: $name).textContentType(.name).textInputAutocapitalization(.words)
+                    TextField("Email", text: Binding(get: { model.email }, set: { model.email = $0 }))
+                        .textContentType(.emailAddress).textInputAutocapitalization(.never).keyboardType(.emailAddress).autocorrectionDisabled()
+                    SecureField("Password (at least 12 characters)", text: Binding(get: { model.password }, set: { model.password = $0 }))
+                        .textContentType(.newPassword)
+                    SecureField("Confirm password", text: $confirmPassword).textContentType(.newPassword)
+                    if model.signupPolicy?.verificationRequired == true {
+                        Button {
+                            Task {
+                                sendingCode = true
+                                defer { sendingCode = false }
+                                do { challengeID = try await model.sendSignupCode(email: model.email) }
+                                catch { model.error = error.localizedDescription }
+                            }
+                    } label: {
+                            HStack { if sendingCode { ProgressView() }; Text(challengeID == nil ? "Send verification code" : "Resend verification code") }
+                        }.disabled(sendingCode || model.email.isEmpty || model.busy || model.signupPolicy?.enabled != true)
+                        if challengeID != nil {
+                            Text("Enter the 8-digit code sent to your email. It expires in 10 minutes.").font(.footnote).foregroundStyle(.secondary)
+                            TextField("Verification code", text: $verificationCode)
+                                .keyboardType(.numberPad).textContentType(.oneTimeCode)
+                        }
+                    }
+                    Button {
+                        Task { await model.createAccount(name: name, email: model.email, password: model.password,
+                                                        challengeID: challengeID, code: verificationCode.isEmpty ? nil : verificationCode) }
+                    } label: {
+                        HStack { Spacer(); if model.busy { ProgressView() } else { Text("Create account").bold() }; Spacer() }
+                    }
+                    .disabled(model.busy || model.signupPolicy?.enabled != true || name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || model.email.isEmpty || model.password.count < 12 || model.password != confirmPassword || (model.signupPolicy?.verificationRequired == true && (challengeID == nil || verificationCode.count != 8)))
+                }
+                Section {
+                    if model.signupPolicy == nil { Label("Checking signup availability…", systemImage: "hourglass").font(.footnote).foregroundStyle(.secondary) }
+                    else if model.signupPolicy?.enabled == false { Text("Account creation is currently unavailable for this server.").font(.footnote).foregroundStyle(.secondary) }
+                    else if model.signupPolicy?.verificationRequired == true { Text("Verify your email before creating an account.").font(.footnote).foregroundStyle(.secondary) }
+                    else { Text("Create an account with your email and password.").font(.footnote).foregroundStyle(.secondary) }
+                }
+            } else {
+                Section("Sign in") {
+                    TextField("Email", text: Binding(get: { model.email }, set: { model.email = $0 }))
+                        .textContentType(.emailAddress).textInputAutocapitalization(.never).keyboardType(.emailAddress).autocorrectionDisabled()
+                    SecureField("Password", text: Binding(get: { model.password }, set: { model.password = $0 })).textContentType(.password)
+                    Button { Task { await model.login() } } label: {
+                        HStack { Spacer(); if model.busy { ProgressView() } else { Text("Sign in").bold() }; Spacer() }
+                    }.disabled(model.busy || model.email.isEmpty || model.password.isEmpty)
+                }
+                Section { Text("Sign in with your PairDesk email and password.").font(.footnote).foregroundStyle(.secondary) }
+            }
         }
+        .task(id: model.server) { await model.loadSignupPolicy() }
+        .onChange(of: model.email) { _, _ in challengeID = nil; verificationCode = "" }
     }
 }
 
