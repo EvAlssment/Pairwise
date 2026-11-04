@@ -36,6 +36,7 @@ private final class FixtureBackend: @unchecked Sendable {
         try lock.withLock {
             if offline { throw URLError(.notConnectedToInternet) }
             switch request.url!.path {
+            case "/v1/signup-policy": return (200, ["enabled": true, "allowedDomains": [], "verificationRequired": true])
             case "/v1/signup-code": return (202, ["challengeId": "fixture-challenge"])
             case "/v1/signup": return (201, ["token": "new-session", "user": ["id": "new-user", "name": "New Teammate", "email": "new@example.com"]])
             case "/v1/me": return meStatus == 200 ? (200, ["user": me]) : (meStatus, ["error": "Fixture HTTP failure"])
@@ -105,6 +106,9 @@ private final class FixtureBackend: @unchecked Sendable {
 
     @Test @MainActor func verifiedSignupRequestsCodeAndCreatesSession() async throws {
         let (model, _, _) = fixture()
+        await model.loadSignupPolicy()
+        #expect(model.signupPolicy?.enabled == true)
+        #expect(model.signupPolicy?.verificationRequired == true)
         let challenge = try await model.sendSignupCode(email: " new@example.com ")
         #expect(challenge == "fixture-challenge")
         await model.createAccount(name: "New Teammate", email: "new@example.com", password: "twelve-character-password",
