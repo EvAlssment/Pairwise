@@ -213,7 +213,7 @@ final class CallIntegrationTests: XCTestCase {
                 for client in clients.prefix(i) { try await client.send("v1/rooms/\(roomID)/heartbeat", body: EmptyBody()) }
                 let join: JoinResponse = try await clients[i].post("v1/rooms/\(roomID)/join", body: EmptyBody())
                 let room = Room(delegate: i == 1 ? receiver : nil,
-                                roomOptions: RoomOptions(adaptiveStream: true,
+                                roomOptions: RoomOptions(adaptiveStream: false,
                                                         dynacast: true,
                                                         reportRemoteTrackStatistics: true))
                 media.append(room)
@@ -580,7 +580,7 @@ private final class SyntheticVideoReceiver: NSObject, RoomDelegate, VideoRendere
     private var storedRecoveryMilliseconds: Double?
     var receivedFrame: Bool { lock.lock(); defer { lock.unlock() }; return didReceive }
     var recoveryMilliseconds: Double? { lock.lock(); defer { lock.unlock() }; return storedRecoveryMilliseconds }
-    @MainActor var isAdaptiveStreamEnabled: Bool { true }
+    @MainActor var isAdaptiveStreamEnabled: Bool { false }
     @MainActor var adaptiveStreamSize: CGSize { rendererSize }
     init(expectation: XCTestExpectation, source: Track.Source = .screenShareVideo,
          rendererSize: CGSize = CGSize(width: 640, height: 480)) {
