@@ -87,6 +87,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/v1/signup-code", s.signupCode)
 	mux.HandleFunc("/v1/signup-policy", s.signupPolicy)
 	mux.HandleFunc("/v1/me", s.auth(s.me))
+	mux.HandleFunc("/v1/account", s.auth(s.account))
 	mux.HandleFunc("/v1/users", s.auth(s.users))
 	mux.HandleFunc("/v1/heartbeat", s.auth(s.heartbeat))
 	mux.HandleFunc("/v1/devices", s.auth(s.devices))
@@ -441,6 +442,69 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request, u User) {
 		return
 	}
 	writeJSON(w, 200, map[string]any{"user": pub(u)})
+}
+
+// account supports the authenticated user's explicit account-deletion request.
+// The current password is required so a stolen session alone cannot erase an account.
+func (s *Server) account(w http.ResponseWriter, r *http.Request, u User) {
+	if r.Method != http.MethodDelete {
+		fail(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	var q struct {
+		Password string `json:"password"`
+	}
+	if decode(r, &q) != nil || len(q.Password) == 0 || len(q.Password) > 1024 {
+		fail(w, http.StatusBadRequest, "current password is required")
+		return
+	}
+	ip, _, _ := net.SplitHostPort(r.RemoteAddr)
+	if ip == "" {
+		ip = r.RemoteAddr
+	}
+	if !s.allowed(ip) {
+		fail(w, http.StatusTooManyRequests, "too many verification attempts")
+		return
+	}
+	if bcrypt.CompareHashAndPassword([]byte(u.PasswordHash), []byte(q.Password)) != nil {
+		s.recordLoginFailure(ip)
+		fail(w, http.StatusUnauthorized, "current password is incorrect")
+		return
+	}
+	s.clearLoginFailures(ip)
+	roomIDs := s.store.RoomsForUser(u.ID)
+	for _, roomID := range roomIDs {
+		s.store.lock()
+		rm, found := s.store.s.Rooms[roomID]
+		if found && rm.DirectOnly {
+			err := s.leaveDirectRoomLocked(&rm, u, time.Now().UTC())
+			if err == nil {
+				s.store.s.Rooms[roomID] = rm
+				err = s.store.save()
+			}
+			s.store.unlock()
+			if err != nil {
+				fail(w, http.StatusServiceUnavailable, "call access could not be revoked; retry account deletion")
+				return
+			}
+			continue
+		}
+		s.store.unlock()
+		if err := s.removeLivekitParticipant(roomID, u.ID); err != nil && !errors.Is(err, errLivekitParticipantMissing) {
+			fail(w, http.StatusServiceUnavailable, "media access could not be revoked; retry account deletion")
+			return
+		}
+	}
+	emptyRooms, err := s.store.DeleteUserAccount(u.ID)
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "account could not be deleted; retry")
+		return
+	}
+	for _, roomID := range emptyRooms {
+		_, _, _ = s.livekitCallResult("DeleteRoom", map[string]any{"room": roomID})
+	}
+	h := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true, "sessionRevoked": h != ""})
 }
 func (s *Server) adminCreateUser(w http.ResponseWriter, r *http.Request, u User) {
 	if !u.Admin {
