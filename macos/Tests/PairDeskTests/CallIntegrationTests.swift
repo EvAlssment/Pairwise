@@ -463,6 +463,9 @@ final class CallIntegrationTests: XCTestCase {
                                                                  maxFps: quality.framesPerSecond),
                                          simulcast: true))
         await fulfillment(of: receivers.map(\.expectation), timeout: 20)
+        for (receiver, view) in zip(receivers, views) {
+            try await receiver.setPreferredDimensions(Dimensions(width: Int32(view.width), height: Int32(view.height)))
+        }
         let deadline = ProcessInfo.processInfo.systemUptime + 15
         while ProcessInfo.processInfo.systemUptime < deadline {
             let areas = receivers.compactMap { receiver -> Int? in
@@ -572,6 +575,7 @@ private final class SyntheticVideoReceiver: NSObject, RoomDelegate, VideoRendere
     private var measuredHeight: Int?
     private var firstFrame: CVPixelBuffer?
     private var remoteVideoTrack: RemoteVideoTrack?
+    private var remoteTrackPublication: RemoteTrackPublication?
     private var recoveryStartedAt: TimeInterval?
     private var storedRecoveryMilliseconds: Double?
     var receivedFrame: Bool { lock.lock(); defer { lock.unlock() }; return didReceive }
@@ -588,8 +592,23 @@ private final class SyntheticVideoReceiver: NSObject, RoomDelegate, VideoRendere
         guard let track = publication.track as? RemoteVideoTrack, track.source == source else { return }
         lock.lock()
         remoteVideoTrack = track
+        remoteTrackPublication = publication
         lock.unlock()
         track.add(videoRenderer: self)
+    }
+
+    func setPreferredDimensions(_ dimensions: Dimensions) async throws {
+        guard let publication = subscribedPublication() else {
+            throw NSError(domain: "SyntheticVideoReceiver", code: 2,
+                          userInfo: [NSLocalizedDescriptionKey: "Subscribed camera publication is unavailable"])
+        }
+        try await publication.set(preferredDimensions: dimensions)
+    }
+
+    private func subscribedPublication() -> RemoteTrackPublication? {
+        lock.lock()
+        defer { lock.unlock() }
+        return remoteTrackPublication
     }
     func render(frame: VideoFrame) {
         let now = ProcessInfo.processInfo.systemUptime
