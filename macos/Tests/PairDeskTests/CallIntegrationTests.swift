@@ -442,9 +442,10 @@ final class CallIntegrationTests: XCTestCase {
                         ]))
                 await fulfillment(of: cameraReceivers.map(\.expectation), timeout: 15)
                 XCTAssertTrue(cameraReceivers.allSatisfy(\.receivedFrame))
-                try await cameraReceivers[0].requestVideoQuality(.low)
-                try await cameraReceivers[1].requestVideoQuality(.medium)
-                try await cameraReceivers[2].requestVideoQuality(.high)
+                for (receiver, view) in zip(cameraReceivers, cameraViews) {
+                    try await receiver.requestVideoSize(view.1)
+                }
+                try await Task.sleep(for: .seconds(2))
                 let cameraMeasurementStartedAt = ProcessInfo.processInfo.systemUptime
                 let cameraCPUStart = ProcessCPUProbe.capture()
                 try await Task.sleep(for: .seconds(6))
@@ -594,9 +595,10 @@ private final class SyntheticVideoReceiver: NSObject, RoomDelegate, VideoRendere
         lock.unlock()
         track.add(videoRenderer: self)
     }
-    func requestVideoQuality(_ quality: VideoQuality) async throws {
+    func requestVideoSize(_ size: CGSize) async throws {
         let publication = lock.withLock { cameraPublication }
-        try await publication?.set(videoQuality: quality)
+        try await publication?.set(preferredDimensions: Dimensions(width: Int32(size.width),
+                                                                    height: Int32(size.height)))
     }
     func render(frame: VideoFrame) {
         let now = ProcessInfo.processInfo.systemUptime
