@@ -213,7 +213,7 @@ final class CallIntegrationTests: XCTestCase {
                 for client in clients.prefix(i) { try await client.send("v1/rooms/\(roomID)/heartbeat", body: EmptyBody()) }
                 let join: JoinResponse = try await clients[i].post("v1/rooms/\(roomID)/join", body: EmptyBody())
                 let room = Room(delegate: i == 1 ? receiver : nil,
-                                roomOptions: RoomOptions(adaptiveStream: true,
+                                roomOptions: RoomOptions(adaptiveStream: false,
                                                         dynacast: true,
                                                         reportRemoteTrackStatistics: true))
                 media.append(room)
@@ -442,6 +442,9 @@ final class CallIntegrationTests: XCTestCase {
                         ]))
                 await fulfillment(of: cameraReceivers.map(\.expectation), timeout: 15)
                 XCTAssertTrue(cameraReceivers.allSatisfy(\.receivedFrame))
+                try await cameraReceivers[0].requestVideoQuality(.low)
+                try await cameraReceivers[1].requestVideoQuality(.medium)
+                try await cameraReceivers[2].requestVideoQuality(.high)
                 let cameraMeasurementStartedAt = ProcessInfo.processInfo.systemUptime
                 let cameraCPUStart = ProcessCPUProbe.capture()
                 try await Task.sleep(for: .seconds(6))
@@ -570,11 +573,12 @@ private final class SyntheticVideoReceiver: NSObject, RoomDelegate, VideoRendere
     private var measuredHeight: Int?
     private var firstFrame: CVPixelBuffer?
     private var remoteVideoTrack: RemoteVideoTrack?
+    private var cameraPublication: RemoteTrackPublication?
     private var recoveryStartedAt: TimeInterval?
     private var storedRecoveryMilliseconds: Double?
     var receivedFrame: Bool { lock.lock(); defer { lock.unlock() }; return didReceive }
     var recoveryMilliseconds: Double? { lock.lock(); defer { lock.unlock() }; return storedRecoveryMilliseconds }
-    @MainActor var isAdaptiveStreamEnabled: Bool { true }
+    @MainActor var isAdaptiveStreamEnabled: Bool { source != .camera }
     @MainActor var adaptiveStreamSize: CGSize { rendererSize }
     init(expectation: XCTestExpectation, source: Track.Source = .screenShareVideo,
          rendererSize: CGSize = CGSize(width: 640, height: 480)) {
@@ -586,12 +590,13 @@ private final class SyntheticVideoReceiver: NSObject, RoomDelegate, VideoRendere
         guard let track = publication.track as? RemoteVideoTrack, track.source == source else { return }
         lock.lock()
         remoteVideoTrack = track
+        cameraPublication = source == .camera ? publication : nil
         lock.unlock()
         track.add(videoRenderer: self)
-        if source == .camera {
-            let quality: VideoQuality = rendererSize.height <= 180 ? .low : (rendererSize.height <= 360 ? .medium : .high)
-            Task { @MainActor in try? await publication.set(videoQuality: quality) }
-        }
+    }
+    func requestVideoQuality(_ quality: VideoQuality) async throws {
+        let publication = lock.withLock { cameraPublication }
+        try await publication?.set(videoQuality: quality)
     }
     func render(frame: VideoFrame) {
         let now = ProcessInfo.processInfo.systemUptime
@@ -605,9 +610,11 @@ private final class SyntheticVideoReceiver: NSObject, RoomDelegate, VideoRendere
         if let recoveryStartedAt, storedRecoveryMilliseconds == nil {
             storedRecoveryMilliseconds = max(0, (now - recoveryStartedAt) * 1_000)
         }
-        if measuredWidth == nil {
-            measuredWidth = Int(frame.dimensions.width)
-            measuredHeight = Int(frame.dimensions.height)
+        let width = Int(frame.dimensions.width)
+        let height = Int(frame.dimensions.height)
+        if measuredWidth == nil || width * height > measuredWidth! * measuredHeight! {
+            measuredWidth = width
+            measuredHeight = height
             firstFrame = frame.toCVPixelBuffer()
         }
         let shouldFulfill = measuredFrameCount == 1
