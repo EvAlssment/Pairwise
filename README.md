@@ -20,7 +20,7 @@ To install, open the DMG, drag PairDesk to Applications, and replace an older co
 
 In-app updates are being introduced with the next stable updater-enabled release. Existing installations must first install that release once from the download page; after that, PairDesk checks for signed updates automatically and offers **Check for Updates…** from the menu-bar app’s contextual menu.
 
-For this UAT deployment, sign-up requires an email verification code and is limited to the configured approved email addresses (currently the FuturePath domain plus an administrator-managed exception). If your email is not accepted, contact the team administrator. An older client may show “Email verification is required. Update PairDesk to create an account.” Install build 26 before trying to sign up again. At sign-in, confirm the team HTTPS server address; do not use a local `localhost` address for team UAT.
+For this UAT deployment, the server controls signup eligibility and may require an email verification code. If signup is unavailable or your email is not accepted, contact the team administrator. An older client may show “Email verification is required. Update PairDesk to create an account.” Install build 26 before trying to sign up again. At sign-in, confirm the team HTTPS server address; do not use a local `localhost` address for team UAT.
 
 See the [tester quick start](docs/tester-quick-start.md) for installation, account setup, permissions, and first-call checks, plus [the release guide](docs/releasing.md) for build and signing details. The source on `main` can be newer than the latest published DMG; check the release page before installing.
 

@@ -129,7 +129,7 @@ struct LoginView: View {
 
     private var signupNote: String {
         guard signupEnabled else { return "Self-service signup is turned off for this team. Contact your team administrator." }
-        let domainNote = signupDomains.isEmpty ? "Use the email address you use with your team." : "Use an email ending in " + signupDomains.map { "@\($0)" }.joined(separator: " or ") + "."
+        let domainNote = signupDomains.isEmpty ? "Use your team email address." : "Use an email address allowed by your team."
         return domainNote + (verificationRequired ? " Verify your email to create your account." : " Email verification is not currently enabled.")
     }
 
