@@ -19,11 +19,11 @@ that record or make a feature accepted by itself.
 3. At sign-in, expand **Server address** and confirm both Macs use the team
    HTTPS API address supplied by the administrator. Do not leave a local
    `localhost`/`127.0.0.1` address on a tester's Mac.
-4. New testers should choose **Create account**, enter an approved email, and
-   complete the email verification code flow before setting their password.
-   UAT sign-up is restricted to configured approved addresses (currently
-   `futurepath.ai` plus an administrator-managed exception). If an older client
-   says “Email verification is required. Update PairDesk to create an account,”
+4. New testers should choose **Create account**, enter an email allowed by the
+   server, and complete the email verification code flow if requested before
+   setting their password. If signup is unavailable, contact the team
+   administrator. If an older client says “Email verification is required.
+   Update PairDesk to create an account,”
    install build 26, quit the old app, reopen the updated copy, and retry.
 5. Sign in with the separate team accounts provided to existing testers.
    Exchange passwords through a private channel; never put them in this

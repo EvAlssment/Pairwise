@@ -151,19 +151,19 @@ func TestVerifiedSignupCodeIsConsumedAtomically(t *testing.T) {
 func TestVerifiedSignupRequiresCorrectSingleUseCode(t *testing.T) {
 	s, _ := fixture(t)
 	s.signupVerifyEmail = true
-	s.signupAllowedDomains = parseAllowedValues("futurepath.ai")
-	s.accessAllowedDomains = parseAllowedValues("futurepath.ai")
-	s.accessAllowedEmails = parseAllowedValues("akshatsahu1@gmail.com")
+	s.signupAllowedDomains = parseAllowedValues("team.example")
+	s.accessAllowedDomains = parseAllowedValues("team.example")
+	s.accessAllowedEmails = parseAllowedValues("admin@example.com")
 	var sentEmail, sentCode string
 	s.sendSignupCode = func(_ context.Context, email, code string) error { sentEmail, sentCode = email, code; return nil }
 	h := s.Handler()
-	if w := request(h, "POST", "/v1/signup", "", `{"name":"New","email":"new@futurepath.ai","password":"a-strong-password"}`); w.Code != http.StatusBadRequest {
+	if w := request(h, "POST", "/v1/signup", "", `{"name":"New","email":"new@team.example","password":"a-strong-password"}`); w.Code != http.StatusBadRequest {
 		t.Fatalf("unverified signup: %d %s", w.Code, w.Body)
 	}
 	if w := request(h, "POST", "/v1/signup-code", "", `{"email":"other@gmail.com"}`); w.Code != http.StatusForbidden {
 		t.Fatalf("disallowed domain: %d", w.Code)
 	}
-	w := request(h, "POST", "/v1/signup-code", "", `{"email":"New@futurepath.ai"}`)
+	w := request(h, "POST", "/v1/signup-code", "", `{"email":"New@team.example"}`)
 	if w.Code != http.StatusAccepted {
 		t.Fatalf("request code: %d %s", w.Code, w.Body)
 	}
@@ -173,23 +173,23 @@ func TestVerifiedSignupRequiresCorrectSingleUseCode(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}
-	if sentEmail != "new@futurepath.ai" || len(sentCode) != 8 || response.ChallengeID == "" || strings.Contains(w.Body.String(), sentCode) {
+	if sentEmail != "new@team.example" || len(sentCode) != 8 || response.ChallengeID == "" || strings.Contains(w.Body.String(), sentCode) {
 		t.Fatal("code delivery or response incorrect")
 	}
 	submit := func(email, code string) int {
 		body, _ := json.Marshal(map[string]string{"name": "New", "email": email, "password": "a-strong-password", "challengeId": response.ChallengeID, "code": code})
 		return request(h, "POST", "/v1/signup", "", string(body)).Code
 	}
-	if got := submit("new@futurepath.ai", "xxxxxxxx"); got != http.StatusBadRequest {
+	if got := submit("new@team.example", "xxxxxxxx"); got != http.StatusBadRequest {
 		t.Fatalf("wrong code: %d", got)
 	}
-	if got := submit("new@futurepath.ai", sentCode); got != http.StatusCreated {
+	if got := submit("new@team.example", sentCode); got != http.StatusCreated {
 		t.Fatalf("correct code: %d", got)
 	}
-	if got := submit("new@futurepath.ai", sentCode); got == http.StatusCreated {
+	if got := submit("new@team.example", sentCode); got == http.StatusCreated {
 		t.Fatal("code replay created account")
 	}
-	if w := request(h, "POST", "/v1/signup-code", "", `{"email":"akshatsahu1@gmail.com"}`); w.Code != http.StatusAccepted {
+	if w := request(h, "POST", "/v1/signup-code", "", `{"email":"admin@example.com"}`); w.Code != http.StatusAccepted {
 		t.Fatalf("explicit Gmail exception: %d %s", w.Code, w.Body)
 	}
 }
@@ -244,26 +244,26 @@ func TestVerificationExpiryAttemptsAndProviderFailure(t *testing.T) {
 func TestAccessPolicyEnforcesExistingSessionsAndExactException(t *testing.T) {
 	s, _ := fixture(t)
 	token := login(t, s)
-	s.accessAllowedDomains = parseAllowedValues("futurepath.ai")
-	s.accessAllowedEmails = parseAllowedValues("akshatsahu1@gmail.com")
+	s.accessAllowedDomains = parseAllowedValues("team.example")
+	s.accessAllowedEmails = parseAllowedValues("admin@example.com")
 	if w := request(s.Handler(), "GET", "/v1/me", token, ""); w.Code != http.StatusUnauthorized {
 		t.Fatalf("old disallowed session: %d", w.Code)
 	}
-	if w := request(s.Handler(), "POST", "/v1/login", "", `{"email":"a@example.com","password":"correct-horse-battery"}`); w.Code != http.StatusUnauthorized {
+	if w := request(s.Handler(), "POST", "/v1/login", "", `{"email":"person@other.test","password":"correct-horse-battery"}`); w.Code != http.StatusUnauthorized {
 		t.Fatalf("disallowed login: %d", w.Code)
 	}
-	if _, err := s.store.CreateUser("Akshat", "akshatsahu1@gmail.com", "correct-horse-battery", false); err != nil {
+	if _, err := s.store.CreateUser("Akshat", "admin@example.com", "correct-horse-battery", false); err != nil {
 		t.Fatal(err)
 	}
-	if w := request(s.Handler(), "POST", "/v1/login", "", `{"email":"akshatsahu1@gmail.com","password":"correct-horse-battery"}`); w.Code != http.StatusOK {
+	if w := request(s.Handler(), "POST", "/v1/login", "", `{"email":"admin@example.com","password":"correct-horse-battery"}`); w.Code != http.StatusOK {
 		t.Fatalf("allowed exception login: %d %s", w.Code, w.Body)
 	}
-	for _, email := range []string{"akshatsahu1@gmail.com", "person@futurepath.ai"} {
+	for _, email := range []string{"admin@example.com", "person@team.example"} {
 		if !s.emailAllowed(email) {
 			t.Fatalf("expected allowed: %s", email)
 		}
 	}
-	for _, email := range []string{"akshatsahu1+other@gmail.com", "person@sub.futurepath.ai", "person@futurepath.ai.attacker.test"} {
+	for _, email := range []string{"admin+other@example.com", "person@sub.team.example", "person@team.example.attacker.test"} {
 		if s.emailAllowed(email) {
 			t.Fatalf("unexpected allowed: %s", email)
 		}
