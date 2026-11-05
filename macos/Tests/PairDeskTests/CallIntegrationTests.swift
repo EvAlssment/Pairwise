@@ -588,6 +588,10 @@ private final class SyntheticVideoReceiver: NSObject, RoomDelegate, VideoRendere
         remoteVideoTrack = track
         lock.unlock()
         track.add(videoRenderer: self)
+        if source == .camera {
+            let quality: VideoQuality = rendererSize.height <= 180 ? .low : (rendererSize.height <= 360 ? .medium : .high)
+            Task { @MainActor in try? await publication.set(videoQuality: quality) }
+        }
     }
     func render(frame: VideoFrame) {
         let now = ProcessInfo.processInfo.systemUptime
