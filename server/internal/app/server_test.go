@@ -298,6 +298,70 @@ func TestSelfServiceSignupCreatesNormalAccountAndSession(t *testing.T) {
 	}
 }
 
+func TestSelfServiceAccountDeletionRemovesPersonalDataAndRevokesSession(t *testing.T) {
+	s, member := fixture(t)
+	h := s.Handler()
+	token := login(t, s)
+	other, err := s.store.CreateUser("Other Member", "other@example.com", "another-strong-password", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	s.store.lock()
+	s.store.s.Rooms["direct-room"] = Room{ID: "direct-room", Name: "Direct", DirectOnly: true, Members: map[string]Member{
+		member.ID: {UserID: member.ID, LastSeen: now}, other.ID: {UserID: other.ID, LastSeen: now},
+	}}
+	s.store.s.Calls["pending-call"] = CallInvitation{ID: "pending-call", CallerID: member.ID, TargetID: other.ID, RoomID: "direct-room", Status: "pending"}
+	s.store.s.JoinRequests["join-request"] = CallJoinRequest{ID: "join-request", RequesterID: member.ID, RoomID: "direct-room", Status: "pending"}
+	s.store.s.Sessions["another-session"] = Session{UserID: member.ID, ExpiresAt: now.Add(time.Hour)}
+	s.store.s.Presence[member.ID] = now
+	s.store.s.Devices[deviceKey(member.ID, "phone")] = DeviceRegistration{UserID: member.ID, DeviceID: "phone", Platform: "ios", PushToken: "token"}
+	s.store.s.PushJobs["push-job"] = PushJob{ID: "push-job", UserID: member.ID, CallID: "pending-call", RequestID: "join-request"}
+	s.store.s.SignupChallenges["signup"] = SignupChallenge{Email: member.Email}
+	s.store.s.AdminAudit = append(s.store.s.AdminAudit, AdminAuditEvent{ActorID: member.ID, TargetID: member.ID, Action: "test"})
+	if err := s.store.save(); err != nil {
+		t.Fatal(err)
+	}
+	s.store.unlock()
+
+	if w := request(h, http.MethodDelete, "/v1/me", token, ""); w.Code != http.StatusOK {
+		t.Fatalf("self-service delete status %d: %s", w.Code, w.Body)
+	}
+	if w := request(h, http.MethodGet, "/v1/me", token, ""); w.Code != http.StatusUnauthorized {
+		t.Fatalf("deleted account session still works: %d %s", w.Code, w.Body)
+	}
+	if w := request(h, http.MethodPost, "/v1/login", "", `{"email":"a@example.com","password":"correct-horse-battery"}`); w.Code != http.StatusUnauthorized {
+		t.Fatalf("deleted account can sign in: %d %s", w.Code, w.Body)
+	}
+	s.store.lock()
+	defer s.store.unlock()
+	if _, exists := s.store.s.Users[member.ID]; exists || len(s.store.s.Sessions) != 0 || len(s.store.s.Presence) != 0 || len(s.store.s.Devices) != 0 || len(s.store.s.PushJobs) != 0 || len(s.store.s.SignupChallenges) != 0 || len(s.store.s.AdminAudit) != 0 {
+		t.Fatalf("account-related data remains after deletion: %+v", s.store.s)
+	}
+	if len(s.store.s.Rooms) != 0 || len(s.store.s.Calls) != 0 || len(s.store.s.JoinRequests) != 0 {
+		t.Fatalf("direct call data remains after deletion: %+v", s.store.s)
+	}
+}
+
+func TestSelfServiceDeletionCannotRemoveLastEnabledAdministrator(t *testing.T) {
+	s, _ := fixture(t)
+	admin, err := s.store.CreateUser("Only Admin", "only-admin@example.com", "admin-password-long", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, _ := randomID(32)
+	s.store.lock()
+	s.store.s.Sessions[token] = Session{UserID: admin.ID, ExpiresAt: time.Now().Add(time.Hour)}
+	_ = s.store.save()
+	s.store.unlock()
+	if w := request(s.Handler(), http.MethodDelete, "/v1/me", token, ""); w.Code != http.StatusConflict {
+		t.Fatalf("last admin deletion status %d: %s", w.Code, w.Body)
+	}
+	if w := request(s.Handler(), http.MethodGet, "/v1/me", token, ""); w.Code != http.StatusOK {
+		t.Fatalf("last admin was logged out after rejected deletion: %d %s", w.Code, w.Body)
+	}
+}
+
 func TestSignupPolicyAndValidation(t *testing.T) {
 	s, _ := fixture(t)
 	h := s.Handler()
