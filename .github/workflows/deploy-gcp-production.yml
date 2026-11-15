@@ -46,7 +46,7 @@ jobs:
             [[ -n "${!name:-}" ]] || { echo "Missing repository variable: $name" >&2; exit 1; }
           done
 
-      - name: Require successful push CI for this exact main commit
+      - name: Require successful API push CI for this exact main commit
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

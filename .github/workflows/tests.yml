@@ -53,6 +53,13 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+      - name: Run API unit tests, race detector, and vet
+        working-directory: server
+        run: go test -race ./... && go vet ./...
       - name: Build and smoke test API image with commit metadata
         env:
           PAIRDESK_BUILD_COMMIT: ${{ github.sha }}
