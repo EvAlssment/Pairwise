@@ -597,8 +597,14 @@ private final class SyntheticVideoReceiver: NSObject, RoomDelegate, VideoRendere
     }
     func requestVideoSize(_ size: CGSize) async throws {
         let publication = lock.withLock { cameraPublication }
-        try await publication?.set(preferredDimensions: Dimensions(width: Int32(size.width),
-                                                                    height: Int32(size.height)))
+        guard let publication else { return }
+        let quality: VideoQuality
+        switch max(size.width, size.height) {
+        case ..<480: quality = .low
+        case ..<960: quality = .medium
+        default: quality = .high
+        }
+        try await publication.set(videoQuality: quality)
     }
     func render(frame: VideoFrame) {
         let now = ProcessInfo.processInfo.systemUptime
