@@ -214,7 +214,7 @@ final class CallIntegrationTests: XCTestCase {
                 let join: JoinResponse = try await clients[i].post("v1/rooms/\(roomID)/join", body: EmptyBody())
                 let room = Room(delegate: i == 1 ? receiver : nil,
                                 roomOptions: RoomOptions(adaptiveStream: false,
-                                                        dynacast: true,
+                                                        dynacast: false,
                                                         reportRemoteTrackStatistics: true))
                 media.append(room)
                 let relayOnly = ProcessInfo.processInfo.environment["PAIRDESK_TEST_RELAY_ONLY"] == "1"
