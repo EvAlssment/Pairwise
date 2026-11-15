@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -349,4 +350,128 @@ func (st *Store) RoomsForUser(userID string) []string {
 	}
 	sort.Strings(rooms)
 	return rooms
+}
+
+func (st *Store) CanDeleteAccountByID(id string) error {
+	st.lock()
+	defer st.unlock()
+	user, ok := st.s.Users[id]
+	if !ok {
+		return errors.New("user not found")
+	}
+	if user.Admin && user.Enabled {
+		admins := 0
+		for _, other := range st.s.Users {
+			if other.Admin && other.Enabled {
+				admins++
+			}
+		}
+		if admins <= 1 {
+			return errors.New("cannot delete the last enabled administrator")
+		}
+	}
+	return nil
+}
+
+// DeleteAccountByID removes the account and records that can identify or
+// continue addressing it. The caller must revoke any external media session
+// before invoking this operation.
+func (st *Store) DeleteAccountByID(id string) error {
+	st.lock()
+	defer st.unlock()
+
+	user, ok := st.s.Users[id]
+	if !ok {
+		return errors.New("user not found")
+	}
+	if user.Admin && user.Enabled {
+		admins := 0
+		for _, other := range st.s.Users {
+			if other.Admin && other.Enabled {
+				admins++
+			}
+		}
+		if admins <= 1 {
+			return errors.New("cannot delete the last enabled administrator")
+		}
+	}
+
+	previous, err := json.Marshal(st.s)
+	if err != nil {
+		return err
+	}
+	removedCalls := map[string]struct{}{}
+	for callID, call := range st.s.Calls {
+		if call.CallerID == id || call.TargetID == id {
+			removedCalls[callID] = struct{}{}
+			delete(st.s.Calls, callID)
+		}
+	}
+	removedRequests := map[string]struct{}{}
+	for requestID, request := range st.s.JoinRequests {
+		if request.RequesterID == id {
+			removedRequests[requestID] = struct{}{}
+			delete(st.s.JoinRequests, requestID)
+		}
+	}
+	for roomID, room := range st.s.Rooms {
+		delete(room.Members, id)
+		if room.SharingUserID == id {
+			room.SharingUserID = ""
+		}
+		if len(room.Members) == 0 || (room.DirectOnly && len(room.Members) < 2) {
+			delete(st.s.Rooms, roomID)
+			for callID, call := range st.s.Calls {
+				if call.RoomID == roomID {
+					removedCalls[callID] = struct{}{}
+					delete(st.s.Calls, callID)
+				}
+			}
+			for requestID, request := range st.s.JoinRequests {
+				if request.RoomID == roomID {
+					removedRequests[requestID] = struct{}{}
+					delete(st.s.JoinRequests, requestID)
+				}
+			}
+		} else {
+			st.s.Rooms[roomID] = room
+		}
+	}
+	for token, session := range st.s.Sessions {
+		if session.UserID == id {
+			delete(st.s.Sessions, token)
+		}
+	}
+	delete(st.s.Presence, id)
+	for key, device := range st.s.Devices {
+		if device.UserID == id {
+			delete(st.s.Devices, key)
+		}
+	}
+	for jobID, job := range st.s.PushJobs {
+		_, callRemoved := removedCalls[job.CallID]
+		_, requestRemoved := removedRequests[job.RequestID]
+		if job.UserID == id || callRemoved || requestRemoved {
+			delete(st.s.PushJobs, jobID)
+		}
+	}
+	for key, challenge := range st.s.SignupChallenges {
+		if strings.EqualFold(challenge.Email, user.Email) {
+			delete(st.s.SignupChallenges, key)
+		}
+	}
+	keptAudit := st.s.AdminAudit[:0]
+	for _, event := range st.s.AdminAudit {
+		if event.ActorID != id && event.TargetID != id {
+			keptAudit = append(keptAudit, event)
+		}
+	}
+	st.s.AdminAudit = keptAudit
+	delete(st.s.Users, id)
+	if err := st.save(); err != nil {
+		_ = json.Unmarshal(previous, &st.s)
+		normalizeState(&st.s)
+		return err
+	}
+	return nil
 }

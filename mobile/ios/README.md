@@ -26,7 +26,7 @@ Run `sh scripts/test-ios-model.sh` from the repository root to exercise the prod
 
 ## Existing server contract
 
-- `POST /v1/login`, `GET /v1/me`, `POST /v1/logout` use the current opaque bearer session. The token is stored in Keychain.
+- `POST /v1/login`, `GET /v1/me`, `DELETE /v1/me`, and `POST /v1/logout` use the current opaque bearer session. The token is stored in Keychain. Delete account is available from the signed-in account menu; it removes the account and associated sessions, devices, presence, call records, and signup challenges, and signs the person out. The server refuses deletion of the last enabled administrator.
 - `GET /v1/signup-policy`, `POST /v1/signup-code`, and `POST /v1/signup` implement account creation and optional server-required email verification. Verified signup uses the server's one-time code challenge, which expires after ten minutes.
 - `GET /v1/users` returns online/busy teammate state. `POST /v1/heartbeat` extends the current user's presence for 30 seconds. The mobile availability toggle stops/starts those foreground heartbeats; switching off can take up to 30 seconds to disappear from the roster.
 - `POST /v1/calls` creates a direct call (or invitation into the current room); `GET /v1/calls` polls invitations; `/accept`, `/decline` answer them.

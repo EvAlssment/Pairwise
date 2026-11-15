@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#10111a">
+  <title>Privacy — PairDesk</title>
+  <style>
+    :root { color-scheme: dark; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #10111a; color: #f7f7fb; }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; background: radial-gradient(ellipse at 50% -10%, #302969 0, #181827 38rem, #10111a 72rem); }
+    main { width: min(760px, calc(100% - 40px)); margin: 0 auto; padding: 28px 0 72px; }
+    header, footer { color: #c9c5ff; } header a, footer a { color: inherit; text-decoration: none; }
+    article { margin-top: 56px; line-height: 1.7; color: #d0cfda; }
+    h1, h2 { color: #fff; line-height: 1.2; } h1 { font-size: clamp(36px, 7vw, 54px); }
+    h2 { margin-top: 32px; font-size: 21px; } a { color: #c9c5ff; }
+    footer { margin-top: 48px; border-top: 1px solid #ffffff20; padding-top: 20px; }
+  </style>
+</head>
+<body>
+  <main>
+    <header><a href="./">PairDesk</a></header>
+    <article>
+      <h1>Privacy policy</h1>
+      <p>Last updated: November 5, 2026</p>
+      <p>PairDesk is an open-source collaboration app operated by the team hosting the PairDesk service. This policy describes information processed by the PairDesk iOS app and service.</p>
+
+      <h2>Information we process</h2>
+      <p>When you create an account or sign in, PairDesk processes your name, email address, and account credentials. Passwords are stored as one-way password hashes. The service processes presence, call invitations, room membership, and join-request state to provide calling and collaboration features.</p>
+      <p>For push notifications, the app registers device and Apple push-notification tokens with the PairDesk service. If email verification is enabled, the service sends a short-lived verification code through its email provider.</p>
+
+      <h2>Microphone and camera</h2>
+      <p>Microphone audio is sent during a call after you join. The camera remains off unless you turn video on. PairDesk does not record calls or upload recordings. Live audio and optional video are carried through the configured real-time media service; they are not end-to-end encrypted by PairDesk.</p>
+
+      <h2>How information is used and shared</h2>
+      <p>PairDesk uses this information to authenticate your account, show team presence, connect calls, send requested notifications, protect service reliability, and respond to support requests. Service infrastructure and delivery providers may process information as needed to provide hosting, real-time media, email verification, or Apple push notifications. PairDesk does not sell personal information or use it for advertising.</p>
+
+      <h2>Retention and account deletion</h2>
+      <p>Account and call-service data is retained while your account is active. You can start account deletion in the signed-in app: open the account menu, choose <em>Delete account</em>, and confirm. The service removes your account, sessions, registered devices, presence, and linked call data. The final enabled administrator cannot delete their account until another administrator is enabled. Copies in routine infrastructure backups may remain until those backups expire.</p>
+
+      <h2>Security</h2>
+      <p>PairDesk uses HTTPS for service requests and encrypted transport for real-time media. No internet service can guarantee absolute security. Do not use PairDesk to transmit information you are not authorized to share.</p>
+
+      <h2>Children</h2>
+      <p>PairDesk is intended for workplace collaboration and is not designed for children under 13.</p>
+
+      <h2>Contact</h2>
+      <p>For privacy questions or requests, contact the PairDesk maintainers through the <a href="https://github.com/EvAlssment/Pairwise/issues">public issue tracker</a>. Do not include passwords, authentication codes, or sensitive call content in a public issue.</p>
+    </article>
+    <footer><a href="./">PairDesk</a> · <a href="support.html">Support</a> · <a href="https://github.com/EvAlssment/Pairwise">Open-source repository</a></footer>
+  </main>
+</body>
+</html>

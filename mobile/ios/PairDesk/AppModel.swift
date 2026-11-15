@@ -156,6 +156,25 @@ struct SessionCredentialStore {
         token = nil; user = nil; teammates = []; calls = []; activeCalls = []; joinRequests = []
         credentials.clear()
     }
+    func deleteAccount() async {
+        guard user != nil else { return }
+        busy = true
+        error = nil
+        defer { busy = false }
+        do {
+            try await api.delete("v1/me")
+            refreshTask?.cancel(); roomTask?.cancel()
+            await call.leave()
+            pushRegistrationAPI = nil
+            token = nil; user = nil; teammates = []; calls = []; activeCalls = []; joinRequests = []
+            activeRoom = nil
+            credentials.clear()
+            password = ""
+            email = ""
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
     private func startPolling() {
         refreshTask?.cancel()
         refreshTask = Task { [weak self] in

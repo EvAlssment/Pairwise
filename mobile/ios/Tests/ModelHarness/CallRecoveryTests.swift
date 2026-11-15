@@ -26,6 +26,7 @@ private final class FixtureBackend: @unchecked Sendable {
     var requestStatus = "pending"
     var requestExists = false
     var roomEnded = false
+    var deleteMeCount = 0
     func edit(_ action: (FixtureBackend) -> Void) { lock.withLock { action(self) } }
     let me: [String: Any] = ["id": "me", "name": "Fixture user", "email": "me@example.invalid", "online": true]
     var room: [String: Any] { ["id": "room", "name": "Fixture call", "participantCount": 2, "participants": [me]] }
@@ -39,6 +40,9 @@ private final class FixtureBackend: @unchecked Sendable {
             case "/v1/signup-policy": return (200, ["enabled": true, "allowedDomains": [], "verificationRequired": true])
             case "/v1/signup-code": return (202, ["challengeId": "fixture-challenge"])
             case "/v1/signup": return (201, ["token": "new-session", "user": ["id": "new-user", "name": "New Teammate", "email": "new@example.com"]])
+            case "/v1/me" where request.httpMethod == "DELETE":
+                deleteMeCount += 1
+                return (200, ["ok": true])
             case "/v1/me": return meStatus == 200 ? (200, ["user": me]) : (meStatus, ["error": "Fixture HTTP failure"])
             case "/v1/users": return (200, ["users": [me]])
             case "/v1/calls": return (200, ["calls": []])
@@ -100,6 +104,17 @@ private final class FixtureBackend: @unchecked Sendable {
         let (model, backend, clears) = fixture()
         backend.edit { $0.meStatus = 401 }
         await model.restore()
+        #expect(!model.hasSavedSession)
+        #expect(clears() == 1)
+    }
+
+    @Test @MainActor func accountDeletionClearsTheSavedSession() async {
+        let (model, backend, clears) = fixture()
+        await model.restore()
+        #expect(model.user?.id == "me")
+        await model.deleteAccount()
+        #expect(backend.deleteMeCount == 1)
+        #expect(model.user == nil)
         #expect(!model.hasSavedSession)
         #expect(clears() == 1)
     }

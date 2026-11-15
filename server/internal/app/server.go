@@ -436,7 +436,33 @@ func (s *Server) auth(next func(http.ResponseWriter, *http.Request, User)) http.
 	}
 }
 func (s *Server) me(w http.ResponseWriter, r *http.Request, u User) {
-	if r.Method != "GET" {
+	if r.Method == http.MethodDelete {
+		if err := s.store.CanDeleteAccountByID(u.ID); err != nil {
+			if strings.Contains(err.Error(), "last enabled administrator") {
+				fail(w, http.StatusConflict, err.Error())
+			} else {
+				fail(w, http.StatusNotFound, "account not found")
+			}
+			return
+		}
+		for _, roomID := range s.store.RoomsForUser(u.ID) {
+			if err := s.removeLivekitParticipant(roomID, u.ID); err != nil && !errors.Is(err, errLivekitParticipantMissing) {
+				fail(w, http.StatusServiceUnavailable, "media access revocation is incomplete; retry account deletion")
+				return
+			}
+		}
+		if err := s.store.DeleteAccountByID(u.ID); err != nil {
+			if strings.Contains(err.Error(), "last enabled administrator") {
+				fail(w, http.StatusConflict, err.Error())
+			} else {
+				fail(w, http.StatusInternalServerError, "account deletion failed; retry")
+			}
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+		return
+	}
+	if r.Method != http.MethodGet {
 		fail(w, 405, "method not allowed")
 		return
 	}

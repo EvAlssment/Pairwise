@@ -9,6 +9,7 @@ import LiveKit
 
 struct RootView: View {
     @Environment(AppModel.self) private var model
+    @State private var showingDeleteAccountConfirmation = false
     var body: some View {
         NavigationStack {
             Group {
@@ -23,12 +24,20 @@ struct RootView: View {
                         Menu {
                             Toggle("Available", isOn: Binding(get: { model.available }, set: model.setAvailable))
                             Button("Sign out", role: .destructive) { Task { await model.logout() } }
+                            Button("Delete account…", role: .destructive) { showingDeleteAccountConfirmation = true }
+                                .disabled(model.busy)
                         } label: { Image(systemName: "person.crop.circle") }
                     }
                 }
             }
         }
         .tint(.indigo)
+        .confirmationDialog("Delete your PairDesk account?", isPresented: $showingDeleteAccountConfirmation, titleVisibility: .visible) {
+            Button("Permanently delete account", role: .destructive) { Task { await model.deleteAccount() } }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This permanently deletes your account, profile, saved devices, sessions, and call data linked to you. You will be signed out and this cannot be undone.")
+        }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
             if model.user != nil { PairDeskAppDelegate.requestNotificationAuthorizationAfterAuthentication() }
             else if model.hasSavedSession { Task { await model.restore() } }
