@@ -40,4 +40,29 @@ The first release containing Sparkle still requires a manual DMG install. Older 
 
 ## Local development builds
 
+Before creating a DMG, prepare its pinned packaging tools with Python 3.10 or later:
+
+```sh
+python3 -m venv .cache/dmg-venv
+.cache/dmg-venv/bin/python -m pip install -r scripts/dmg/requirements.txt
+```
+
+`scripts/create-dmg.sh` uses this environment by default; `PAIRDESK_DMG_PYTHON`
+can select another prepared Python executable. CI prepares the same environment.
+The [dmgbuild tool](https://dmgbuild.readthedocs.io/en/latest/) writes Finder metadata
+without opening Finder or needing Automation permissions. Both local and signed
+release images open a 660 × 520 icon-view window with PairDesk on the left,
+Applications on the right, and a purple drag arrow. Only those two items appear;
+setup and permissions guidance lives in the [tester quick start](tester-quick-start.md).
+The window also explains opening the installed copy and replacing an older app.
+
+The committed `scripts/dmg/background.tiff` includes 1x and 2x artwork. Regenerate
+it with `swift scripts/dmg/render-background.swift` when changing the design;
+keep its icon spacing in sync with `scripts/dmg/settings.py`. Verify packaging
+with `.cache/dmg-venv/bin/python -m unittest discover -s scripts/tests -p 'test_create_dmg.py'`.
+This builds and mounts an ad-hoc signed fixture, checks the layout, Applications
+link, preserved signature, checksum, and overwrite protection, then unmounts it.
+Also open a real packaged app's DMG in Finder before release to inspect the
+background, icon alignment, and text on a Retina display.
+
 `scripts/build-app.sh` and `scripts/create-dmg.sh` remain available for local development. `build-app.sh` builds arm64 and x86_64 executables and combines them into one universal app. The scripts are signed with the local identity from `scripts/create-signing-identity.sh`; without it `build-app.sh` stops unless `PAIRDESK_ALLOW_ADHOC=1` is set, because an ad-hoc build is a new app to macOS each time, so the saved sign-in prompts for the Mac password twice and permissions may need approval again. Keep building with the same identity. The local DMG defaults to `dist/PairDesk-<version>-build<build>-test.dmg` and refuses to overwrite an existing DMG or checksum; increment `CFBundleVersion` for another build or select a new path with `PAIRDESK_DMG_OUTPUT`. Neither local script is a substitute for this release workflow, and Gatekeeper may block both. Never bypass Gatekeeper to distribute a development image.
