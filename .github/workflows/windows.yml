@@ -1,0 +1,97 @@
+name: Windows
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: windows-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  native-client:
+    runs-on: windows-2022
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        id: python
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.6'
+          cache-dependency-path: server/go.sum
+      - uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.8.3'
+          arch: win64_msvc2022_64
+          modules: qtmultimedia
+          cache: true
+      - name: Fetch verified LiveKit Windows x64 SDK
+        run: '& "${{ steps.python.outputs.python-path }}" windows/cmake/fetch-livekit.py windows-x64 .cache/livekit'
+      - name: Configure and build native client and tests
+        shell: pwsh
+        run: |
+          cmake -S windows -B build/windows -A x64 -DCMAKE_PREFIX_PATH="$env:QT_ROOT_DIR;$pwd/.cache/livekit/livekit-sdk-windows-x64-1.13.1"
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          cmake --build build/windows --config Release --parallel 4
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Test API lifecycle and macOS wire compatibility
+        run: ctest --test-dir build/windows -C Release --verbose
+      - name: Preserve per-case native test results
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: pairwise-windows-test-results
+          path: build/windows/windows-*.xml
+          if-no-files-found: warn
+      - name: Build isolated Pairwise API for native end-to-end test
+        working-directory: server
+        run: go build -o ../build/windows/pairwise-api.exe ./cmd/pairdesk-api
+      - name: Stage native runtime and build validated unsigned MSIX
+        shell: pwsh
+        run: |
+          cmake --install build/windows --config Release --prefix build/stage
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          windeployqt --release --compiler-runtime --no-translations build/stage/Pairwise.exe
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          ./windows/packaging/stage-runtime.ps1 -Stage build/stage
+          Copy-Item LICENSE build/stage/LICENSE.txt
+          Copy-Item THIRD_PARTY_NOTICES.md build/stage/THIRD_PARTY_NOTICES.md
+          Copy-Item -Recurse windows/third_party build/stage/third-party-notices
+          Copy-Item -Recurse .cache/livekit/livekit-sdk-windows-x64-1.13.1/share build/stage/livekit-notices
+          $env:QT_QPA_PLATFORM = 'offscreen'
+          $app = Start-Process build/stage/Pairwise.exe -ArgumentList '--smoke-test' -PassThru
+          if (!$app.WaitForExit(30000)) { $app.Kill(); throw 'Native startup/shutdown timed out.' }
+          if ($app.ExitCode) { throw "Native smoke test failed: $($app.ExitCode)" }
+          $env:PATH = "$pwd/build/stage;$env:PATH"
+          $env:PAIRWISE_TEST_LOG_DIR = "$pwd/build/test-service-logs"
+          & "${{ steps.python.outputs.python-path }}" windows/tests/run-media-test.py build/windows/Release/pairwise_media_test.exe --api build/windows/pairwise-api.exe
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          ./windows/packaging/package.ps1 -Stage build/stage -Output build/packages
+      - name: Preserve isolated service failure logs
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: pairwise-windows-synthetic-service-logs
+          path: build/test-service-logs
+          if-no-files-found: ignore
+      - name: Test signed install, update, activation and uninstall on disposable CI
+        shell: powershell
+        run: ./windows/packaging/test-deployment.ps1 -Stage build/stage -Output build/deployment-test
+      - name: Preserve deployment test evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: pairwise-windows-deployment-result
+          path: build/deployment-test/deployment-result.json
+          if-no-files-found: warn
+      - uses: actions/upload-artifact@v6
+        with:
+          name: pairwise-windows-x64-unsigned-preview
+          path: |
+            build/packages/*
+          if-no-files-found: error

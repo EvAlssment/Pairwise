@@ -11,3 +11,7 @@ Pairwise is MIT-licensed. Third-party components retain their own terms. This so
 | OpenAI Whisper Tiny multilingual model | SHA-1 `bd577a113a864445d4c299885e0cb97d4ba92b5f` | MIT as stated by the upstream Whisper project; license copied into the app bundle |
 
 The model and whisper.cpp source are fetched during local preparation, not committed here. Binary redistributors must retain the notices placed in `Contents/Resources/ThirdPartyNotices/`. See [the Whisper license statement](https://github.com/openai/whisper/blob/main/README.md#license) and [Apple's third-party SDK requirements](https://developer.apple.com/support/third-party-SDK-requirements/).
+
+## Windows native preview
+
+The Windows client uses Qt 6.8.3, Qt-supplied FFmpeg n7.1, and LiveKit C++ SDK 1.13.1 / FFI 0.13.4. The package preserves native license/notice texts and exact source hashes from [windows/third_party](windows/third_party/README.md), alongside the SDK's original build-info. That directory documents the remaining transitive binary/source audit required before production redistribution.

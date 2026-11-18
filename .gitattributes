@@ -1,1 +1,2 @@
 mobile/android/gradlew.bat -diff -text
+windows/third_party/* -text

@@ -42,6 +42,7 @@ CAMERA_FIELDS = {
     "harnessProcessCPUPercent",
     "receivers",
     "unmeasured",
+    "senderReportedBandwidthLimitation",
 }
 CAMERA_RECEIVER_FIELDS = {
     "viewRole",
@@ -145,7 +146,7 @@ def main() -> int:
         }
         if not required.issubset(report):
             raise ValueError(f"{name}: benchmark is missing a required field")
-        if report["schemaVersion"] != 6:
+        if report["schemaVersion"] != 7:
             raise ValueError(f"{name}: unexpected benchmark schema or classification")
         profile = report["networkProfile"]
         if profile not in ("baseline", "constrained"):
@@ -226,7 +227,9 @@ def main() -> int:
                 or not minimum <= value <= maximum
             ):
                 raise ValueError(f"{name}: missing or invalid measured field: {field}")
-        if report["receivedBitrateKilobitsPerSecond"] <= 0:
+        # A bit-pattern reinterpretation of an integer counter can produce a
+        # finite positive subnormal Double. That is not a measured bitrate.
+        if report["receivedBitrateKilobitsPerSecond"] < sys.float_info.min:
             raise ValueError(f"{name}: received bitrate must be a positive measured value")
         if profile == "constrained" and report["selectedPathRTTMilliseconds"] < 20:
             raise ValueError(f"{name}: constrained profile did not measurably increase selected-path RTT")
@@ -247,6 +250,9 @@ def main() -> int:
             cpu = camera["harnessProcessCPUPercent"]
             if not finite_number(cpu) or not 0 <= cpu <= 2_000:
                 raise ValueError(f"{name}: invalid camera harness CPU measurement")
+            bandwidth_limited = camera["senderReportedBandwidthLimitation"]
+            if type(bandwidth_limited) is not bool:
+                raise ValueError(f"{name}: camera sender bandwidth observation must be boolean")
             if (
                 not isinstance(camera["unmeasured"], list)
                 or len(camera["unmeasured"]) != len(set(camera["unmeasured"]))
@@ -291,14 +297,17 @@ def main() -> int:
                     value = receiver.get(field)
                     if value is not None and (not finite_number(value) or not 0 <= value <= maximum):
                         raise ValueError(f"{name}: invalid measured camera field: {field}")
-                    if field == "receivedBitrateKilobitsPerSecond" and value is not None and value <= 0:
+                    if field == "receivedBitrateKilobitsPerSecond" and value is not None and value < sys.float_info.min:
                         raise ValueError(f"{name}: camera bitrate must be positive when reported")
-            if not received_areas[0] <= received_areas[1] <= received_areas[2] or received_areas[0] >= received_areas[2]:
+            if not received_areas[0] <= received_areas[1] <= received_areas[2]:
                 raise ValueError(f"{name}: decoded camera resolution must scale from thumbnail to gallery view size")
+            if received_areas[0] >= received_areas[2] and not (profile == "constrained" and bandwidth_limited):
+                raise ValueError(f"{name}: decoded camera resolution must scale unless constrained sender reports bandwidth limitation")
             print(
                 f"{profile} {participants}p camera: "
                 + ", ".join(f"{r['viewRole']} {r['receivedWidth']}x{r['receivedHeight']} at {r['observedFramesPerSecond']:.1f} FPS" for r in receivers)
                 + f", harness CPU {cpu:.1f}% (synthetic loopback)"
+                + (", sender-reported bandwidth limitation" if bandwidth_limited else "")
             )
         elif camera is not None:
             raise ValueError(f"{name}: camera simulcast measurements belong only to the four-participant profile")

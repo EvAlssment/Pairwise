@@ -10,6 +10,9 @@ Unanswered calls appear in Recent Calls for 30 days with a one-tap callback when
 
 The current client supports macOS 14 and later. It is an early-stage project; test it with non-sensitive accounts and machines before relying on it.
 
+A [native Windows x64 preview](windows/README.md) is under development for Windows 10/11 in issue #127.
+It is not a production release; see the [Windows acceptance record](docs/windows-acceptance.md) for the remaining validation gates.
+
 **Download the complete source:** [ZIP archive of the latest `main` branch](https://github.com/EvAlssment/Pairwise/archive/refs/heads/main.zip) · [browse the repository](https://github.com/EvAlssment/Pairwise)
 
 **Download PairDesk:** [Open the PairDesk download page](https://evalssment.github.io/Pairwise/). It always points to the newest installable release, for either Apple silicon or Intel Macs.

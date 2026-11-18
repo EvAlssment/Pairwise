@@ -15,7 +15,7 @@ VALIDATOR = Path(__file__).resolve().parents[1] / "validate-media-benchmark.py"
 def benchmark(profile: str, participants: int) -> dict:
     constrained = profile == "constrained"
     report = {
-        "schemaVersion": 6,
+        "schemaVersion": 7,
         "classification": f"synthetic-{profile}-ci",
         "networkProfile": profile,
         "configuredNetwork": {
@@ -65,6 +65,7 @@ def benchmark(profile: str, participants: int) -> dict:
             "publishHeight": 1080,
             "maximumFramesPerSecond": 30,
             "harnessProcessCPUPercent": 88.5,
+            "senderReportedBandwidthLimitation": False,
             "receivers": [
                 camera_receiver("thumbnail", 320, 180, 320, 180),
                 camera_receiver("standard", 640, 360, 640, 360),
@@ -149,6 +150,7 @@ class MediaBenchmarkValidatorTests(unittest.TestCase):
     def run_validator(
         self,
         zero_bitrate: bool = False,
+        subnormal_bitrate: bool = False,
         malformed_readability: bool = False,
         zero_drops: bool = False,
         negative_rtt: bool = False,
@@ -156,14 +158,19 @@ class MediaBenchmarkValidatorTests(unittest.TestCase):
         missing_runner_metadata: bool = False,
         mismatched_runner_metadata: bool = False,
         short_measurement_window: bool = False,
+        camera_mutation=None,
     ) -> subprocess.CompletedProcess[str]:
         with tempfile.TemporaryDirectory(prefix="pairwise-benchmark-validator-") as temporary:
             reports = []
             for profile in ("baseline", "constrained"):
                 for participants in (2, 4):
                     report = benchmark(profile, participants)
+                    if participants == 4 and camera_mutation:
+                        camera_mutation(profile, report["cameraSimulcast"])
                     if zero_bitrate:
                         report["receivedBitrateKilobitsPerSecond"] = 0
+                    if subnormal_bitrate:
+                        report["receivedBitrateKilobitsPerSecond"] = 5e-324
                     if malformed_readability:
                         report["syntheticReadability"]["recognizedTextPercent"] = 100.0
                     if negative_rtt and profile == "baseline" and participants == 2:
@@ -215,6 +222,66 @@ class MediaBenchmarkValidatorTests(unittest.TestCase):
         result = self.run_validator()
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("baseline 2p cursor: p50 4.0 ms, p95 12.0 ms", result.stdout)
+
+    def camera_fallback(self, profile, camera, target="constrained", observed=True):
+        if profile == target:
+            camera["senderReportedBandwidthLimitation"] = observed
+            for receiver in camera["receivers"]:
+                receiver.update(receivedWidth=320, receivedHeight=180)
+
+    def test_accepts_observed_bandwidth_fallback_only_under_constraints(self) -> None:
+        result = self.run_validator(camera_mutation=self.camera_fallback)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("sender-reported bandwidth limitation", result.stdout)
+
+    def test_rejects_unexplained_constrained_camera_collapse(self) -> None:
+        result = self.run_validator(camera_mutation=lambda p, c: self.camera_fallback(p, c, observed=False))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("must scale unless constrained sender reports bandwidth limitation", result.stderr)
+
+    def test_bandwidth_observation_cannot_bypass_baseline_scaling(self) -> None:
+        result = self.run_validator(camera_mutation=lambda p, c: self.camera_fallback(p, c, target="baseline"))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("must scale unless constrained sender reports bandwidth limitation", result.stderr)
+
+    def test_rejects_non_boolean_sender_bandwidth_observation(self) -> None:
+        result = self.run_validator(camera_mutation=lambda p, c: c.update(senderReportedBandwidthLimitation="true"))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("bandwidth observation must be boolean", result.stderr)
+
+    def test_rejects_missing_sender_bandwidth_observation(self) -> None:
+        result = self.run_validator(camera_mutation=lambda p, c: c.pop("senderReportedBandwidthLimitation"))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("strict camera simulcast measurements", result.stderr)
+
+    def test_constrained_bandwidth_fallback_still_requires_ordered_dimensions(self) -> None:
+        def mutate(profile, camera):
+            self.camera_fallback(profile, camera)
+            if profile == "constrained":
+                camera["receivers"][0].update(receivedWidth=640, receivedHeight=360)
+        result = self.run_validator(camera_mutation=mutate)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("decoded camera resolution must scale", result.stderr)
+
+    def test_constrained_bandwidth_fallback_still_requires_sustained_frames(self) -> None:
+        def mutate(profile, camera):
+            self.camera_fallback(profile, camera)
+            if profile == "constrained":
+                camera["receivers"][2]["framesReceived"] = 0
+        result = self.run_validator(camera_mutation=mutate)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("lacks a sustained frame sample", result.stderr)
+
+    def test_rejects_subnormal_bitrate_from_reinterpreted_integer_counter(self) -> None:
+        result = self.run_validator(subnormal_bitrate=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("received bitrate must be a positive measured value", result.stderr)
+
+    def test_rejects_subnormal_camera_bitrate(self) -> None:
+        result = self.run_validator(camera_mutation=lambda p, c: c["receivers"][0].update(
+            receivedBitrateKilobitsPerSecond=5e-324))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("camera bitrate must be positive when reported", result.stderr)
 
     def test_rejects_unmeasured_zero_bitrate(self) -> None:
         result = self.run_validator(zero_bitrate=True)

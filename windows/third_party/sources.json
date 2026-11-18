@@ -1,0 +1,47 @@
+[
+  {
+    "file": "LiveKit-Cpp-LICENSE.txt",
+    "source": "https://raw.githubusercontent.com/livekit/client-sdk-cpp/5cd2af1/LICENSE",
+    "sha256": "09e8a9bcec8067104652c168685ab0931e7868f9c8284b66f5ae6edae5f1130b"
+  },
+  {
+    "file": "LiveKit-Cpp-NOTICE.txt",
+    "source": "https://raw.githubusercontent.com/livekit/client-sdk-cpp/5cd2af1/NOTICE",
+    "sha256": "6d0f7c5e0deb284362296c5da110dd353831da2e67ca77cb5abc051b951b0fac"
+  },
+  {
+    "file": "LiveKit-Rust-LICENSE.txt",
+    "source": "https://raw.githubusercontent.com/livekit/rust-sdks/88705b15/LICENSE",
+    "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+  },
+  {
+    "file": "LiveKit-Rust-NOTICE.txt",
+    "source": "https://raw.githubusercontent.com/livekit/rust-sdks/88705b15/NOTICE",
+    "sha256": "6d0f7c5e0deb284362296c5da110dd353831da2e67ca77cb5abc051b951b0fac"
+  },
+  {
+    "file": "Qt-LGPL-3.0.txt",
+    "source": "https://raw.githubusercontent.com/qt/qtbase/v6.8.3/LICENSES/LGPL-3.0-only.txt",
+    "sha256": "da7eabb7bafdf7d3ae5e9f223aa5bdc1eece45ac569dc21b3b037520b4464768"
+  },
+  {
+    "file": "Qt-GPL-3.0.txt",
+    "source": "https://raw.githubusercontent.com/qt/qtbase/v6.8.3/LICENSES/GPL-3.0-only.txt",
+    "sha256": "8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903"
+  },
+  {
+    "file": "FFmpeg-LGPL-2.1.txt",
+    "source": "https://raw.githubusercontent.com/FFmpeg/FFmpeg/n7.1/COPYING.LGPLv2.1",
+    "sha256": "b634ab5640e258563c536e658cad87080553df6f34f62269a21d554844e58bfe"
+  },
+  {
+    "file": "FFmpeg-LICENSE.md",
+    "source": "https://raw.githubusercontent.com/FFmpeg/FFmpeg/n7.1/LICENSE.md",
+    "sha256": "cb48bf09a11f5fb576cddb0431c8f5ed0a60157a9ec942adffc13907cbe083f2"
+  },
+  {
+    "file": "Qt-FFmpeg-attribution.json",
+    "source": "https://raw.githubusercontent.com/qt/qtmultimedia/v6.8.3/src/3rdparty/ffmpeg/qt_attribution.json",
+    "sha256": "c3f51abb259f8218b2c1677f1ac2a0f1011b3a2add85e11a8a9bbfa893cbc53e"
+  }
+]
