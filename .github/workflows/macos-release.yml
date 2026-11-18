@@ -138,7 +138,7 @@ jobs:
           PAIRDESK_SERVER_URL: ${{ vars.PAIRDESK_SERVER_URL }}
           PAIRDESK_NOTARY_PROFILE: pairdesk-release-notary
           PAIRDESK_RELEASE_OUTPUT: ${{ runner.temp }}/pairdesk-release
-        run: sh scripts/release-app.sh
+        run: bash scripts/release-app.sh
 
       - name: Generate signed Sparkle appcast
         shell: bash
